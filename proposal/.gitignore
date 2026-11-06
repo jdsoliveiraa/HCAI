@@ -1,0 +1,15 @@
+# LaTeX build outputs
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.xdv
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+# rendered previews
+preview/
+# keep the PDF out of history; build it locally
+*.pdf
