@@ -67,9 +67,13 @@
 
 % Please leave this \pdfinfo block untouched both for the submission and
 % Camera Ready Copy. Do not include Title and Author information in the pdfinfo section
+\ifdefined\pdfinfo
 \pdfinfo{
 /TemplateVersion (IJCAI.2027.0)
 }
+\else % XeTeX/LuaTeX (local Tectonic build): same metadata via hyperref
+\hypersetup{pdfinfo={TemplateVersion={IJCAI.2027.0}}}
+\fi
 
 \title{IJCAI--27 Formatting Instructions}
 
