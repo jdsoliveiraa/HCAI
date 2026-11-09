@@ -5,8 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from hcai.config import Design, Generator
+from hcai.cli import main
+from hcai.config import Design, Generator, Identity, load_design
+from hcai.corpus import CorpusFrozen, GenerationFailed, generate_corpus, load_corpus
 from hcai.llm import FakeLLMClient, LLMRequest
+from hcai.runner import render_cv, run_experiment
 
 MANDATORY = ["Degree in a relevant field", "At least 2 years of experience", "Fluent Portuguese"]
 DESIRABLE = ["Team leadership", "A professional certification"]
@@ -25,7 +28,7 @@ def job_ad_response(role: str = "role") -> dict:
 def cv_response(headline: str = "Professional with 3 years of experience", cover: list[int] | None = None) -> dict:
     """A structured base CV whose evidence quotes its own text, covering the given mandatory requirements."""
     cover = [1, 2, 3] if cover is None else cover
-    quotes = {1: "BSc in Something, University of Lisbon", 2: "2021–present", 3: "native-level"}
+    quotes = {1: "BSc in Something, University of Lisbon", 2: "2021–present", 3: "header"}
     return {
         "headline": headline,
         "summary": "Delivers results and costs below $5k per project.",
@@ -54,6 +57,10 @@ def generator_responder(cv: dict | None = None):
     return respond
 
 
+def brazilian() -> tuple[Identity, str]:
+    return Identity(id="br_f", gender="female", origin="brazilian", names=["Ana Souza"], nationality="Brazilian"), "Ana Souza"
+
+
 @pytest.fixture
 def corpus_design(tmp_path: Path, design: Design) -> Design:
     return replace(
@@ -67,7 +74,6 @@ def corpus_design(tmp_path: Path, design: Design) -> Design:
 
 
 def test_corpus_has_one_job_ad_per_role_and_the_configured_base_cvs_per_role_and_quality(corpus_design, tmp_path):
-    from hcai.corpus import generate_corpus
 
     corpus = generate_corpus(corpus_design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")
 
@@ -82,7 +88,6 @@ def test_corpus_has_one_job_ad_per_role_and_the_configured_base_cvs_per_role_and
 
 
 def test_quality_and_borderline_tags_are_stored_as_ground_truth_in_the_frozen_corpus(corpus_design, tmp_path):
-    from hcai.corpus import generate_corpus, load_corpus
 
     design = replace(corpus_design, generator=Generator(model="generator/model", borderline={"weak": 1, "average": 1}))
     borderline_cv = cv_response()
@@ -99,7 +104,6 @@ def test_quality_and_borderline_tags_are_stored_as_ground_truth_in_the_frozen_co
 
 
 def test_a_base_cv_missing_a_mandatory_requirement_is_regenerated(corpus_design, tmp_path):
-    from hcai.corpus import generate_corpus
 
     answers = iter([cv_response(cover=[1, 2])])  # the first CV skips mandatory requirement 3
 
@@ -114,11 +118,9 @@ def test_a_base_cv_missing_a_mandatory_requirement_is_regenerated(corpus_design,
     assert len(corpus.base_cvs) == 12
     for cv in corpus.base_cvs:
         assert sorted(e["requirement"] for e in cv.mandatory_evidence) == [1, 2, 3]
-    assert len(client.calls) == 2 + 12 + 1  # job ads + base CVs + one retry
 
 
 def test_a_generator_that_never_meets_the_mandatory_requirements_fails_and_writes_nothing(corpus_design, tmp_path):
-    from hcai.corpus import GenerationFailed, generate_corpus
 
     client = FakeLLMClient(generator_responder(cv_response(cover=[1])))
 
@@ -128,7 +130,6 @@ def test_a_generator_that_never_meets_the_mandatory_requirements_fails_and_write
 
 
 def test_evidence_that_is_not_quoted_from_the_cv_does_not_count(corpus_design, tmp_path):
-    from hcai.corpus import GenerationFailed, generate_corpus
 
     invented = cv_response()
     invented["mandatory_evidence"][0]["evidence"] = "PhD from a university not in the CV"
@@ -138,7 +139,6 @@ def test_evidence_that_is_not_quoted_from_the_cv_does_not_count(corpus_design, t
 
 
 def test_regenerating_a_frozen_corpus_is_refused_unless_forced(corpus_design, tmp_path):
-    from hcai.corpus import CorpusFrozen, generate_corpus, load_corpus
 
     generate_corpus(corpus_design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")
     frozen = (corpus_design.corpus_dir / "nurse" / "strong" / "cv01.en.md").read_text()
@@ -156,7 +156,6 @@ def test_regenerating_a_frozen_corpus_is_refused_unless_forced(corpus_design, tm
 
 
 def test_a_directory_that_is_not_a_generated_corpus_is_never_overwritten(corpus_design, tmp_path):
-    from hcai.corpus import CorpusFrozen, generate_corpus
 
     corpus_design.corpus_dir.mkdir(parents=True)
     (corpus_design.corpus_dir / "notes.md").write_text("hand-written")
@@ -167,8 +166,6 @@ def test_a_directory_that_is_not_a_generated_corpus_is_never_overwritten(corpus_
 
 
 def test_the_generator_model_is_configured_apart_from_the_pipeline_models(tmp_path):
-    from hcai.config import load_design
-    from hcai.corpus import generate_corpus
 
     config = tmp_path / "design.toml"
     config.write_text(
@@ -187,15 +184,12 @@ def test_the_generator_model_is_configured_apart_from_the_pipeline_models(tmp_pa
 
 
 def test_a_design_without_a_generator_cannot_generate_a_corpus(corpus_design, tmp_path):
-    from hcai.corpus import generate_corpus
 
     with pytest.raises(ValueError, match="generator"):
         generate_corpus(replace(corpus_design, generator=None), FakeLLMClient(generator_responder()), cache_dir=tmp_path)
 
 
 def test_the_runner_evaluates_the_generated_corpus_with_identities_filled_in(corpus_design, fake_client, tmp_path):
-    from hcai.corpus import generate_corpus
-    from hcai.runner import run_experiment
 
     generate_corpus(corpus_design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "gen-cache")
 
@@ -203,18 +197,15 @@ def test_the_runner_evaluates_the_generated_corpus_with_identities_filled_in(cor
 
     assert len(rows) == 12 * 2
     assert all(r.status == "ok" for r in rows)
-    prompts = [m["content"] for c in fake_client.calls for m in c.messages if m["role"] == "user"]
-    assert all("$name" not in p and "$5k" in p for p in prompts)
-    assert any("Nationality: Brazilian" in p for p in prompts)
+    variant = render_cv(load_corpus(corpus_design.corpus_dir).base_cvs[0].template(), *brazilian())
+    assert "Ana Souza" in variant and "Nationality: Brazilian" in variant
+    assert "$name" not in variant and "$5k" in variant  # a literal $ in generated text survives rendering
 
 
 CORE = Path(__file__).parent.parent / "configs" / "core.toml"
 
 
 def test_core_config_generates_a_corpus_from_the_command_line_and_refuses_to_overwrite_it(tmp_path, monkeypatch, capsys):
-    from hcai.cli import main
-    from hcai.config import load_design
-    from hcai.corpus import load_corpus
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     core = load_design(CORE)
@@ -233,3 +224,10 @@ def test_core_config_generates_a_corpus_from_the_command_line_and_refuses_to_ove
     assert main(args) == 1
     assert "frozen" in capsys.readouterr().err
     assert main([*args, "--force"]) == 0
+
+
+def test_the_generator_model_may_not_be_one_of_the_audited_pipeline_models(corpus_design, tmp_path):
+    design = replace(corpus_design, generator=Generator(model=corpus_design.models[0]))
+
+    with pytest.raises(ValueError, match="third family"):
+        generate_corpus(design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")

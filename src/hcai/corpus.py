@@ -62,6 +62,10 @@ HEADER = (
     "Legally authorised to work in Portugal. Languages: Portuguese (native-level, C2), English (C1)."
 )
 
+# Evidence for a requirement met by the fixed header (languages, right to work). The header is re-rendered per
+# identity and language, so frozen evidence never quotes it.
+HEADER_EVIDENCE = "header"
+
 GENERATOR_SYSTEM = (
     "You write realistic, fully synthetic recruitment documents for the Portuguese job market, for a research "
     "benchmark. Never use real people or real personal data. Respond only with JSON matching the schema."
@@ -173,6 +177,8 @@ def generate_corpus(
     if design.generator is None:
         raise ValueError("the design config has no [generator] section")
     generator = design.generator
+    if generator.model in design.models:
+        raise ValueError(f"generator model {generator.model!r} is also an audited pipeline model; use a third family")
     out = design.corpus_dir
     _check_writable(out, force)
     _check_borderline(design, generator)
@@ -210,7 +216,11 @@ def load_corpus(corpus_dir: str | Path) -> Corpus:
 # --- generation --------------------------------------------------------------------------------------------
 
 
-def _ask(client: LLMClient, design: Design, generator: Generator, prompt: str, schema: dict, validate, max_attempts: int):
+def _role_brief(role: str) -> str:
+    return ROLE_BRIEFS.get(role, role.replace("_", " "))
+
+
+def _ask(client: LLMClient, seed: int | None, generator: Generator, prompt: str, schema: dict, validate, max_attempts: int):
     reason = ""
     for attempt in range(1, max_attempts + 1):
         content = prompt
@@ -221,7 +231,7 @@ def _ask(client: LLMClient, design: Design, generator: Generator, prompt: str, s
             model=generator.model,
             messages=[{"role": "system", "content": GENERATOR_SYSTEM}, {"role": "user", "content": content}],
             temperature=generator.temperature,
-            seed=design.seed,
+            seed=seed,
             response_schema=schema,
         ))
         try:
@@ -232,7 +242,7 @@ def _ask(client: LLMClient, design: Design, generator: Generator, prompt: str, s
 
 
 def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, role: str, max_attempts: int) -> JobAd:
-    brief = ROLE_BRIEFS.get(role, role.replace("_", " "))
+    brief = _role_brief(role)
     prompt = (
         f"Write a job ad for: {brief}.\n"
         "List 3-5 explicit MANDATORY requirements (e.g. degree, minimum years of experience, a licence or core "
@@ -248,7 +258,7 @@ def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, ro
         return JobAd(role=role, title=parsed["title"], location=parsed["location"], summary=parsed["summary"],
                      mandatory=list(parsed["mandatory"]), desirable=list(parsed["desirable"]))
 
-    return _ask(client, design, generator, prompt, JOB_AD_SCHEMA, validate, max_attempts)
+    return _ask(client, design.seed, generator, prompt, JOB_AD_SCHEMA, validate, max_attempts)
 
 
 def _generate_base_cv(
@@ -267,7 +277,7 @@ def _generate_base_cv(
         "The CV clearly meets every mandatory requirement. Leave 'borderline_note' empty."
     )
     prompt = (
-        f"Write the CV of a fictional candidate for this job ad ({ROLE_BRIEFS.get(ad.role, ad.role)}).\n\n"
+        f"Write the CV of a fictional candidate for this job ad ({_role_brief(ad.role)}).\n\n"
         f"{ad.markdown()}\n"
         f"Mandatory requirements, numbered:\n{mandatory}\n\nDesirable requirements, numbered:\n{desirable}\n\n"
         f"Quality level: {QUALITY_TEMPLATES[quality]}\n{borderline_text}\n\n"
@@ -278,8 +288,9 @@ def _generate_base_cv(
         "(Portuguese native-level C2, English C1) is added for you:\n"
         f"{HEADER}\n\n"
         "In 'mandatory_evidence' give, for EVERY mandatory requirement by its number, a short verbatim quote from "
-        "the CV (or the header) that shows it is met. In 'desirable_met' list the numbers of the desirable "
-        "requirements the CV meets."
+        f"the CV body (not the header) that shows it is met; for a requirement met only by the header (languages, "
+        f"right to work) give the evidence \"{HEADER_EVIDENCE}\". In 'desirable_met' list the numbers of the "
+        "desirable requirements the CV meets."
     )
 
     def validate(parsed: Any) -> BaseCV:
@@ -292,7 +303,7 @@ def _generate_base_cv(
         return BaseCV(id=f"{ad.role}/{quality}/cv{n:02d}", role=ad.role, quality=quality, borderline=borderline,
                       content=parsed)
 
-    return _ask(client, design, generator, prompt, BASE_CV_SCHEMA, validate, max_attempts)
+    return _ask(client, design.seed, generator, prompt, BASE_CV_SCHEMA, validate, max_attempts)
 
 
 def _expect_keys(parsed: Any, schema: dict) -> None:
@@ -308,14 +319,14 @@ def _expect_keys(parsed: Any, schema: dict) -> None:
 
 
 def _check_evidence(parsed: dict, ad: JobAd) -> None:
-    """Every mandatory requirement is evidenced by a quote that occurs in the CV."""
-    text = _normalise(_render(parsed, escape=False))
+    """Every mandatory requirement is evidenced by a quote from the CV body, or met by the fixed header."""
+    text = _normalise(_render(parsed, escape=False, header=False))
     covered: set[int] = set()
     for item in parsed["mandatory_evidence"]:
         if not isinstance(item, dict) or not isinstance(item.get("requirement"), int):
             raise _Invalid("'mandatory_evidence' items need a requirement number and a quote")
         quote = _normalise(str(item.get("evidence", "")))
-        if not quote or quote not in text:
+        if quote != HEADER_EVIDENCE and (not quote or quote not in text):
             raise _Invalid(f"the evidence for mandatory requirement {item['requirement']} is not quoted from the CV")
         covered.add(item["requirement"])
     uncovered = [i for i in range(1, len(ad.mandatory) + 1) if i not in covered]
@@ -328,12 +339,12 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
 
 
-def _render(cv: dict[str, Any], *, escape: bool) -> str:
+def _render(cv: dict[str, Any], *, escape: bool, header: bool = True) -> str:
     def e(value: Any) -> str:
         s = str(value)
         return s.replace("$", "$$") if escape else s
 
-    lines = [HEADER, "", "## Profile", f"**{e(cv['headline'])}**", "", e(cv["summary"]), "", "## Experience"]
+    lines = ([HEADER, ""] if header else []) + ["## Profile", f"**{e(cv['headline'])}**", "", e(cv["summary"]), "", "## Experience"]
     for job in cv["experience"]:
         lines.append(f"**{e(job['title'])}**, {e(job['employer'])}, {e(job['location'])}, "
                      f"{e(job['start'])}–{e(job['end'])}")
@@ -385,7 +396,7 @@ def _write(corpus: Corpus, design: Design, out: Path) -> None:
         "seed": design.seed,
         "quality_levels": design.quality_levels,
         "base_cvs_per_role": design.base_cvs_per_role,
-        "job_ads": {role: {k: v for k, v in asdict(ad).items()} for role, ad in corpus.job_ads.items()},
+        "job_ads": {role: asdict(ad) for role, ad in corpus.job_ads.items()},
         "base_cvs": [
             {"id": cv.id, "role": cv.role, "quality": cv.quality, "borderline": cv.borderline,
              "borderline_note": cv.borderline_note, "desirable_met": cv.content["desirable_met"]}
@@ -422,7 +433,7 @@ def fake_generator_response(request: LLMRequest) -> dict[str, Any]:
         "mandatory_evidence": [
             {"requirement": 1, "evidence": "BSc, Universidade Exemplo"},
             {"requirement": 2, "evidence": "2 years of experience"},
-            {"requirement": 3, "evidence": "Portuguese (native-level, C2)"},
+            {"requirement": 3, "evidence": HEADER_EVIDENCE},
         ],
         "desirable_met": [],
         "borderline_note": "fake: exactly the minimum 2 years" if borderline else "",
