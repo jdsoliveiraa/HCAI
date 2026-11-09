@@ -322,12 +322,20 @@ Agreed with the student and applied to `ijcai27.tex` and `ijcai27.bib`. The PDF 
 - **E5 milestones:** 15/19/22/24/27 Nov.
 - **E6–E11:** applied, with mixed-quality pools for Ranker quality and a third-family model for CV generation and judging.
 - **E12 bibliography:**
-  - URLs added to the Reuters and Bloomberg entries.
-  - EU AI Act date and ELI added.
+  - URLs added to the Reuters and Bloomberg entries (later removed to save space).
+  - EU AI Act date added (the ELI was later removed to save space).
   - Raghavan pages 469–481 and DOI added (checked via Crossref).
   - EEOC and HLEG entries added.
   - Kusner citation reworded as "inspired by".
 - **E13:** Correll and Russell & Norvig removed.
-- **Still open:**
-  - Orchestration (LangGraph vs plain Python): deferred.
-  - No 2025–26 multi-agent hiring paper added to Background, because none has been checked yet.
+- **Orchestration:** decided on a **sequential CrewAI crew** (Approach "System under test" and Tools now say CrewAI instead of "LangGraph or CrewAI").
+- **Recent work added to Background:** abstracts checked via the arXiv API (full texts not read):
+  - Yashwant et al. 2026, arXiv:2608.26899 (`yashwant2026counterfactual`): LLM agents generate counterfactual CV audits with EU AI Act-aligned fairness metrics (four-fifths rule among them), but candidates are ranked by a sentence-embedding model.
+  - Gao & Jiang 2026, arXiv:2609.19530 (`gao2026agent`): two-agent (employer/candidate) résumé screening changes who advances; the paper does not study demographic bias.
+  - Added sentence: neither paper measures how demographic bias propagates across the agents of a sequential pipeline.
+  - Checked but not cited, for lack of space: Hoffmann et al. 2026 (arXiv:2601.11379; an LLM recruiter on freelancer profiles, minimal average discrimination but intersectional effects) and Anzenberg et al. 2025 (arXiv:2507.02087; LLM impact ratios on real candidate–job pairs).
+- **Space recovered** for the two new references so the PDF stays at 3 pages:
+  - References with ≥4 authors now list the first two names plus "et al.".
+  - URLs dropped from the Reuters and Bloomberg entries; EU AI Act entry shortened to "OJ L, 2024/1689, 12 July 2024"; conference addresses removed.
+  - Three repeated sentences removed: the age / career-gap stretch goal (still listed under Success criteria), the offline-audit-only note, and "Low-cost models keep the API budget small".
+- **Still open:** nothing.
