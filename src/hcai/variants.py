@@ -1,0 +1,219 @@
+"""Identity and language variants of the base CVs, and the demographic-only diff check.
+
+A base CV is a slot template, one file per language (`<corpus>/<role>/<quality>/<id>.<lang>.md`).
+Only these slots change between identities:
+
+- `$name`: the candidate's full name, drawn from the identity's names in the name bank.
+- `$nationality`: the nationality value. It must follow the language's nationality label
+  ("Nationality: $nationality" in EN, "Nacionalidade: $nationality" in PT-PT).
+- `{{masc|fem}}`: a gendered word or phrase (pronouns, PT-PT job titles and adjectives),
+  e.g. `{{He|She}}`, `{{Engenheiro|Engenheira}}`, `{{licenciado|licenciada}}`. Each must be a
+  whole word or phrase, not part of a word, so the diff check can mask it.
+- `$work_eligibility`: the standard right-to-work and Portuguese-proficiency lines, identical for
+  every identity, so origin is not confounded with legal or language requirements.
+
+Everything else is the CV body, which must be byte-identical across the identities of a base CV
+and language. `check_variants` verifies that on the rendered texts.
+"""
+
+from __future__ import annotations
+
+import csv
+import difflib
+import hashlib
+import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from string import Template
+
+from hcai.config import Design, Identity
+
+NATIONALITY_LABEL = {"en": "Nationality", "pt": "Nacionalidade"}
+
+WORK_ELIGIBILITY = {
+    "en": (
+        "Right to work in Portugal: yes (no visa sponsorship required)",
+        "Portuguese: native-level proficiency (C2)",
+    ),
+    "pt": (
+        "Autorização para trabalhar em Portugal: sim (não necessita de visto)",
+        "Português: proficiência de nível nativo (C2)",
+    ),
+}
+
+# English pronouns are always masked by the diff check, also when a template forgot the alternation.
+PRONOUN_PAIRS = [
+    ("he", "she"), ("He", "She"), ("him", "her"), ("his", "her"), ("His", "Her"),
+    ("himself", "herself"), ("Mr", "Ms"),
+]
+
+_ALTERNATION = re.compile(r"\{\{([^{}|]*)\|([^{}|]*)\}\}")
+_GENDER_INDEX = {"male": 0, "female": 1}
+
+
+class TemplateError(ValueError):
+    """A base-CV template breaks the slot rules (see the module docstring)."""
+
+
+@dataclass(frozen=True)
+class Variant:
+    id: str  # <base_cv>/<identity>/<language>, e.g. "nurse/high/cv01/br_f/pt"
+    base_cv: str  # <role>/<quality>/<cv id>
+    identity: str
+    gender: str
+    origin: str
+    name: str
+    nationality: str
+    language: str
+    text: str
+
+
+def pick_name(identity: Identity, base_cv: str) -> str:
+    """The identity's name for this base CV: stable across runs and languages, spread over the names."""
+    digest = hashlib.sha256(f"{base_cv}|{identity.id}".encode()).digest()
+    return identity.names[int.from_bytes(digest[:8], "big") % len(identity.names)]
+
+
+def gendered_pairs(template: str) -> list[tuple[str, str]]:
+    """The `{{masc|fem}}` alternations of a template, in order of first appearance."""
+    return list(dict.fromkeys(_ALTERNATION.findall(template)))
+
+
+def render_variant(template: str, *, name: str, nationality: str, gender: str, language: str) -> str:
+    """Fill a base-CV template's demographic slots for one identity in one language."""
+    _validate_template(template, language)
+    text = _ALTERNATION.sub(lambda m: m.group(1 + _GENDER_INDEX[gender]), template)
+    return Template(text).substitute(
+        name=name, nationality=nationality, work_eligibility="\n".join(WORK_ELIGIBILITY[language]),
+    )
+
+
+def _validate_template(template: str, language: str) -> None:
+    if language not in WORK_ELIGIBILITY:
+        raise TemplateError(f"unsupported language {language!r}; expected one of {sorted(WORK_ELIGIBILITY)}")
+    label = NATIONALITY_LABEL[language]
+    if template.count("$nationality") != template.count(f"{label}: $nationality"):
+        raise TemplateError(f"$nationality must follow the label '{label}: ' in {language} templates")
+    for m in _ALTERNATION.finditer(template):
+        before, after = template[m.start() - 1: m.start()], template[m.end(): m.end() + 1]
+        if before.isalnum() or after.isalnum():
+            raise TemplateError(f"gendered alternation {m.group(0)!r} must be a whole word, not part of one")
+
+
+def base_cv_templates(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:
+    """(base CV id, template) for the first `base_cvs_per_role` base CVs of a role x quality in a language."""
+    folder = design.corpus_dir / role / quality
+    files = sorted(folder.glob(f"*.{language}.md"))[: design.base_cvs_per_role]
+    return [(f"{role}/{quality}/{f.name.removesuffix(f'.{language}.md')}", f.read_text()) for f in files]
+
+
+def build_variants(design: Design) -> list[Variant]:
+    """Render every base CV x identity x language of the design, then check the variants.
+
+    The base CVs are taken from the first language; every one must exist in every language.
+    Raises `VariantCheckError` if variants of a base CV differ in anything but demographic cues.
+    """
+    variants: list[Variant] = []
+    problems: list[str] = []
+    for role in design.roles:
+        for quality in design.quality_levels:
+            for base_cv, _ in base_cv_templates(design, role, quality, design.languages[0]):
+                for language in design.languages:
+                    template = _read_template(design, base_cv, language)
+                    group = [_render(template, base_cv, identity, language) for identity in design.identities]
+                    problems += check_variants(group, gendered_pairs(template))
+                    variants += group
+    if problems:
+        raise VariantCheckError(problems)
+    return variants
+
+
+def _read_template(design: Design, base_cv: str, language: str) -> str:
+    path = design.corpus_dir / f"{base_cv}.{language}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"base CV {base_cv} has no {language} version at {path}")
+    return path.read_text()
+
+
+def _render(template: str, base_cv: str, identity: Identity, language: str) -> Variant:
+    name, nationality = pick_name(identity, base_cv), identity.nationality_in(language)
+    try:
+        text = render_variant(template, name=name, nationality=nationality, gender=identity.gender, language=language)
+    except TemplateError as e:
+        raise TemplateError(f"{base_cv}.{language}: {e}") from e
+    return Variant(
+        id=f"{base_cv}/{identity.id}/{language}", base_cv=base_cv, identity=identity.id,
+        gender=identity.gender, origin=identity.origin, name=name, nationality=nationality, language=language,
+        text=text,
+    )
+
+
+class VariantCheckError(Exception):
+    def __init__(self, problems: list[str]):
+        super().__init__(f"{len(problems)} variant check problem(s):\n" + "\n".join(problems))
+        self.problems = problems
+
+
+def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, str]] = ()) -> list[str]:
+    """Problems with variants of one base CV: missing work-eligibility lines, or non-demographic differences.
+
+    Variants are compared within each (base CV, language) group after masking the demographic cues:
+    the name, the nationality value after its label, and both forms of every gendered pair (the
+    template's `gendered` alternations plus English pronouns). An empty list means the check passed.
+    """
+    classes = _form_classes([*gendered, *PRONOUN_PAIRS])
+    problems: list[str] = []
+    groups: dict[tuple[str, str], list[Variant]] = {}
+    for v in variants:
+        groups.setdefault((v.base_cv, v.language), []).append(v)
+        missing = [line for line in WORK_ELIGIBILITY[v.language] if line not in v.text.splitlines()]
+        if missing:
+            problems.append(f"{v.id}: missing work-eligibility line(s): {missing}")
+    for group in groups.values():
+        reference, ref_masked = group[0], _mask(group[0], classes)
+        for v in group[1:]:
+            diff = list(difflib.unified_diff(ref_masked, _mask(v, classes), reference.id, v.id, lineterm="", n=0))
+            if diff:
+                problems.append(f"{v.id}: differs from {reference.id} beyond demographic cues:\n" + "\n".join(diff))
+    return problems
+
+
+def _mask(v: Variant, classes: list[list[str]]) -> list[str]:
+    label = NATIONALITY_LABEL[v.language]
+    text = v.text.replace(v.name, "\0NAME\0").replace(f"{label}: {v.nationality}", f"{label}: \0NATIONALITY\0")
+    for i, forms in enumerate(classes):
+        alternatives = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
+        text = re.sub(rf"(?<!\w)(?:{alternatives})(?!\w)", f"\0G{i}\0", text)
+    return [line.rstrip() for line in text.strip().splitlines()]
+
+
+def _form_classes(pairs: Iterable[tuple[str, str]]) -> list[list[str]]:
+    """Merge gendered pairs that share a form (him/her, his/her) so all their forms mask to one token."""
+    classes: list[set[str]] = []
+    for pair in pairs:
+        forms = {f for f in pair if f}
+        overlapping = [c for c in classes if c & forms]
+        for c in overlapping:
+            forms |= c
+            classes.remove(c)
+        classes.append(forms)
+    return [sorted(c) for c in classes]
+
+
+def write_variants(variants: Sequence[Variant], out_dir: str | Path) -> Path:
+    """Write each variant to `<out>/<base_cv>/<identity>.<language>.md` and a `variants.csv` manifest."""
+    out = Path(out_dir)
+    for v in variants:
+        path = out / v.base_cv / f"{v.identity}.{v.language}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(v.text)
+    manifest = out / "variants.csv"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    with manifest.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "base_cv", "identity", "gender", "origin", "name", "nationality", "language", "path"])
+        for v in variants:
+            writer.writerow([v.id, v.base_cv, v.identity, v.gender, v.origin, v.name, v.nationality, v.language,
+                             f"{v.base_cv}/{v.identity}.{v.language}.md"])
+    return manifest

@@ -26,6 +26,19 @@ Options: `--out DIR` (default `results/`) and `--cache DIR` (default `.cache/llm
 - **Cache:** every LLM call is cached on disk, keyed by the hash of the full request (model, messages, temperature, seed, schema). A rerun with the same config makes no calls and costs nothing. Unparseable structured outputs are not cached, so a rerun retries them. Delete `.cache/llm` to force fresh calls.
 - **Corpus layout:** base CVs are `data/corpus/<role>/<quality>/<id>.<lang>.md` templates with `$name` and `$nationality` placeholders; job ads are `data/corpus/<role>/job_ad.<lang>.md`.
 
+## Identity and language variants
+
+Each base CV is rendered into 8 identity variants (2 genders × 4 origins: Portuguese, Brazilian, PALOP represented by Cape Verde, Eastern European represented by Ukraine) in every language of the design (EN, PT-PT). Only demographic cues change: the name, the nationality, pronouns and PT-PT grammatical gender. Every variant also states the right to work in Portugal and native-level (C2) Portuguese.
+
+```sh
+uv run hcai variants configs/variants.toml               # render + check, write data/variants/
+uv run hcai run configs/variants.toml --fake-llm         # evaluate the same 16 variants
+```
+
+- **Name bank:** `data/names/name_bank.toml` has 4 full names per gender × origin, the nationality per language, and the public frequency sources they come from. Each base CV × identity gets one name, picked by a stable hash, so a name stays the same across languages. Set `name_bank = "..."` in a config's `[design]` to use every gender × origin of the bank as the identities.
+- **Templates:** base CVs are slot templates (`<id>.en.md`, `<id>.pt.md`) with `$name`, `Nationality: $nationality` (`Nacionalidade: $nationality` in PT-PT), `$work_eligibility` (the standard right-to-work and proficiency lines) and `{{masc|fem}}` for whole gendered words, e.g. `{{He|She}}`, `{{Engenheiro|Engenheira}}`, `{{licenciado|licenciada}}`. See `src/hcai/variants.py`.
+- **Diff check:** within each base CV × language, the variants are compared after masking the name, the nationality value, pronouns and the gendered pairs. Any other difference, or a missing right-to-work / proficiency line, fails the check, and `hcai variants` exits with status 1 without writing anything.
+
 ## Tests
 
 ```sh

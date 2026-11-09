@@ -5,11 +5,11 @@ from __future__ import annotations
 import csv
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from string import Template
 
 from hcai.config import Design, Identity
 from hcai.evaluator import MalformedOutput, evaluate
 from hcai.llm import CachedClient, LLMClient
+from hcai.variants import pick_name, render_variant
 
 
 @dataclass(frozen=True)
@@ -33,8 +33,9 @@ class ResultRow:
     error: str
 
 
-def render_cv(template: str, identity: Identity, name: str) -> str:
-    return Template(template).substitute(name=name, nationality=identity.nationality)
+def render_cv(template: str, identity: Identity, name: str, language: str = "en") -> str:
+    return render_variant(template, name=name, nationality=identity.nationality_in(language),
+                          gender=identity.gender, language=language)
 
 
 def _base_cvs(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:
@@ -52,8 +53,8 @@ def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> 
             for quality in design.quality_levels:
                 for base_id, template in _base_cvs(design, role, quality, language):
                     for identity in design.identities:
-                        name = identity.names[0]
-                        cv = render_cv(template, identity, name)
+                        name = pick_name(identity, base_id)
+                        cv = render_cv(template, identity, name, language)
                         for condition in design.conditions:
                             for model in design.models:
                                 rows.append(_run_evaluator(cached, design, job_ad, cv, base_id, identity, name, language, condition, model))
