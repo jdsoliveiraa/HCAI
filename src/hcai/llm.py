@@ -38,6 +38,7 @@ class LLMResponse:
     text: str
     parsed: Any = None
     usage: Usage = field(default_factory=Usage)
+    cached: bool = False  # served from the cache: no call was made and nothing was spent
 
 
 class LLMClient(Protocol):
@@ -112,7 +113,10 @@ class OpenRouterClient:
 
 
 class CachedClient:
-    """Wraps a client; responses are stored on disk keyed by the hash of the full request."""
+    """Wraps a client; responses are stored on disk keyed by the hash of the full request.
+
+    Responses to a structured request that failed to parse are not cached.
+    """
 
     def __init__(self, inner: LLMClient, cache_dir: str | Path):
         self.inner = inner
@@ -123,8 +127,10 @@ class CachedClient:
         path = self.cache_dir / f"{request.cache_key()}.json"
         if path.exists():
             cached = json.loads(path.read_text())
-            return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage(**cached["usage"]))
+            return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage(**cached["usage"]), cached=True)
         response = self.inner.complete(request)
+        if request.response_schema is not None and response.parsed is None:
+            return response  # malformed structured output: don't cache it, so a rerun retries the call
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"request": asdict(request), **asdict(response)}, ensure_ascii=False))
         tmp.replace(path)

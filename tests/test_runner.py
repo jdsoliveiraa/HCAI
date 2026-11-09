@@ -31,7 +31,8 @@ def test_second_run_against_same_cache_makes_no_calls(design, tmp_path):
 
     assert len(first_client.calls) == 2
     assert second_client.calls == []
-    assert second == first
+    assert [replace(r, cached=False) for r in second] == first
+    assert all(r.cached for r in second) and not any(r.cached for r in first)
 
 
 def test_changing_any_request_field_misses_the_cache(design, tmp_path):
@@ -67,3 +68,13 @@ def test_results_table_round_trips_through_csv(design, fake_client, tmp_path):
                    "score", "rationale", "prompt_tokens", "completion_tokens", "cost", "status"]:
         assert column in header
     assert read_results(path) == rows
+
+
+def test_malformed_output_is_not_cached_so_a_rerun_retries_it(design, tmp_path):
+    run_experiment(design, FakeLLMClient(lambda request: "not json"), cache_dir=tmp_path / "cache")
+    client = FakeLLMClient(scores_by_name({"João Silva": 70, "Ana Souza": 65}))
+
+    rows = run_experiment(design, client, cache_dir=tmp_path / "cache")
+
+    assert len(client.calls) == 2
+    assert all(r.status == "ok" for r in rows)

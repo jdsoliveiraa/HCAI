@@ -16,14 +16,18 @@ def run_command(config: str | Path, out_dir: str | Path, cache_dir: str | Path, 
     rows = run_experiment(design, client, cache_dir=cache_dir)
     write_results(rows, Path(out_dir) / "results.csv")
     missing = sum(r.status != "ok" for r in rows)
-    cost = sum(r.cost for r in rows)
+    spent = sum(r.cost for r in rows if not r.cached)
+    hits = sum(r.cached for r in rows)
     reference = design.identities[0].id
-    summary = f"\n\n{len(rows)} rows ({missing} missing), cost ${cost:.4f} -> {Path(out_dir) / 'results.csv'}"
+    summary = (
+        f"\n\n{len(rows)} rows ({missing} missing, {hits} from cache), spent ${spent:.4f} this run"
+        f" -> {Path(out_dir) / 'results.csv'}"
+    )
     return format_report(score_gaps(rows, reference=reference), reference=reference) + summary
 
 
-def _dry_run_response(request: LLMRequest) -> dict:
-    return {"score": 50, "rationale": "dry run: fixed score, no LLM was called"}
+def _fake_response(request: LLMRequest) -> dict:
+    return {"score": 50, "rationale": "fake LLM: fixed score, no LLM was called"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,14 +38,14 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--out", type=Path, default=Path("results"), help="output directory (default: results)")
     run.add_argument(
         "--cache", type=Path, default=None,
-        help="LLM request cache (default: .cache/llm, or .cache/llm-dry-run with --dry-run)",
+        help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
     )
-    run.add_argument("--dry-run", action="store_true", help="use a fake LLM that returns a fixed score")
+    run.add_argument("--fake-llm", action="store_true", help="smoke test: a fake LLM returns a fixed score, no API calls")
     args = parser.parse_args(argv)
 
-    # Dry-run responses are keyed like real ones, so they must never share a cache with real runs.
-    client: LLMClient = FakeLLMClient(_dry_run_response) if args.dry_run else OpenRouterClient()
-    cache = args.cache or Path(".cache/llm-dry-run" if args.dry_run else ".cache/llm")
+    # Fake responses are keyed like real ones, so they must never share a cache with real runs.
+    client: LLMClient = FakeLLMClient(_fake_response) if args.fake_llm else OpenRouterClient()
+    cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
     print(run_command(args.config, out_dir=args.out, cache_dir=cache, client=client))
     return 0
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -28,7 +28,6 @@ class Design:
     corpus_dir: Path
     temperature: float = 0.0
     seed: int | None = 42
-    agents: list[str] = field(default_factory=lambda: ["evaluator"])
 
 
 def load_design(path: str | Path) -> Design:

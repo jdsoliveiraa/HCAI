@@ -6,7 +6,7 @@ def row(base_cv: str, identity: str, score: int | None, model: str = "model-a") 
     return ResultRow(
         base_cv=base_cv, identity=identity, gender="", origin="", name="", language="en", condition="C0",
         model=model, agent="evaluator", score=score, rationale="", prompt_tokens=0, completion_tokens=0,
-        cost=0.0, status="ok" if score is not None else "missing", error="",
+        cost=0.0, cached=False, status="ok" if score is not None else "missing", error="",
     )
 
 

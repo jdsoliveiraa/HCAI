@@ -31,6 +31,7 @@ class Evaluation:
     score: int
     rationale: str
     usage: Usage
+    cached: bool
 
 
 def evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, temperature: float, seed: int | None) -> Evaluation:
@@ -50,4 +51,4 @@ def evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, temperature
         raise MalformedOutput(f"unparseable Evaluator output: {response.text[:200]!r}")
     if not 0 <= p["score"] <= 100:
         raise MalformedOutput(f"score out of range: {p['score']}")
-    return Evaluation(score=p["score"], rationale=p["rationale"], usage=response.usage)
+    return Evaluation(score=p["score"], rationale=p["rationale"], usage=response.usage, cached=response.cached)

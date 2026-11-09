@@ -17,13 +17,13 @@ export OPENROUTER_API_KEY=sk-or-...   # only needed for real runs
 
 ```sh
 uv run hcai run configs/skeleton.toml                # real run through OpenRouter
-uv run hcai run configs/skeleton.toml --dry-run      # fake LLM, fixed score, no API key needed
+uv run hcai run configs/skeleton.toml --fake-llm     # smoke test: fake LLM, fixed score, no API key needed
 ```
 
-Options: `--out DIR` (default `results/`) and `--cache DIR` (default `.cache/llm`; dry runs use `.cache/llm-dry-run` so fake responses never reach a real run).
+Options: `--out DIR` (default `results/`) and `--cache DIR` (default `.cache/llm`; `--fake-llm` uses `.cache/llm-fake` so fake responses never reach a real run).
 
-- **Results table:** `results/results.csv`, one row per base CV × identity × language × condition × model × agent, with the score, rationale, token counts, cost and an `ok`/`missing` status.
-- **Cache:** every LLM call is cached on disk, keyed by the hash of the full request (model, messages, temperature, seed, schema). A rerun with the same config makes no calls and costs nothing. Delete `.cache/llm` to force fresh calls.
+- **Results table:** `results/results.csv`, one row per base CV × identity × language × condition × model × agent, with the score, rationale, token counts, cost, a `cached` flag and an `ok`/`missing` status. The printed summary shows what this run actually spent (cache hits cost nothing).
+- **Cache:** every LLM call is cached on disk, keyed by the hash of the full request (model, messages, temperature, seed, schema). A rerun with the same config makes no calls and costs nothing. Unparseable structured outputs are not cached, so a rerun retries them. Delete `.cache/llm` to force fresh calls.
 - **Corpus layout:** base CVs are `data/corpus/<role>/<quality>/<id>.<lang>.md` templates with `$name` and `$nationality` placeholders; job ads are `data/corpus/<role>/job_ad.<lang>.md`.
 
 ## Tests
