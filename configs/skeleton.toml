@@ -1,0 +1,30 @@
+# Thin skeleton design: 1 role, 1 hand-written base CV, 2 identities, EN, condition C0.
+# Scale up by adding levels; no code changes needed.
+
+[design]
+roles = ["data_analyst"]
+quality_levels = ["high"]
+base_cvs_per_role = 1
+languages = ["en"]
+conditions = ["C0"]
+# Placeholder pipeline model; the concrete ids are chosen in the pilot.
+models = ["openai/gpt-4o-mini"]
+temperature = 0.0
+seed = 42
+# Base CVs live at <corpus_dir>/<role>/<quality>/<id>.<lang>.md, job ads at <corpus_dir>/<role>/job_ad.<lang>.md.
+# CV templates use $name and $nationality placeholders. Relative to this file.
+corpus_dir = "../data/corpus"
+
+[[identities]]
+id = "pt_m"
+gender = "male"
+origin = "portuguese"
+names = ["Tiago Martins"]
+nationality = "Portuguese"
+
+[[identities]]
+id = "br_f"
+gender = "female"
+origin = "brazilian"
+names = ["Ana Clara Souza"]
+nationality = "Brazilian"
