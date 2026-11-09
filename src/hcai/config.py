@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -14,6 +14,16 @@ class Identity:
     origin: str
     names: list[str]
     nationality: str
+
+
+@dataclass(frozen=True)
+class Generator:
+    """The CV/job-ad generator: a third model family, configured apart from the audited pipeline models."""
+
+    model: str
+    temperature: float = 0.7
+    # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
+    borderline: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -28,6 +38,7 @@ class Design:
     corpus_dir: Path
     temperature: float = 0.0
     seed: int | None = 42
+    generator: Generator | None = None
 
 
 def load_design(path: str | Path) -> Design:
@@ -39,11 +50,12 @@ def load_design(path: str | Path) -> Design:
         roles=list(d["roles"]),
         quality_levels=list(d["quality_levels"]),
         base_cvs_per_role=int(d["base_cvs_per_role"]),
-        identities=[Identity(**i) for i in raw["identities"]],
+        identities=[Identity(**i) for i in raw.get("identities", [])],
         languages=list(d["languages"]),
         conditions=list(d["conditions"]),
         models=list(d["models"]),
         corpus_dir=(path.parent / d["corpus_dir"]).resolve(),
         temperature=float(d.get("temperature", 0.0)),
         seed=d.get("seed", 42),
+        generator=Generator(**raw["generator"]) if "generator" in raw else None,
     )
