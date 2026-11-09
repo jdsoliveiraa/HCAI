@@ -1,7 +1,6 @@
+import csv
 from dataclasses import replace
 from pathlib import Path
-
-import csv
 
 import pytest
 
@@ -182,11 +181,25 @@ def test_the_name_is_a_demographic_cue_wherever_it_appears(variant_design):
     assert len(build_variants(variant_design)) == 64  # no VariantCheckError
 
 
+def test_diff_check_fails_for_a_variant_with_the_other_gender_s_form(variant_design):
+    template = (variant_design.corpus_dir / "data_analyst/high/cv01.pt.md").read_text()
+    group = _variant_group(variant_design)
+    male = next(v for v in group if v.gender == "male")
+    leaked = replace(male, text=male.text.replace("licenciado em", "licenciada em"))
+
+    problems = check_variants([leaked if v is male else v for v in group], gendered_pairs(template))
+
+    assert any(leaked.id in p and "licenciada" in p for p in problems)
+
+
 @pytest.mark.parametrize("template, language", [
     ("# $name\nCitizen of $nationality\n", "en"),  # nationality without its label
     ("# $name\nNationality: $nationality\n", "pt"),  # EN label in a PT template
     ("# $name\nEngenheir{{o|a}} de Dados\n", "pt"),  # alternation inside a word
     ("# $name\n", "fr"),  # unsupported language
+    ("# $name\n{{He|She}} leads; she owns the roadmap.\n", "en"),  # a pronoun outside a slot
+    ("# $name\nEngenheiro de Dados, 2022\n", "pt"),  # a PT gendered job title outside a slot
+    ("# $name\nLicenciada em Gestão\n", "pt"),  # a PT gendered adjective outside a slot
 ])
 def test_templates_that_break_the_slot_rules_are_rejected(template, language):
     with pytest.raises(TemplateError):
@@ -209,6 +222,24 @@ def test_the_runner_evaluates_exactly_the_variant_texts(variant_design, tmp_path
     assert {(r.base_cv, r.identity, r.language, r.name) for r in rows} == {
         (v.base_cv, v.identity, v.language, v.name) for v in variants
     }
+
+
+def test_a_gendered_word_marked_invariant_is_kept_for_every_identity(variant_design):
+    v = render_variant("# $name\nReporta ao {{Diretor Financeiro|Diretor Financeiro}}.\n",
+                       name="Rita Sousa", nationality="Portuguesa", gender="female", language="pt")
+
+    assert "Reporta ao Diretor Financeiro." in v
+
+
+def test_the_runner_checks_the_variants_before_any_llm_call(variant_design, tmp_path):
+    path = variant_design.corpus_dir / "nurse/high/cv02.en.md"
+    path.write_text(path.read_text().replace("Built SQL pipelines.", "She built SQL pipelines."))
+    client = FakeLLMClient(lambda request: {"score": 50, "rationale": "ok"})
+
+    with pytest.raises(TemplateError, match="nurse/high/cv02"):
+        run_experiment(variant_design, client, cache_dir=tmp_path / "cache")
+
+    assert client.calls == []
 
 
 def test_variants_command_writes_the_checked_variants_and_a_manifest(variant_design, tmp_path, capsys):

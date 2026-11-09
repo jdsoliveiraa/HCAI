@@ -23,7 +23,7 @@ import difflib
 import hashlib
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from string import Template
 
@@ -48,12 +48,41 @@ PRONOUN_PAIRS = [
     ("himself", "herself"), ("Mr", "Ms"),
 ]
 
+# Gendered words that a template may only use inside a `{{masc|fem}}` slot (matched case-insensitively,
+# as whole words), so no masculine or feminine form leaks into the other gender's variants. A word that
+# does not refer to the candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`.
+SLOT_ONLY_WORDS = {
+    "en": {"he", "she", "him", "her", "his", "hers", "himself", "herself", "mr", "ms", "mrs"},
+    "pt": {
+        form
+        for masc, fem in [
+            ("engenheiro", "engenheira"), ("enfermeiro", "enfermeira"), ("técnico", "técnica"),
+            ("diretor", "diretora"), ("coordenador", "coordenadora"), ("gestor", "gestora"),
+            ("programador", "programadora"), ("auditor", "auditora"), ("consultor", "consultora"),
+            ("supervisor", "supervisora"), ("colaborador", "colaboradora"),
+            ("licenciado", "licenciada"), ("mestrado", "mestrada"), ("doutorado", "doutorada"),
+            ("formado", "formada"), ("certificado", "certificada"), ("dedicado", "dedicada"),
+            ("motivado", "motivada"), ("organizado", "organizada"), ("proativo", "proativa"),
+            ("empenhado", "empenhada"), ("ele", "ela"), ("dele", "dela"),
+        ]
+        for form in (masc, fem)
+    },
+}
+
 _ALTERNATION = re.compile(r"\{\{([^{}|]*)\|([^{}|]*)\}\}")
 _GENDER_INDEX = {"male": 0, "female": 1}
 
 
 class TemplateError(ValueError):
     """A base-CV template breaks the slot rules (see the module docstring)."""
+
+
+class VariantCheckError(Exception):
+    """Variants of a base CV differ beyond demographic cues (see `check_variants`)."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__(f"{len(problems)} variant check problem(s):\n" + "\n".join(problems))
+        self.problems = problems
 
 
 @dataclass(frozen=True)
@@ -99,6 +128,13 @@ def _validate_template(template: str, language: str) -> None:
         before, after = template[m.start() - 1: m.start()], template[m.end(): m.end() + 1]
         if before.isalnum() or after.isalnum():
             raise TemplateError(f"gendered alternation {m.group(0)!r} must be a whole word, not part of one")
+    unslotted = sorted({
+        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", template)) if w.lower() in SLOT_ONLY_WORDS[language]
+    })
+    if unslotted:
+        raise TemplateError(
+            f"gendered word(s) {unslotted} outside a {{{{masc|fem}}}} slot; write {{{{X|X}}}} if one does not refer to the candidate"
+        )
 
 
 def base_cv_templates(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:
@@ -149,20 +185,17 @@ def _render(template: str, base_cv: str, identity: Identity, language: str) -> V
     )
 
 
-class VariantCheckError(Exception):
-    def __init__(self, problems: list[str]):
-        super().__init__(f"{len(problems)} variant check problem(s):\n" + "\n".join(problems))
-        self.problems = problems
-
-
 def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, str]] = ()) -> list[str]:
     """Problems with variants of one base CV: missing work-eligibility lines, or non-demographic differences.
 
     Variants are compared within each (base CV, language) group after masking the demographic cues:
     the name, the nationality value after its label, and both forms of every gendered pair (the
-    template's `gendered` alternations plus English pronouns). An empty list means the check passed.
+    template's `gendered` alternations plus English pronouns). Each variant must also not contain the
+    other gender's form of a `gendered` pair. An empty list means the check passed.
     """
+    gendered = list(gendered)
     classes = _form_classes([*gendered, *PRONOUN_PAIRS])
+    other_forms = _other_gender_forms(gendered)
     problems: list[str] = []
     groups: dict[tuple[str, str], list[Variant]] = {}
     for v in variants:
@@ -170,6 +203,9 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
         missing = [line for line in WORK_ELIGIBILITY[v.language] if line not in v.text.splitlines()]
         if missing:
             problems.append(f"{v.id}: missing work-eligibility line(s): {missing}")
+        leaked = [f for f in other_forms[v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", v.text)]
+        if leaked:
+            problems.append(f"{v.id}: {v.gender} variant has the other gender's form(s): {leaked}")
     for group in groups.values():
         reference, ref_masked = group[0], _mask(group[0], classes)
         for v in group[1:]:
@@ -186,6 +222,12 @@ def _mask(v: Variant, classes: list[list[str]]) -> list[str]:
         alternatives = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
         text = re.sub(rf"(?<!\w)(?:{alternatives})(?!\w)", f"\0G{i}\0", text)
     return [line.rstrip() for line in text.strip().splitlines()]
+
+
+def _other_gender_forms(pairs: list[tuple[str, str]]) -> dict[str, list[str]]:
+    """Per gender, the forms only the other gender uses (forms of invariant `{{X|X}}` pairs are excluded)."""
+    masc, fem = {m for m, _ in pairs}, {f for _, f in pairs}
+    return {"male": sorted(fem - masc), "female": sorted(masc - fem)}
 
 
 def _form_classes(pairs: Iterable[tuple[str, str]]) -> list[list[str]]:
@@ -211,9 +253,9 @@ def write_variants(variants: Sequence[Variant], out_dir: str | Path) -> Path:
     manifest = out / "variants.csv"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     with manifest.open("w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["id", "base_cv", "identity", "gender", "origin", "name", "nationality", "language", "path"])
+        columns = [f.name for f in fields(Variant) if f.name != "text"]
+        writer = csv.DictWriter(f, fieldnames=[*columns, "path"])
+        writer.writeheader()
         for v in variants:
-            writer.writerow([v.id, v.base_cv, v.identity, v.gender, v.origin, v.name, v.nationality, v.language,
-                             f"{v.base_cv}/{v.identity}.{v.language}.md"])
+            writer.writerow({c: getattr(v, c) for c in columns} | {"path": f"{v.base_cv}/{v.identity}.{v.language}.md"})
     return manifest

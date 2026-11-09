@@ -7,7 +7,7 @@ from hcai.config import Design, Identity
 from hcai.llm import FakeLLMClient, LLMRequest
 
 JOB_AD = "Data Analyst. Mandatory: SQL, Python. Desirable: dashboards."
-BASE_CV = "$name\nNationality: $nationality\nRight to work in Portugal.\n\nSQL, Python, 3 years of experience."
+BASE_CV = "$name\nNationality: $nationality\n$work_eligibility\n\nSQL, Python, 3 years of experience."
 
 
 @pytest.fixture(autouse=True)

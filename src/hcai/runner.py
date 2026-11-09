@@ -9,7 +9,7 @@ from pathlib import Path
 from hcai.config import Design, Identity
 from hcai.evaluator import MalformedOutput, evaluate
 from hcai.llm import CachedClient, LLMClient
-from hcai.variants import pick_name, render_variant
+from hcai.variants import build_variants, pick_name, render_variant
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ def _base_cvs(design: Design, role: str, quality: str, language: str) -> list[tu
 
 
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
+    build_variants(design)  # renders and checks every variant, so a bad template fails before any LLM call
     cached = CachedClient(client, cache_dir)
     rows: list[ResultRow] = []
     for role in design.roles:
