@@ -101,6 +101,11 @@ class ClientLLM(BaseLLM):
         text = messages if isinstance(messages, str) else "".join(str(m.get("content", "")) for m in messages)
         return len(text) // 4 + 1
 
+    @property
+    def called(self) -> bool:
+        """Whether the crew has called this agent's LLM."""
+        return bool(self._responses)
+
     def output(self, validate: Any, error: str = "") -> AgentOutput:
         """This agent's result: `validate(parsed)` returns an error message, or "" when the output is valid."""
         usage = Usage(
@@ -184,10 +189,10 @@ def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, 
         crew.kickoff()
     except Exception as e:  # noqa: BLE001 - any crew failure is recorded as missing data, not a crash
         failed = f"crew failed: {type(e).__name__}: {e}"
-        screening = screener_llm.output(_check_screening, error="" if screener_llm._responses else failed)
-        return screening, (evaluator_llm.output(_check_evaluation, error=failed) if evaluator_llm._responses else None)
+        screening = screener_llm.output(_check_screening, error="" if screener_llm.called else failed)
+        return screening, (evaluator_llm.output(_check_evaluation, error=failed) if evaluator_llm.called else None)
     screening = screener_llm.output(_check_screening)
-    if not evaluator_llm._responses:
+    if not evaluator_llm.called:
         return screening, None
     return screening, evaluator_llm.output(_check_evaluation)
 
@@ -212,7 +217,7 @@ def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperat
         agent=ranker,
     )
 
-    def check(p: Any) -> str:
+    def check_ranking(p: Any) -> str:
         if not isinstance(p, dict) or not isinstance(p.get("ranking"), list) or not isinstance(p.get("rationale"), str):
             return "unparseable Ranker output"
         if sorted(p["ranking"]) != list(range(1, n + 1)):
@@ -222,5 +227,5 @@ def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperat
     try:
         Crew(agents=[ranker], tasks=[task], process=Process.sequential, verbose=False).kickoff()
     except Exception as e:  # noqa: BLE001
-        return llm.output(check, error=f"crew failed: {type(e).__name__}: {e}")
-    return llm.output(check)
+        return llm.output(check_ranking, error=f"crew failed: {type(e).__name__}: {e}")
+    return llm.output(check_ranking)

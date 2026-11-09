@@ -185,12 +185,12 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | N
     ranks = {label: r for r, label in enumerate(out.parsed["ranking"], start=1)} if out and out.parsed else {}
     for position, v in enumerate(order, start=1):
         assert out is not None
-        rank_ = ranks.get(position)
+        position_rank = ranks.get(position)
         rows.append(ResultRow(
             **ctx.key(v, "ranker"), score=None, rationale=out.parsed["rationale"] if out.parsed else "",
             **(_usage(out) if position == 1 else {**_NO_CALL, "cached": out.cached}),
             status="ok" if out.parsed else "missing", error=out.error, **pool_cols, input_position=position,
-            rank=rank_, top3=None if rank_ is None else rank_ <= 3, order_seed=seed,
+            rank=position_rank, top3=None if position_rank is None else position_rank <= 3, order_seed=seed,
         ))
     for v in pool.members:
         if v in eligible:
