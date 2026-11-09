@@ -7,7 +7,7 @@ from hcai.runner import read_results, run_experiment, write_results
 
 
 def test_one_evaluator_row_per_cv_identity_with_score_and_tokens(design, fake_client, tmp_path):
-    rows = run_experiment(design, fake_client, cache_dir=tmp_path / "cache")
+    rows = [r for r in run_experiment(design, fake_client, cache_dir=tmp_path / "cache") if r.agent == "evaluator"]
 
     assert len(rows) == 2
     by_identity = {r.identity: r for r in rows}
@@ -29,7 +29,7 @@ def test_second_run_against_same_cache_makes_no_calls(design, tmp_path):
     first = run_experiment(design, first_client, cache_dir=tmp_path / "cache")
     second = run_experiment(design, second_client, cache_dir=tmp_path / "cache")
 
-    assert len(first_client.calls) == 2
+    assert len(first_client.calls) == 5  # 2 Screener + 2 Evaluator + 1 Ranker
     assert second_client.calls == []
     assert [replace(r, cached=False) for r in second] == first
     assert all(r.cached for r in second) and not any(r.cached for r in first)
@@ -44,13 +44,18 @@ def test_changing_any_request_field_misses_the_cache(design, tmp_path):
     client = FakeLLMClient(responder)
     run_experiment(replace(design, seed=7), client, cache_dir=tmp_path / "cache")
 
-    assert len(client.calls) == 2
+    assert len(client.calls) == 5
 
 
 def test_malformed_evaluator_output_is_recorded_as_missing(design, tmp_path):
-    client = FakeLLMClient(lambda request: "sorry, I cannot score this")
+    crew = scores_by_name({"João Silva": 70, "Ana Souza": 65})
 
-    rows = run_experiment(design, client, cache_dir=tmp_path / "cache")
+    def respond(request):
+        if "score" in (request.response_schema or {})["properties"]:
+            return "sorry, I cannot score this"
+        return crew(request)
+
+    rows = [r for r in run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache") if r.agent == "evaluator"]
 
     assert len(rows) == 2
     assert all(r.status == "missing" and r.score is None and r.error for r in rows)
@@ -76,5 +81,5 @@ def test_malformed_output_is_not_cached_so_a_rerun_retries_it(design, tmp_path):
 
     rows = run_experiment(design, client, cache_dir=tmp_path / "cache")
 
-    assert len(client.calls) == 2
+    assert len(client.calls) == 5  # every agent's call is retried: none was cached
     assert all(r.status == "ok" for r in rows)

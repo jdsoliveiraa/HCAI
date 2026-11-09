@@ -1,15 +1,19 @@
-"""Experiment runner: expands the design into jobs, runs the agents, writes the tidy results table."""
+"""Experiment runner: expands the design into CVs and Ranker pools, runs the crew, writes the tidy results table."""
 
 from __future__ import annotations
 
 import csv
+import hashlib
 from dataclasses import asdict, dataclass, fields
+from itertools import zip_longest
 from pathlib import Path
+from random import Random
 from string import Template
+from typing import Any
 
 from hcai.config import Design, Identity
-from hcai.evaluator import MalformedOutput, evaluate
 from hcai.llm import CachedClient, LLMClient
+from hcai.pipeline import AgentOutput, rank, screen_and_evaluate
 
 
 @dataclass(frozen=True)
@@ -22,15 +26,41 @@ class ResultRow:
     language: str
     condition: str
     model: str
-    agent: str
+    agent: str  # "screener", "evaluator" or "ranker"
     score: int | None
     rationale: str
     prompt_tokens: int
     completion_tokens: int
     cost: float  # cost of the original call, also when this run served it from the cache
     cached: bool
-    status: str  # "ok" or "missing"
+    status: str  # "ok", "missing", or "rejected" (screened out upstream: not scored or ranked)
     error: str
+    screen_pass: bool | None = None  # Screener rows
+    pool: str = ""  # Ranker rows: the pool id
+    pool_kind: str = ""  # Ranker rows: "equal" or "mixed" quality
+    input_position: int | None = None  # Ranker rows: 1-based position of this CV in the Ranker prompt
+    rank: int | None = None  # Ranker rows: 1 = best
+    top3: bool | None = None  # Ranker rows: on the shortlist
+    order_seed: int | None = None  # Ranker rows: seed of the pool's input-order shuffle
+    # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
+
+
+@dataclass(frozen=True)
+class Variant:
+    """One rendered CV: a base CV with one identity and name."""
+
+    base_cv: str
+    quality: str
+    identity: Identity
+    name: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Pool:
+    id: str
+    kind: str  # "equal" or "mixed"
+    members: list[Variant]
 
 
 def render_cv(template: str, identity: Identity, name: str) -> str:
@@ -43,38 +73,140 @@ def _base_cvs(design: Design, role: str, quality: str, language: str) -> list[tu
     return [(f"{role}/{quality}/{f.name.removesuffix(f'.{language}.md')}", f.read_text()) for f in files]
 
 
+def stable_seed(*parts: object) -> int:
+    """A seed derived from its parts, identical across runs and machines (unlike `hash`)."""
+    return int.from_bytes(hashlib.sha256(repr(parts).encode()).digest()[:4], "big")
+
+
+def build_pools(design: Design, role: str, language: str, variants: list[Variant]) -> list[Pool]:
+    pools: list[Pool] = []
+    by_base: dict[str, list[Variant]] = {}
+    for v in variants:
+        by_base.setdefault(v.base_cv, []).append(v)
+    if design.pools.equal_quality:
+        pools += [Pool(id=base, kind="equal", members=members) for base, members in by_base.items()]
+    for k in range(1, design.pools.mixed_quality + 1):
+        rng = Random(stable_seed(design.seed, "mixed", role, language, k))
+        # Draw distinct base CVs round-robin over the quality levels, each with the next identity.
+        per_quality = [[b for b, m in by_base.items() if m[0].quality == q] for q in design.quality_levels]
+        for bases in per_quality:
+            rng.shuffle(bases)
+        drawn = [b for group in zip_longest(*per_quality) for b in group if b is not None][: design.pools.mixed_size]
+        identities = list(design.identities)
+        rng.shuffle(identities)
+        members = [
+            next(v for v in by_base[b] if v.identity == identities[i % len(identities)]) for i, b in enumerate(drawn)
+        ]
+        pools.append(Pool(id=f"{role}/mixed{k:02d}", kind="mixed", members=members))
+    return pools
+
+
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
     cached = CachedClient(client, cache_dir)
     rows: list[ResultRow] = []
     for role in design.roles:
         for language in design.languages:
             job_ad = (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
-            for quality in design.quality_levels:
-                for base_id, template in _base_cvs(design, role, quality, language):
-                    for identity in design.identities:
-                        name = identity.names[0]
-                        cv = render_cv(template, identity, name)
-                        for condition in design.conditions:
-                            for model in design.models:
-                                rows.append(_run_evaluator(cached, design, job_ad, cv, base_id, identity, name, language, condition, model))
+            variants = [
+                Variant(base_id, quality, identity, identity.names[0], render_cv(template, identity, identity.names[0]))
+                for quality in design.quality_levels
+                for base_id, template in _base_cvs(design, role, quality, language)
+                for identity in design.identities
+            ]
+            pools = build_pools(design, role, language, variants)
+            for condition in design.conditions:
+                for model in design.models:
+                    ctx = _Context(cached, design, job_ad, language, condition, model)
+                    passed: dict[tuple[str, str], bool | None] = {}
+                    for v in variants:
+                        screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
+                        rows += [screener_row, evaluator_row]
+                        passed[(v.base_cv, v.identity.id)] = screener_row.screen_pass
+                    for pool in pools:
+                        rows += _rank_pool(ctx, pool, passed)
     return rows
 
 
-def _run_evaluator(
-    client: LLMClient, design: Design, job_ad: str, cv: str, base_id: str, identity: Identity, name: str,
-    language: str, condition: str, model: str,
-) -> ResultRow:
-    key = dict(base_cv=base_id, identity=identity.id, gender=identity.gender, origin=identity.origin, name=name,
-               language=language, condition=condition, model=model, agent="evaluator")
-    try:
-        ev = evaluate(client, model=model, job_ad=job_ad, cv=cv, temperature=design.temperature, seed=design.seed)
-    except MalformedOutput as e:
-        return ResultRow(**key, score=None, rationale="", prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False, status="missing", error=str(e))
-    return ResultRow(**key, score=ev.score, rationale=ev.rationale, prompt_tokens=ev.usage.prompt_tokens,
-                     completion_tokens=ev.usage.completion_tokens, cost=ev.usage.cost, cached=ev.cached, status="ok", error="")
+@dataclass(frozen=True)
+class _Context:
+    client: LLMClient
+    design: Design
+    job_ad: str
+    language: str
+    condition: str
+    model: str
+
+    def key(self, v: Variant, agent: str) -> dict[str, Any]:
+        return dict(base_cv=v.base_cv, identity=v.identity.id, gender=v.identity.gender, origin=v.identity.origin,
+                    name=v.name, language=self.language, condition=self.condition, model=self.model, agent=agent)
+
+
+def _usage(out: AgentOutput) -> dict[str, Any]:
+    return dict(prompt_tokens=out.usage.prompt_tokens, completion_tokens=out.usage.completion_tokens,
+                cost=out.usage.cost, cached=out.cached)
+
+
+_NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False)
+
+
+def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRow]:
+    screening, evaluation = screen_and_evaluate(
+        ctx.client, model=ctx.model, job_ad=ctx.job_ad, cv=v.text,
+        temperature=ctx.design.temperature, seed=ctx.design.seed,
+    )
+    s = screening.parsed
+    screener_row = ResultRow(
+        **ctx.key(v, "screener"), score=None, rationale=s["reason"] if s else "", **_usage(screening),
+        status="ok" if s else "missing", error=screening.error, screen_pass=s["passed"] if s else None,
+    )
+    if evaluation is None:
+        status, error = ("rejected", "") if s else ("missing", "no screening decision")
+        evaluator_row = ResultRow(**ctx.key(v, "evaluator"), score=None, rationale="", **_NO_CALL, status=status, error=error)
+    else:
+        e = evaluation.parsed
+        evaluator_row = ResultRow(
+            **ctx.key(v, "evaluator"), score=e["score"] if e else None, rationale=e["rationale"] if e else "",
+            **_usage(evaluation), status="ok" if e else "missing", error=evaluation.error,
+        )
+    return screener_row, evaluator_row
+
+
+def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | None]) -> list[ResultRow]:
+    """Rank the pool's screened-in CVs in a shuffled, recorded order; screened-out CVs get 'rejected' rows."""
+    pool_cols: dict[str, Any] = dict(pool=pool.id, pool_kind=pool.kind)
+    eligible = [v for v in pool.members if passed[(v.base_cv, v.identity.id)] is True]
+    seed = stable_seed(ctx.design.seed, pool.id, ctx.language, ctx.condition, ctx.model)
+    order = list(eligible)
+    Random(seed).shuffle(order)
+    out = rank(ctx.client, model=ctx.model, job_ad=ctx.job_ad, cvs=[v.text for v in order],
+               temperature=ctx.design.temperature, seed=ctx.design.seed) if order else None
+
+    rows: list[ResultRow] = []
+    ranks = {label: r for r, label in enumerate(out.parsed["ranking"], start=1)} if out and out.parsed else {}
+    for position, v in enumerate(order, start=1):
+        assert out is not None
+        rank_ = ranks.get(position)
+        rows.append(ResultRow(
+            **ctx.key(v, "ranker"), score=None, rationale=out.parsed["rationale"] if out.parsed else "",
+            **(_usage(out) if position == 1 else {**_NO_CALL, "cached": out.cached}),
+            status="ok" if out.parsed else "missing", error=out.error, **pool_cols, input_position=position,
+            rank=rank_, top3=None if rank_ is None else rank_ <= 3, order_seed=seed,
+        ))
+    for v in pool.members:
+        if v in eligible:
+            continue
+        rejected = passed[(v.base_cv, v.identity.id)] is False
+        rows.append(ResultRow(
+            **ctx.key(v, "ranker"), score=None, rationale="", **_NO_CALL,
+            status="rejected" if rejected else "missing", error="" if rejected else "no screening decision",
+            **pool_cols, order_seed=seed,
+        ))
+    return rows
 
 
 _INT_FIELDS = {"prompt_tokens", "completion_tokens"}
+_OPTIONAL_INT_FIELDS = {"score", "input_position", "rank", "order_seed"}
+_OPTIONAL_BOOL_FIELDS = {"screen_pass", "top3"}
 
 
 def write_results(rows: list[ResultRow], path: str | Path) -> None:
@@ -94,7 +226,10 @@ def read_results(path: str | Path) -> list[ResultRow]:
 
 def _parse_row(raw: dict[str, str]) -> ResultRow:
     values: dict = dict(raw)
-    values["score"] = int(raw["score"]) if raw["score"] else None
+    for k in _OPTIONAL_INT_FIELDS:
+        values[k] = int(raw[k]) if raw.get(k) else None
+    for k in _OPTIONAL_BOOL_FIELDS:
+        values[k] = raw[k] == "True" if raw.get(k) else None
     for k in _INT_FIELDS:
         values[k] = int(raw[k])
     values["cost"] = float(raw["cost"])

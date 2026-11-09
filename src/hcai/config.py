@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -14,6 +14,20 @@ class Identity:
     origin: str
     names: list[str]
     nationality: str
+
+
+@dataclass(frozen=True)
+class Pools:
+    """Ranker pool composition.
+
+    Equal-quality pools hold every identity of one base CV (one pool per base CV and language).
+    Mixed-quality pools hold `mixed_size` distinct base CVs spread over the quality levels, each with
+    one identity; `mixed_quality` is how many such pools to build per role and language.
+    """
+
+    equal_quality: bool = True
+    mixed_quality: int = 0
+    mixed_size: int = 8
 
 
 @dataclass(frozen=True)
@@ -28,6 +42,7 @@ class Design:
     corpus_dir: Path
     temperature: float = 0.0
     seed: int | None = 42
+    pools: Pools = field(default_factory=Pools)
 
 
 def load_design(path: str | Path) -> Design:
@@ -46,4 +61,5 @@ def load_design(path: str | Path) -> Design:
         corpus_dir=(path.parent / d["corpus_dir"]).resolve(),
         temperature=float(d.get("temperature", 0.0)),
         seed=d.get("seed", 42),
+        pools=Pools(**raw.get("pools", {})),
     )

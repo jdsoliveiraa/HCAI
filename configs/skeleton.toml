@@ -28,3 +28,10 @@ gender = "female"
 origin = "brazilian"
 names = ["Ana Clara Souza"]
 nationality = "Brazilian"
+
+# Ranker pools. Equal-quality: one pool per base CV holding all its identities.
+# Mixed-quality: `mixed_quality` pools per role x language of `mixed_size` distinct base CVs across the quality levels.
+[pools]
+equal_quality = true
+mixed_quality = 0
+mixed_size = 8
