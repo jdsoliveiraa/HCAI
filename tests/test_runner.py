@@ -75,11 +75,17 @@ def test_results_table_round_trips_through_csv(design, fake_client, tmp_path):
     assert read_results(path) == rows
 
 
-def test_malformed_output_is_not_cached_so_a_rerun_retries_it(design, tmp_path):
+def test_a_rerun_replays_malformed_answers_and_more_retries_ask_again(design, tmp_path):
+    from hcai.config import RunSettings
+
+    design = replace(design, run=RunSettings(retries=0))
     run_experiment(design, FakeLLMClient(lambda request: "not json"), cache_dir=tmp_path / "cache")
-    client = FakeLLMClient(scores_by_name({"João Silva": 70, "Ana Souza": 65}))
+    replay = FakeLLMClient(scores_by_name({"João Silva": 70, "Ana Souza": 65}))
+    replayed = run_experiment(design, replay, cache_dir=tmp_path / "cache")
+    again = FakeLLMClient(scores_by_name({"João Silva": 70, "Ana Souza": 65}))
 
-    rows = run_experiment(design, client, cache_dir=tmp_path / "cache")
+    rows = run_experiment(replace(design, run=RunSettings(retries=1)), again, cache_dir=tmp_path / "cache")
 
-    assert len(client.calls) == 5  # every agent's call is retried: none was cached
+    assert replay.calls == [] and all(r.status == "missing" for r in replayed)
+    assert len(again.calls) == 5  # 2 Screener retries, then the Evaluator and Ranker that had not run
     assert all(r.status == "ok" for r in rows)

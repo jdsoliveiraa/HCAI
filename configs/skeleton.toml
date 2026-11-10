@@ -42,7 +42,7 @@ mixed_size = 8
 retries = 2
 # Seconds before retrying a call that raised (e.g. an HTTP error), doubled on each retry.
 retry_backoff = 2.0
-# Stability sample: this share of the CVs and Ranker pools is re-run `repeats` times (identical requests,
+# Stability sample: this share of the CV variants and Ranker pools is re-run `repeats` times (identical requests,
 # cached apart from the results) and compared with the original answers in stability.json.
 repeat_fraction = 0.0  # e.g. 0.05 in a real run
 repeats = 1

@@ -112,10 +112,30 @@ class OpenRouterClient:
         return LLMResponse(text=text, parsed=_parse_if_schema(request, text), usage=usage)
 
 
+class MeteredClient:
+    """Wraps a client and counts the calls it makes and what they cost, per model.
+
+    Placed below the cache, it measures what a run actually spends: cache hits never reach it.
+    """
+
+    def __init__(self, inner: LLMClient):
+        self.inner = inner
+        self.calls: dict[str, int] = {}
+        self.cost: dict[str, float] = {}
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
+        response = self.inner.complete(request)
+        self.cost[request.model] = self.cost.get(request.model, 0.0) + response.usage.cost
+        return response
+
+
 class CachedClient:
     """Wraps a client; responses are stored on disk keyed by the hash of the full request.
 
-    Responses to a structured request that failed to parse are not cached.
+    Every response is cached, malformed ones included, so a rerun replays exactly what the first run saw
+    (and costs nothing). A malformed answer is asked again by a retry with a different request (see
+    `hcai.pipeline.Retry`); calls that raise are not cached.
     """
 
     def __init__(self, inner: LLMClient, cache_dir: str | Path):
@@ -129,8 +149,6 @@ class CachedClient:
             cached = json.loads(path.read_text())
             return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage(**cached["usage"]), cached=True)
         response = self.inner.complete(request)
-        if request.response_schema is not None and response.parsed is None:
-            return response  # malformed structured output: don't cache it, so a rerun retries the call
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"request": asdict(request), **asdict(response)}, ensure_ascii=False))
         tmp.replace(path)

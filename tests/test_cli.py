@@ -94,5 +94,5 @@ def test_run_prints_the_stability_report_when_the_config_asks_for_repeats(tmp_pa
 
     report = run_command(config, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=FakeLLMClient(scores_by_name({a: 60, b: 60})))
 
-    assert "Stability" in report and "agreement 1.00" in report
+    assert "Stability" in report and " 1.00 " in report
     assert (tmp_path / "stability.json").exists()

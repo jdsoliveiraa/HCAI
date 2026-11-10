@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from conftest import scores_by_name
-from hcai.config import RunSettings, load_design, pilot_design
+from hcai.config import Pools, RunSettings, load_design, pilot_design
 from hcai.llm import FakeLLMClient, LLMRequest
 
 from hcai.runner import execute, run_experiment
@@ -24,7 +24,7 @@ def evaluator_fails_first(n_failures: int, bad: str | dict = "not json"):
 
     def respond(request: LLMRequest):
         if is_evaluator(request):
-            text = request.messages[-1]["content"]
+            text = " ".join(m["content"] for m in request.messages)
             cv = "João Silva" if "João Silva" in text else "Ana Souza"
             seen[cv] = seen.get(cv, 0) + 1
             if seen[cv] <= n_failures:
@@ -77,10 +77,9 @@ def test_a_failing_call_is_retried_then_recorded_as_missing(design, tmp_path):
 
 
 def test_a_rerun_after_retries_is_served_from_the_cache(design, tmp_path):
-    # A parseable but invalid answer is cached; the retry asks again with a note, so it has its own cache key.
+    # Malformed answers are cached too; the retry asks again with a note, so it has its own cache key.
     design = replace(design, run=RunSettings(retries=2))
-    bad = {"score": 250, "rationale": "too keen"}
-    first = run_experiment(design, FakeLLMClient(evaluator_fails_first(1, bad=bad)), cache_dir=tmp_path / "cache")
+    first = run_experiment(design, FakeLLMClient(evaluator_fails_first(1)), cache_dir=tmp_path / "cache")
     client = FakeLLMClient(GOOD)
 
     second = run_experiment(design, client, cache_dir=tmp_path / "cache")
@@ -112,7 +111,7 @@ def test_run_writes_token_and_cost_totals_alongside_the_results(design, tmp_path
     assert first.totals["cost_spent"] == 1.75 and first.totals["cost_total"] == 1.75
     assert first.totals["prompt_tokens"] == sum(len(m["content"].split()) for c in client.calls for m in c.messages)
     assert first.totals["by_model"]["model-a"]["cost_total"] == 1.75
-    assert first.totals["by_agent"]["evaluator"]["calls"] == 4
+    assert first.totals["by_agent"]["evaluator"]["attempts"] == 4
     assert second.totals["calls"] == 0 and second.totals["cache_hits"] == 7
     assert second.totals["cost_spent"] == 0 and second.totals["cost_total"] == 1.75
     assert on_disk == second.totals
@@ -187,7 +186,18 @@ def test_pilot_summary_extrapolates_the_cost_of_the_full_run(wide_design, tmp_pa
     run = execute(pilot_design(wide_design), PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
 
     assert run.totals["cost_total"] == 2.5  # per model: 2 Screener + 2 Evaluator + 1 Ranker
-    assert run.totals["pilot"] == {"full_design_scale": 4.0, "estimated_full_cost": 10.0}
+    assert run.totals["pilot"] == {"cv_scale": 4.0, "ranker_scale": 4.0, "estimated_full_cost": 10.0}
+
+
+def test_pilot_estimate_scales_the_ranker_by_the_cvs_it_ranks(wide_design, tmp_path):
+    design = replace(wide_design, pools=Pools(equal_quality=True, mixed_quality=2, mixed_size=8))
+
+    run = execute(pilot_design(design), PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    # Ranked CV slots per role x model: full 4 (equal) + 2 mixed pools of 2 CVs = 8 over 2 roles; pilot 2 + 1 x 1 = 3.
+    assert run.totals["pilot"]["ranker_scale"] == round(32 / 6, 4)
+    # Screener + Evaluator cost 2.0 x 4, Ranker cost 1.0 (2 pools x 2 models) x 32/6
+    assert run.totals["pilot"]["estimated_full_cost"] == round(8 + 32 / 6, 4)
 
 
 def drifting_scores():
@@ -195,7 +205,7 @@ def drifting_scores():
     calls = {"João Silva": 0}
 
     def respond(request: LLMRequest):
-        if is_evaluator(request) and "João Silva" in request.messages[-1]["content"]:
+        if is_evaluator(request) and any("João Silva" in m["content"] for m in request.messages):
             calls["João Silva"] += 1
             return {"score": 68 + 2 * calls["João Silva"], "rationale": "drifts"}
         return GOOD(request)
@@ -229,7 +239,7 @@ def test_repeats_are_paid_for_once_and_counted_in_the_totals(design, tmp_path):
 
     second = execute(design, client, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
 
-    assert first.totals["repeat_sample"]["calls"] == 5
+    assert first.totals["repeat_sample"]["attempts"] == 5 and first.totals["calls"] == 10
     assert first.totals["cost_total"] == 2.5  # 5 calls for the results, 5 for one repeat of each
     assert client.calls == []
     assert second.stability == first.stability
@@ -242,3 +252,15 @@ def test_no_repeat_sample_by_default(design, tmp_path):
 
     assert run.repeats == [] and run.stability == []
     assert len(client.calls) == 5
+
+
+def test_spend_counts_only_the_calls_this_run_made(design, tmp_path):
+    out, cache = tmp_path / "out", tmp_path / "cache"
+    execute(replace(design, run=RunSettings(retries=0)), PricedClient(evaluator_fails_first(1)), out, cache)
+
+    # The Evaluator's first, malformed answer replays from the cache; only its retry is a new call.
+    run = execute(replace(design, run=RunSettings(retries=1)), PricedClient(GOOD), out, cache)
+
+    assert run.totals["calls"] == 2 and run.totals["cache_hits"] == 5
+    assert run.totals["cost_spent"] == 0.5 and run.totals["cost_total"] == 1.75
+    assert run.totals["by_model"]["model-a"]["cost_spent"] == 0.5

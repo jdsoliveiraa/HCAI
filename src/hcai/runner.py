@@ -13,7 +13,7 @@ from string import Template
 from typing import Any
 
 from hcai.config import Design, Identity
-from hcai.llm import CachedClient, LLMClient
+from hcai.llm import CachedClient, LLMClient, MeteredClient
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
 
@@ -121,11 +121,11 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     their agreement with the original answers.
     """
     out_dir = Path(out_dir)
-    rows, repeats = _run(design, client, cache_dir)
-    totals = run_totals(rows, repeats)
-    if design.pilot_scale is not None:
-        totals["pilot"] = dict(full_design_scale=round(design.pilot_scale, 4),
-                               estimated_full_cost=round(totals["cost_total"] * design.pilot_scale, 4))
+    meter = MeteredClient(client)
+    rows, repeats = _run(design, meter, cache_dir)
+    totals = run_totals(rows, repeats, meter)
+    if design.pilot_of is not None:
+        totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows + repeats)
     report = stability_report(rows, repeats)
     write_results(rows, out_dir / "results.csv")
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
@@ -135,40 +135,61 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     return Run(rows=rows, repeats=repeats, totals=totals, stability=report)
 
 
-def run_totals(rows: list[ResultRow], repeats: list[ResultRow] | None = None) -> dict[str, Any]:
+def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[str, float]:
+    """Scale the pilot's cost up to the full design: Screener and Evaluator by CV variants, Ranker by ranked CVs.
+
+    Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV.
+    """
+    cv_scale = full.size / pilot.size if pilot.size else 0.0
+    ranker_scale = full.ranked_slots / pilot.ranked_slots if pilot.ranked_slots else 0.0
+    crew = sum(r.cost for r in rows if r.agent != "ranker")
+    ranker = sum(r.cost for r in rows if r.agent == "ranker")
+    return dict(cv_scale=round(cv_scale, 4), ranker_scale=round(ranker_scale, 4),
+                estimated_full_cost=round(crew * cv_scale + ranker * ranker_scale, 4))
+
+
+def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredClient) -> dict[str, Any]:
     """Token, call and cost totals of a run, overall and per model and agent, stability sample included.
 
-    `cost_total` is what the outputs cost to produce (cache hits count their original cost), `cost_spent`
-    what this run paid (cache hits are free). `calls` are LLM calls made this run, retries included.
-    `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
+    - `attempts`, `prompt_tokens`, `completion_tokens`, `cost_total`: what the outputs took to produce,
+      retries included (cache hits count their original tokens and cost).
+    - `calls`, `cost_spent`: what this run sent to the provider and paid (measured below the cache);
+      `cache_hits` = attempts - calls.
+    - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     """
 
     def tally(subset: list[ResultRow]) -> dict[str, Any]:
         return dict(
-            calls=sum(r.attempts for r in subset if not r.cached),
-            cache_hits=sum(r.attempts for r in subset if r.cached),
+            attempts=sum(r.attempts for r in subset),
             prompt_tokens=sum(r.prompt_tokens for r in subset),
             completion_tokens=sum(r.completion_tokens for r in subset),
             cost_total=round(sum(r.cost for r in subset), 6),
-            cost_spent=round(sum(r.cost for r in subset if not r.cached), 6),
         )
+
+    def spent(models: list[str], subset: list[ResultRow]) -> dict[str, Any]:
+        calls = sum(meter.calls.get(m, 0) for m in models)
+        return dict(calls=calls, cache_hits=sum(r.attempts for r in subset) - calls,
+                    cost_spent=round(sum(meter.cost.get(m, 0.0) for m in models), 6))
 
     status: dict[str, int] = {}
     for r in rows:
         status[r.status] = status.get(r.status, 0) + 1
-    repeats = repeats or []
     every = rows + repeats
+    models = list(dict.fromkeys(r.model for r in every))
+    by_model = {}
+    for m in models:
+        subset = [r for r in every if r.model == m]
+        by_model[m] = {**tally(subset), **spent([m], subset)}
     return dict(
-        rows=len(rows), status=status, **tally(every),
-        by_model={m: tally([r for r in every if r.model == m]) for m in dict.fromkeys(r.model for r in every)},
+        rows=len(rows), status=status, **tally(every), **spent(models, every), by_model=by_model,
         by_agent={a: tally([r for r in every if r.agent == a]) for a in dict.fromkeys(r.agent for r in every)},
         repeat_sample=tally(repeats),
     )
 
 
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
-    """The results table of the design (the stability sample, if any, is run too but not returned)."""
-    return _run(design, client, cache_dir)[0]
+    """The results table of the design, without the stability sample (see `execute`)."""
+    return _run(replace(design, run=replace(design.run, repeat_fraction=0.0)), client, cache_dir)[0]
 
 
 def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list[ResultRow], list[ResultRow]]:
@@ -220,7 +241,7 @@ class _Context:
         return replace(self, client=client)
 
     def sampled(self, *item: str) -> bool:
-        """Whether this CV or pool, under this language, condition and model, is in the stability sample."""
+        """Whether this CV variant or pool, under this language, condition and model, is in the stability sample."""
         fraction = self.design.run.repeat_fraction
         draw = stable_seed(self.design.seed, "repeat", *item, self.language, self.condition, self.model)
         return fraction > 0 and draw / 2**32 < fraction

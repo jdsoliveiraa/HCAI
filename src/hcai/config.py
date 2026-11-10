@@ -88,14 +88,21 @@ class Design:
     generator: Generator | None = None
     run: RunSettings = field(default_factory=RunSettings)
     pilot: PilotSlice = field(default_factory=PilotSlice)
-    # Set on a pilot design only: how many times larger the full design is (in CV x condition x model units).
-    pilot_scale: float | None = None
+    pilot_of: Design | None = None  # set on a pilot design only: the full design it is a slice of
 
     @property
     def size(self) -> int:
-        """CV x identity x language x condition x model units: what the number of LLM calls scales with."""
+        """CV variants x language x condition x model: what the Screener and Evaluator calls scale with."""
         return (len(self.roles) * len(self.quality_levels) * self.base_cvs_per_role * len(self.identities)
                 * len(self.languages) * len(self.conditions) * len(self.models))
+
+    @property
+    def ranked_slots(self) -> int:
+        """CVs shown to the Ranker over all pools (if all are screened in): what Ranker tokens scale with."""
+        bases = len(self.quality_levels) * self.base_cvs_per_role
+        per_role = ((bases * len(self.identities) if self.pools.equal_quality else 0)
+                    + self.pools.mixed_quality * min(self.pools.mixed_size, bases))
+        return per_role * len(self.roles) * len(self.languages) * len(self.conditions) * len(self.models)
 
 
 def pilot_design(design: Design) -> Design:
@@ -118,7 +125,7 @@ def pilot_design(design: Design) -> Design:
         pools=design.pools if p.mixed_quality is None
         else replace(design.pools, mixed_quality=min(design.pools.mixed_quality, p.mixed_quality)),
     )
-    return replace(pilot, pilot_scale=design.size / pilot.size if pilot.size else None)
+    return replace(pilot, pilot_of=design)
 
 
 def load_design(path: str | Path) -> Design:

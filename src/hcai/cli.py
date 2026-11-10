@@ -13,7 +13,7 @@ from pathlib import Path
 from hcai.config import load_design, pilot_design
 from hcai.corpus import CorpusFrozen, fake_generator_response, generate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
-from hcai.report import format_report, score_gaps
+from hcai.report import format_report, format_stability, score_gaps
 from hcai.runner import execute
 
 
@@ -24,26 +24,22 @@ def run_command(
     if pilot:
         design = pilot_design(design)
     run = execute(design, client, out_dir=out_dir, cache_dir=cache_dir)
-    t = run.totals
+    totals = run.totals
+    status = totals["status"]
     reference = design.identities[0].id
     summary = (
-        f"\n\n{t['rows']} rows ({t['status'].get('missing', 0)} missing, {t['status'].get('rejected', 0)} rejected); "
-        f"{t['calls']} LLM calls, {t['cache_hits']} from cache; "
-        f"{t['prompt_tokens']} prompt + {t['completion_tokens']} completion tokens; "
-        f"spent ${t['cost_spent']:.4f} this run (results cost ${t['cost_total']:.4f} in all)"
+        f"\n\n{totals['rows']} rows ({status.get('missing', 0)} missing, {status.get('rejected', 0)} rejected); "
+        f"{totals['calls']} LLM calls, {totals['cache_hits']} from cache; "
+        f"{totals['prompt_tokens']} prompt + {totals['completion_tokens']} completion tokens; "
+        f"spent ${totals['cost_spent']:.4f} this run (the outputs cost ${totals['cost_total']:.4f} in all)"
         f" -> {Path(out_dir) / 'results.csv'}, {Path(out_dir) / 'run_summary.json'}"
     )
-    if "pilot" in t:
-        summary += (f"\npilot: the full design is {t['pilot']['full_design_scale']:g}x this slice, "
-                    f"estimated full-run cost ${t['pilot']['estimated_full_cost']:.2f} (before caching)")
+    if "pilot" in totals:
+        p = totals["pilot"]
+        summary += (f"\npilot: the full design has {p['cv_scale']:g}x these CVs and {p['ranker_scale']:g}x the "
+                    f"Ranker load; estimated full-run cost ${p['estimated_full_cost']:.2f} (before caching)")
     if run.stability:
-        summary += "\n\nStability (repeat sample; agreement = share of repeats matching the original answer)\n"
-        summary += "\n".join(
-            f"{s['model']:<28} {s['condition']:<5} {s['language']:<5} {s['agent']:<10} "
-            f"agreement {s['agreement']:.2f} over {s['pairs']} pairs"
-            + (f", mean SD {s['mean_sd']:.2f}" if s["mean_sd"] is not None else "")
-            for s in run.stability
-        ) + f"\n-> {Path(out_dir) / 'stability.json'}"
+        summary += "\n\n" + format_stability(run.stability) + f"\n-> {Path(out_dir) / 'stability.json'}"
     return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary
 
 
