@@ -7,8 +7,8 @@ roles = ["software_engineer", "nurse", "accountant"]
 quality_levels = ["strong", "average", "weak"]
 # Base CVs per role × quality level: 3 → 9 per role (core: about 10 per role).
 base_cvs_per_role = 3
-# The generator writes EN base CVs only; PT-PT needs a PT version of each base CV (see configs/variants.toml).
-languages = ["en"]
+# EN and PT-PT (RQ1). The generator writes EN, then translates every job ad and base CV into PT-PT.
+languages = ["en", "pt"]
 conditions = ["C0"]
 # Placeholder pipeline models (one commercial, one open-weight); the concrete ids are chosen in the pilot.
 models = ["openai/gpt-4o-mini", "meta-llama/llama-3.3-70b-instruct"]

@@ -28,6 +28,7 @@ from pathlib import Path
 from string import Template
 
 from hcai.config import Design, Identity
+from hcai.ptpt import describe, ptbr_terms
 
 NATIONALITY_LABEL = {"en": "Nationality", "pt": "Nacionalidade"}
 
@@ -53,6 +54,7 @@ PRONOUN_PAIRS = [
 # masculine or feminine form leaks into the other gender's variants. A word that does not refer to the
 # candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`. The PT-PT list is not
 # exhaustive: it catches the common job titles and adjectives, template authors still slot the rest.
+# PT-PT templates must also be free of common PT-BR terms (`hcai.ptpt`): no dialect cue in the body.
 SLOT_ONLY_WORDS = {
     "en": {"he", "she", "him", "her", "his", "hers", "himself", "herself", "mr", "ms", "mrs"},
     "pt": {
@@ -69,6 +71,13 @@ SLOT_ONLY_WORDS = {
             ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
             ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
             ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
+            ("inscrito", "inscrita"), ("especializado", "especializada"),
+            ("habilitado", "habilitada"), ("promovido", "promovida"),
+            ("contratado", "contratada"), ("nomeado", "nomeada"), ("eleito", "eleita"),
+            ("distinguido", "distinguida"), ("premiado", "premiada"), ("focado", "focada"),
+            ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
+            ("revisor", "revisora"), ("tesoureiro", "tesoureira"), ("fundador", "fundadora"),
+            ("orientador", "orientadora"), ("candidato", "candidata"),
         ]
         for form in (masc, fem)
     },
@@ -162,6 +171,8 @@ def _validate_template(template: str, language: str) -> None:
         raise TemplateError(
             f"gendered word(s) {unslotted} outside a {{{{masc|fem}}}} slot; write {{{{X|X}}}} if one does not refer to the candidate"
         )
+    if language == "pt" and (brazilian := ptbr_terms(template)):
+        raise TemplateError(f"PT-PT template uses PT-BR term(s): {describe(brazilian)}")
 
 
 def base_cv_templates(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:
@@ -243,6 +254,7 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
     """
     gendered = list(gendered)
     classes = _form_classes([*gendered, *PRONOUN_PAIRS])
+    invariant = sorted({m for m, f in gendered if m == f and m}, key=len, reverse=True)
     other_forms = {"en": _other_gender_forms([*gendered, *PRONOUN_PAIRS]), "pt": _other_gender_forms(gendered)}
     problems: list[str] = []
     groups: dict[tuple[str, str], list[Variant]] = {}
@@ -251,7 +263,12 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
         missing = [line for line in WORK_ELIGIBILITY[v.language] if line not in v.text.splitlines()]
         if missing:
             problems.append(f"{v.id}: missing work-eligibility line(s): {missing}")
-        leaked = [f for f in other_forms[v.language][v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", v.text)]
+        # An invariant `{{X|X}}` phrase may contain the other gender's form ("Enfermeira-Chefe" next to
+        # {{Enfermeiro|Enfermeira}}): it is the same in every variant, so it is not a leak.
+        text = v.text
+        for form in invariant:
+            text = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", "\0", text)
+        leaked = [f for f in other_forms[v.language][v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", text)]
         if leaked:
             problems.append(f"{v.id}: {v.gender} variant has the other gender's form(s): {leaked}")
     for group in groups.values():

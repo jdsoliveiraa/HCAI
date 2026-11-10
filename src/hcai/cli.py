@@ -1,6 +1,8 @@
 """Command line: `hcai run <config.toml>` runs the design and prints the paired score-gap report.
 
-`hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them.
+`hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them
+(in English, translated into the design's other languages); `--translate` adds the design's other languages
+to an already frozen corpus without regenerating it.
 `hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
 """
 
@@ -12,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from hcai.config import load_design, pilot_design
-from hcai.corpus import CorpusFrozen, fake_generator_response, generate_corpus
+from hcai.corpus import CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, translate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
 from hcai.report import format_report, format_stability, score_gaps
 from hcai.runner import execute
@@ -47,15 +49,18 @@ def run_command(
 
 def corpus_command(
     config: str | Path, cache_dir: str | Path, client: LLMClient, force: bool = False, fake: bool = False,
+    translate: bool = False,
 ) -> str:
     design = load_design(config)
     if fake:  # a fake corpus must never take the place of (or freeze over) the real one
         design = replace(design, corpus_dir=design.corpus_dir.with_name(design.corpus_dir.name + "-fake"))
-    corpus = generate_corpus(design, client, cache_dir=cache_dir, force=force)
+    make = translate_corpus if translate else generate_corpus
+    corpus = make(design, client, cache_dir=cache_dir, force=force)
     borderline = sum(cv.borderline for cv in corpus.base_cvs)
     return (
         f"corpus {corpus.version}: {len(corpus.job_ads)} job ads, {len(corpus.base_cvs)} base CVs "
-        f"({borderline} borderline), generator {corpus.generator.model} -> {design.corpus_dir}"
+        f"({borderline} borderline) in {', '.join(corpus.languages)}, generator {corpus.generator.model}"
+        f" -> {design.corpus_dir}"
     )
 
 
@@ -96,7 +101,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--fake-llm", action="store_true", help="smoke test: a fake LLM returns a fixed score, no API calls")
     gen = sub.add_parser("corpus", help="generate and freeze the job ads and base CVs of a design config")
     gen.add_argument("config", type=Path)
-    gen.add_argument("--force", action="store_true", help="overwrite the frozen corpus version")
+    gen.add_argument("--force", action="store_true", help="overwrite the frozen corpus version (or its translations)")
+    gen.add_argument(
+        "--translate", action="store_true",
+        help="add the design's non-English languages to the frozen corpus, leaving its English files unchanged",
+    )
     gen.add_argument(
         "--cache", type=Path, default=None,
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
@@ -111,8 +120,9 @@ def main(argv: list[str] | None = None) -> int:
         client = FakeLLMClient(fake_generator_response) if args.fake_llm else OpenRouterClient()
         cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
         try:
-            print(corpus_command(args.config, cache_dir=cache, client=client, force=args.force, fake=args.fake_llm))
-        except CorpusFrozen as e:
+            print(corpus_command(args.config, cache_dir=cache, client=client, force=args.force, fake=args.fake_llm,
+                                 translate=args.translate))
+        except (CorpusFrozen, GenerationFailed, FileNotFoundError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
         return 0
