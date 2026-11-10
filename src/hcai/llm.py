@@ -133,13 +133,16 @@ class MeteredClient:
 class CachedClient:
     """Wraps a client; responses are stored on disk keyed by the hash of the full request.
 
-    Every response is cached, malformed ones included, so a rerun replays exactly what the first run saw
-    (and costs nothing). A malformed answer is asked again by a retry with a different request (see
-    `hcai.pipeline.Retry`); calls that raise are not cached.
+    By default every response is cached, malformed ones included, so a rerun replays exactly what the
+    first run saw (and costs nothing); the pipeline asks a malformed answer again with a different request
+    (see `hcai.pipeline.Retry` and ADR 0002). With `cache_unparseable=False` a structured answer that
+    failed to parse is not cached, so a rerun draws a fresh one (the corpus generator, at temperature > 0).
+    Calls that raise are never cached.
     """
 
-    def __init__(self, inner: LLMClient, cache_dir: str | Path):
+    def __init__(self, inner: LLMClient, cache_dir: str | Path, *, cache_unparseable: bool = True):
         self.inner = inner
+        self.cache_unparseable = cache_unparseable
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -149,6 +152,8 @@ class CachedClient:
             cached = json.loads(path.read_text())
             return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage(**cached["usage"]), cached=True)
         response = self.inner.complete(request)
+        if not self.cache_unparseable and request.response_schema is not None and response.parsed is None:
+            return response
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"request": asdict(request), **asdict(response)}, ensure_ascii=False))
         tmp.replace(path)

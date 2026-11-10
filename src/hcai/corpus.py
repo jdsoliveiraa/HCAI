@@ -183,7 +183,8 @@ def generate_corpus(
     _check_writable(out, force)
     _check_borderline(design, generator)
 
-    cached = CachedClient(client, cache_dir)
+    # Unparseable generations stay out of the cache, so rerunning a failed generation draws fresh answers.
+    cached = CachedClient(client, cache_dir, cache_unparseable=False)
     job_ads: dict[str, JobAd] = {}
     base_cvs: list[BaseCV] = []
     for role in design.roles:

@@ -125,7 +125,7 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     rows, repeats = _run(design, meter, cache_dir)
     totals = run_totals(rows, repeats, meter)
     if design.pilot_of is not None:
-        totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows + repeats)
+        totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
     report = stability_report(rows, repeats)
     write_results(rows, out_dir / "results.csv")
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
@@ -138,14 +138,18 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
 def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[str, float]:
     """Scale the pilot's cost up to the full design: Screener and Evaluator by CV variants, Ranker by ranked CVs.
 
-    Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV.
+    Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV. The
+    stability sample is added as its expected share (`repeat_fraction x repeats`) of the scaled cost, not
+    scaled from the pilot's own few, randomly drawn repeats.
     """
     cv_scale = full.size / pilot.size if pilot.size else 0.0
     ranker_scale = full.ranked_slots / pilot.ranked_slots if pilot.ranked_slots else 0.0
     crew = sum(r.cost for r in rows if r.agent != "ranker")
     ranker = sum(r.cost for r in rows if r.agent == "ranker")
+    scaled = crew * cv_scale + ranker * ranker_scale
+    repeat_share = full.run.repeat_fraction * full.run.repeats
     return dict(cv_scale=round(cv_scale, 4), ranker_scale=round(ranker_scale, 4),
-                estimated_full_cost=round(crew * cv_scale + ranker * ranker_scale, 4))
+                estimated_full_cost=round(scaled * (1 + repeat_share), 4))
 
 
 def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredClient) -> dict[str, Any]:
@@ -345,7 +349,7 @@ def _parse_row(raw: dict[str, str]) -> ResultRow:
     for k in _OPTIONAL_BOOL_FIELDS:
         values[k] = raw[k] == "True" if raw.get(k) else None
     for k in _INT_FIELDS:
-        values[k] = int(raw[k])
+        values[k] = int(raw.get(k) or 0)  # `attempts` and `repeat` are absent from tables written before #6
     values["cost"] = float(raw["cost"])
     values["cached"] = raw["cached"] == "True"
     return ResultRow(**values)

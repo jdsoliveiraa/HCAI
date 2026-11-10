@@ -132,7 +132,10 @@ class ClientLLM(BaseLLM):
                 failures += 1
                 continue
             self._responses.append(response)
-            self._last_error = self._validate(response.parsed)
+            try:
+                self._last_error = self._validate(response.parsed)
+            except Exception as e:  # noqa: BLE001 - an answer the validator chokes on is malformed
+                self._last_error = f"invalid output: {type(e).__name__}: {e}"
             if not self._last_error:
                 break
             note = (f"\n\n(Attempt {attempt + 1}. The previous answer was rejected: {self._last_error}. "
@@ -189,7 +192,7 @@ def _check_screening(p: Any) -> str:
 
 
 def _check_evaluation(p: Any) -> str:
-    if not isinstance(p, dict) or not isinstance(p.get("score"), int) or not isinstance(p.get("rationale"), str):
+    if not isinstance(p, dict) or type(p.get("score")) is not int or not isinstance(p.get("rationale"), str):
         return "unparseable Evaluator output"
     if not 0 <= p["score"] <= 100:
         return f"score out of range: {p['score']}"
@@ -259,7 +262,7 @@ def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperat
     def check_ranking(p: Any) -> str:
         if not isinstance(p, dict) or not isinstance(p.get("ranking"), list) or not isinstance(p.get("rationale"), str):
             return "unparseable Ranker output"
-        if sorted(p["ranking"]) != list(range(1, n + 1)):
+        if any(type(x) is not int for x in p["ranking"]) or sorted(p["ranking"]) != list(range(1, n + 1)):
             return f"ranking is not a permutation of 1..{n}: {p['ranking']}"
         return ""
 

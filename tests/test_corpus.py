@@ -232,3 +232,12 @@ def test_the_generator_model_may_not_be_one_of_the_audited_pipeline_models(corpu
 
     with pytest.raises(ValueError, match="third family"):
         generate_corpus(design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")
+
+
+def test_a_rerun_draws_fresh_answers_after_unparseable_generations(corpus_design, tmp_path):
+    with pytest.raises(GenerationFailed):
+        generate_corpus(corpus_design, FakeLLMClient(lambda request: "not json"), cache_dir=tmp_path / "cache")
+
+    corpus = generate_corpus(corpus_design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")
+
+    assert corpus.base_cvs

@@ -9,7 +9,7 @@ from conftest import scores_by_name
 from hcai.config import Pools, RunSettings, load_design, pilot_design
 from hcai.llm import FakeLLMClient, LLMRequest
 
-from hcai.runner import execute, run_experiment
+from hcai.runner import execute, read_results, run_experiment, write_results
 
 GOOD = scores_by_name({"João Silva": 70, "Ana Souza": 65})
 
@@ -67,7 +67,7 @@ def test_a_failing_call_is_retried_then_recorded_as_missing(design, tmp_path):
             raise TimeoutError("provider timed out")
         return GOOD(request)
 
-    design = replace(design, run=RunSettings(retries=1))
+    design = replace(design, run=RunSettings(retries=1, retry_backoff=0.0))
     client = FakeLLMClient(respond)
 
     rows = evaluator_rows(run_experiment(design, client, cache_dir=tmp_path / "cache"))
@@ -264,3 +264,96 @@ def test_spend_counts_only_the_calls_this_run_made(design, tmp_path):
     assert run.totals["calls"] == 2 and run.totals["cache_hits"] == 5
     assert run.totals["cost_spent"] == 0.5 and run.totals["cost_total"] == 1.75
     assert run.totals["by_model"]["model-a"]["cost_spent"] == 0.5
+
+
+def ranker_answers(*answers):
+    """The Ranker gives these answers in turn (the last one from then on); the other agents answer well."""
+    given = []
+
+    def respond(request: LLMRequest):
+        if "ranking" in (request.response_schema or {}).get("properties", {}):
+            given.append(1)
+            return answers[min(len(given), len(answers)) - 1]
+        return GOOD(request)
+
+    return respond
+
+
+@pytest.mark.parametrize("bad", [[1, "2"], [True, 2], [1, 1], "not json"])
+def test_an_invalid_ranking_is_retried(design, tmp_path, bad):
+    good = {"ranking": [2, 1], "rationale": "second first"}
+
+    rows = run_experiment(design, FakeLLMClient(ranker_answers({"ranking": bad, "rationale": "x"}, good)),
+                          cache_dir=tmp_path / "cache")
+
+    ranker = [r for r in rows if r.agent == "ranker"]
+    assert sorted(r.rank for r in ranker if r.rank is not None) == [1, 2]
+    assert all(r.status == "ok" for r in ranker)
+    assert [r.attempts for r in sorted(ranker, key=lambda r: r.input_position or 0)] == [2, 0]
+
+
+def test_a_ranking_still_invalid_after_the_retries_marks_the_pool_missing(design, tmp_path):
+    design = replace(design, run=RunSettings(retries=1))
+
+    rows = run_experiment(design, FakeLLMClient(ranker_answers({"ranking": [1], "rationale": "x"})),
+                          cache_dir=tmp_path / "cache")
+
+    ranker = [r for r in rows if r.agent == "ranker"]
+    assert len(ranker) == 2 and all(r.status == "missing" and r.rank is None and "permutation" in r.error for r in ranker)
+
+
+def test_a_boolean_score_is_not_a_score(design, tmp_path):
+    design = replace(design, run=RunSettings(retries=0))
+
+    def respond(request):
+        return {"score": True, "rationale": "yes"} if is_evaluator(request) else GOOD(request)
+
+    rows = evaluator_rows(run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache"))
+
+    assert all(r.status == "missing" and r.score is None for r in rows)
+
+
+def test_a_call_that_fails_once_then_succeeds_is_kept(design, tmp_path):
+    failed = set()
+
+    def respond(request):
+        if is_evaluator(request) and not failed:
+            failed.add(1)
+            raise ConnectionError("blip")
+        return GOOD(request)
+
+    design = replace(design, run=RunSettings(retries=1, retry_backoff=0.0))
+
+    rows = evaluator_rows(run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache"))
+
+    assert {r.identity: r.score for r in rows} == {"pt_m": 70, "br_f": 65}
+    assert all(r.status == "ok" for r in rows)
+
+
+def test_retries_wait_by_default_before_repeating_a_failed_call():
+    assert RunSettings().retry_backoff > 0
+
+
+def test_results_written_before_the_attempts_column_still_load(design, fake_client, tmp_path):
+    import csv
+
+    rows = run_experiment(design, fake_client, cache_dir=tmp_path / "cache")
+    path = tmp_path / "results.csv"
+    write_results(rows, path)
+    with path.open() as f:
+        old = [{k: v for k, v in raw.items() if k not in ("attempts", "repeat")} for raw in csv.DictReader(f)]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(old[0]))
+        writer.writeheader()
+        writer.writerows(old)
+
+    assert [r.status for r in read_results(path)] == [r.status for r in rows]
+
+
+def test_pilot_estimate_adds_the_expected_share_of_the_stability_sample(wide_design, tmp_path):
+    design = replace(wide_design, run=RunSettings(repeat_fraction=0.5, repeats=2))
+
+    run = execute(pilot_design(design), PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    # results cost 2.5, x 4 for the full design, x (1 + 0.5 x 2) for the repeats, whatever the pilot drew
+    assert run.totals["pilot"]["estimated_full_cost"] == 20.0

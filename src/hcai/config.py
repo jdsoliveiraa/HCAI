@@ -47,7 +47,7 @@ class RunSettings:
     # A malformed or failed agent call is retried this many times, then its row is recorded as missing.
     retries: int = 2
     # Seconds to wait before retrying a call that raised (e.g. an HTTP error), doubled on each retry.
-    retry_backoff: float = 0.0
+    retry_backoff: float = 2.0
     # Stability sample: this fraction of the CVs and Ranker pools is re-run `repeats` times.
     repeat_fraction: float = 0.0
     repeats: int = 1
