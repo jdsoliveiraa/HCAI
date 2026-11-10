@@ -27,6 +27,11 @@ def run_command(config: str | Path, out_dir: str | Path, cache_dir: str | Path, 
 
 
 def _fake_response(request: LLMRequest) -> dict:
+    props = (request.response_schema or {}).get("properties", {})
+    if "passed" in props:
+        return {"passed": True, "reason": "fake LLM: everyone passes, no LLM was called"}
+    if "ranking" in props:
+        return {"ranking": props["ranking"]["items"]["enum"], "rationale": "fake LLM: order as shown"}
     return {"score": 50, "rationale": "fake LLM: fixed score, no LLM was called"}
 
 

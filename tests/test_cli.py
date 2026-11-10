@@ -30,7 +30,7 @@ def test_run_command_writes_results_and_returns_gap_report(tmp_path):
     report = run_command(SKELETON, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=client)
 
     rows = read_results(tmp_path / "results.csv")
-    assert len(rows) == 2 * len(design.models)
+    assert len(rows) == 2 * 3 * len(design.models)  # 2 CVs x 3 agents (one pool of 2)
     assert "-3.0" in report
 
 
@@ -46,19 +46,21 @@ def test_fake_llm_runs_end_to_end_without_api_key(tmp_path, monkeypatch, capsys)
 
 def test_fake_llm_does_not_poison_the_default_cache_used_by_real_runs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    real = FakeLLMClient(lambda request: {"score": 90, "rationale": "real"})
+    a, b = (i.names[0] for i in load_design(SKELETON).identities)
+    real = FakeLLMClient(scores_by_name({a: 90, b: 90}))
     monkeypatch.setattr("hcai.cli.OpenRouterClient", lambda: real)
 
     main(["run", str(SKELETON), "--fake-llm"])
     main(["run", str(SKELETON)])
 
-    assert len(real.calls) == 2
-    assert {r.score for r in read_results(tmp_path / "results" / "results.csv")} == {90}
+    assert len(real.calls) == 5  # 2 Screener + 2 Evaluator + 1 Ranker
+    rows = read_results(tmp_path / "results" / "results.csv")
+    assert {r.score for r in rows if r.agent == "evaluator"} == {90}
 
 
 def test_rerun_summary_reports_no_new_spend(tmp_path):
-    def priced(request):
-        return {"score": 60, "rationale": "x"}
+    a, b = (i.names[0] for i in load_design(SKELETON).identities)
+    priced = scores_by_name({a: 60, b: 60})
 
     class PricedClient(FakeLLMClient):
         def complete(self, request):
@@ -68,5 +70,5 @@ def test_rerun_summary_reports_no_new_spend(tmp_path):
     first = run_command(SKELETON, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=PricedClient(priced))
     second = run_command(SKELETON, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=PricedClient(priced))
 
-    assert "spent $0.5000 this run" in first
+    assert "spent $1.2500 this run" in first  # 5 calls: 2 Screener + 2 Evaluator + 1 Ranker
     assert "spent $0.0000 this run" in second

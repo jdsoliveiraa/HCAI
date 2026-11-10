@@ -21,6 +21,12 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", refuse)
 
 
+@pytest.fixture(autouse=True)
+def crewai_storage(monkeypatch, tmp_path):
+    """CrewAI keeps a local store of its last kickoff under the user data dir; keep tests out of it."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+
+
 @pytest.fixture
 def corpus_dir(tmp_path: Path) -> Path:
     root = tmp_path / "corpus"
@@ -49,9 +55,17 @@ def design(corpus_dir: Path) -> Design:
 
 
 def scores_by_name(scores: dict[str, int]):
-    """Fake responder: the Evaluator's score depends on which name appears in the prompt."""
+    """Fake responder: the Evaluator's score depends on which name appears in the prompt.
+
+    The Screener passes everyone and the Ranker keeps the order it was shown.
+    """
 
     def respond(request: LLMRequest) -> dict:
+        props = (request.response_schema or {}).get("properties", {})
+        if "passed" in props:
+            return {"passed": True, "reason": "meets the mandatory requirements"}
+        if "ranking" in props:
+            return {"ranking": props["ranking"]["items"]["enum"], "rationale": "kept the order shown"}
         text = " ".join(m["content"] for m in request.messages)
         for name, score in scores.items():
             if name in text:
