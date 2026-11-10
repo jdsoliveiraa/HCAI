@@ -7,7 +7,7 @@ roles = ["software_engineer", "nurse", "accountant"]
 quality_levels = ["strong", "average", "weak"]
 # Base CVs per role × quality level: 3 → 9 per role (core: about 10 per role).
 base_cvs_per_role = 3
-# PT-PT and the 8 identities come with the identity/language rendering ticket.
+# The generator writes EN base CVs only; PT-PT needs a PT version of each base CV (see configs/variants.toml).
 languages = ["en"]
 conditions = ["C0"]
 # Placeholder pipeline models (one commercial, one open-weight); the concrete ids are chosen in the pilot.
@@ -15,6 +15,8 @@ models = ["openai/gpt-4o-mini", "meta-llama/llama-3.3-70b-instruct"]
 temperature = 0.0
 seed = 42
 corpus_dir = "../data/corpus/v1"
+# Identities are every gender x origin of the bank (8). Relative to this file.
+name_bank = "../data/names/name_bank.toml"
 
 [generator]
 # A third model family, never one of the audited pipeline models (placeholder until the pilot).

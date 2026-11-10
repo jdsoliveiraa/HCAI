@@ -1,0 +1,60 @@
+# Name bank: full names per gender x origin, used to render identity variants.
+#
+# How names were chosen: first names and surnames are taken from the high-frequency
+# ranks of the public sources listed under each origin. Within those ranks we keep
+# names that are recognisably tied to the origin in Portugal and skip names that are
+# common across all four origins (e.g. Maria, José, Silva), since a shared name would
+# not signal origin. Full names combine one first name with one surname from the same
+# origin. Surnames are gender-invariant, so male and female names of an origin share
+# the same surname pool. Whether the names signal the intended gender and origin is
+# tested separately by the manipulation check (spec #1, story 11).
+#
+# Origins: `code` builds the identity id (<code>_m / <code>_f). `nationality` is the
+# value written after "Nationality:" (en) or "Nacionalidade:" (pt); in PT-PT it agrees
+# with the feminine noun "nacionalidade", so it does not change with the candidate's gender.
+# PALOP is represented by Cape Verde and Eastern Europe by Ukraine: the largest PALOP
+# and Eastern-European resident communities in Portugal.
+
+[origins.portuguese]
+code = "pt"
+country = "Portugal"
+nationality = { en = "Portuguese", pt = "Portuguesa" }
+male = ["Tiago Martins", "Nuno Gonçalves", "Rui Sousa", "Gonçalo Ferreira"]
+female = ["Inês Martins", "Joana Gonçalves", "Rita Sousa", "Catarina Ferreira"]
+sources = [
+  { title = "Forebears: most common forenames in Portugal", url = "https://forebears.io/portugal/forenames" },
+  { title = "Forebears: most common surnames in Portugal", url = "https://forebears.io/portugal/surnames" },
+]
+
+[origins.brazilian]
+code = "br"
+country = "Brazil"
+nationality = { en = "Brazilian", pt = "Brasileira" }
+male = ["Matheus Souza", "Thiago Oliveira", "Leandro Lima", "Felipe Rodrigues"]
+female = ["Ana Clara Souza", "Jéssica Oliveira", "Fernanda Lima", "Larissa Rodrigues"]
+sources = [
+  { title = "IBGE Censo 2010: Nomes no Brasil (first-name frequencies)", url = "https://censo2010.ibge.gov.br/nomes/" },
+  { title = "Forebears: most common surnames in Brazil", url = "https://forebears.io/brazil/surnames" },
+]
+
+[origins.palop]
+code = "palop"
+country = "Cape Verde"
+nationality = { en = "Cape Verdean", pt = "Cabo-verdiana" }
+male = ["Adilson Tavares", "Edmilson Semedo", "Nilton Varela", "Odair Monteiro"]
+female = ["Djamila Tavares", "Jandira Semedo", "Ivanilda Varela", "Neusa Monteiro"]
+sources = [
+  { title = "Forebears: most common forenames in Cape Verde", url = "https://forebears.io/cape-verde/forenames" },
+  { title = "Forebears: most common surnames in Cape Verde", url = "https://forebears.io/cape-verde/surnames" },
+]
+
+[origins.eastern_european]
+code = "ee"
+country = "Ukraine"
+nationality = { en = "Ukrainian", pt = "Ucraniana" }
+male = ["Oleksandr Melnyk", "Andrii Shevchenko", "Dmytro Bondarenko", "Serhii Kovalenko"]
+female = ["Olena Melnyk", "Iryna Shevchenko", "Oksana Bondarenko", "Tetiana Kovalenko"]
+sources = [
+  { title = "Forebears: most common forenames in Ukraine", url = "https://forebears.io/ukraine/forenames" },
+  { title = "Forebears: most common surnames in Ukraine", url = "https://forebears.io/ukraine/surnames" },
+]
