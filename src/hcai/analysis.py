@@ -312,7 +312,8 @@ def _models(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Genera
     for agent, rows in _agent_outcomes(df).items():
         d = _model_frame(rows)
         formula = _formula(d) if len(d) else None
-        if formula is None or d["y"].nunique() < 2:
+        # No model without variation, or without the reference identity (e.g. it was screened out everywhere).
+        if formula is None or d["y"].nunique() < 2 or reference not in set(d["identity"]):
             continue
         design_info: DesignInfo = cast(Any, dmatrix(formula.split("~", 1)[1], d, return_type="dataframe")).design_info
         contrasts = _contrast_matrix(d, design_info, reference)
@@ -412,7 +413,7 @@ def _contrast_table(contrasts: pd.DataFrame, params: pd.Series, cov: pd.DataFram
     se = np.sqrt(np.einsum("ij,jk,ik->i", L, cov.to_numpy(), L))
     table = pd.DataFrame({**meta, **contrasts[["identity", "condition", "contrast"]].to_dict("list"),
                           "estimate": estimate, "se": se, **_wald(estimate, se),
-                          **_boot_ci(None if boot is None else boot @ L.T)})
+                          **_boot_ci(None if boot is None or len(boot) == 0 else boot @ L.T)})
     if scale is not None:
         table["cohens_d"] = estimate / np.sqrt(scale)  # in residual SDs
     else:

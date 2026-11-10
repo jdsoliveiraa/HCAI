@@ -136,7 +136,10 @@ def test_a_planted_five_point_gap_is_detected_with_its_direction_magnitude_and_i
 
 
 def test_with_no_planted_effect_nothing_survives_holm_and_the_equivalence_check_passes(tmp_path):
-    a = run(tmp_path, synthetic_results(seed=1))
+    # Holm holds the error rate at 5% per family, so with ~10 families an occasional null table has a
+    # survivor (1 of seeds 0-9 at this size); seed 0 is not one. 20 base CVs per cell keep the
+    # equivalence check from being marginal (it passes on all of seeds 0-9; at 10 per cell, 2 fail).
+    a = run(tmp_path, synthetic_results(base_per_cell=20, seed=0))
 
     tested = {
         "gaps": a.gaps,
@@ -220,3 +223,13 @@ def test_every_table_is_written_tidy_per_agent_and_condition(tmp_path, capsys):
 def test_an_unknown_reference_identity_is_refused(tmp_path):
     with pytest.raises(ValueError, match="xx_m"):
         run(tmp_path, synthetic_results(conditions=("C0",), languages=("en",), base_per_cell=2), reference="xx_m")
+
+
+def test_a_reference_identity_screened_out_everywhere_shows_in_the_screener_without_breaking_later_agents(tmp_path):
+    a = run(tmp_path, synthetic_results(gaps={("pt_m", "C0"): -100.0, ("pt_m", "C1"): -100.0}, base_per_cell=4))
+
+    screener = one(a.gaps, agent="screener", condition="C0", identity="br_f")
+    assert screener["estimate"] == pytest.approx(100.0)  # percentage points above the reference
+    assert one(a.impact_ratios, agent="screener", condition="C0", identity="pt_m")["impact_ratio"] == 0.0
+    assert set(a.gaps["agent"]) == {"screener"}  # no Evaluator scores or complete pools hold pt_m
+    assert "evaluator" not in set(a.model_terms["agent"])
