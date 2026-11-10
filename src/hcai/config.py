@@ -69,9 +69,10 @@ class RunSettings:
 class PilotSlice:
     """The pilot slice (the `[pilot]` config section): how many of each factor's levels a pilot keeps.
 
-    Each count keeps the first N levels as listed in the design; `None` keeps them all. The default is the
-    first role and one base CV per quality level, under every identity, language, condition and model, so
-    the pilot exercises every model and condition and its cost can be scaled up to the full run.
+    Each count keeps the first N levels as listed in the design (N identities are spread over origins and
+    genders, see `spread_identities`); `None` keeps them all. The default is the first role and one base
+    CV per quality level, under every identity, language, condition and model, so the pilot exercises
+    every model and condition and its cost can be scaled up to the full run.
     """
 
     roles: int | None = 1
@@ -120,6 +121,26 @@ class Design:
         return per_role * len(self.roles) * len(self.languages) * len(self.conditions) * len(self.models)
 
 
+def spread_identities(identities: list[Identity]) -> list[Identity]:
+    """The identities reordered so that the first N cover as many origins, then both genders, as they can.
+
+    Rounds over the origins (in order of first appearance), each round shifting which of an origin's
+    identities is taken: with 4 origins x 2 genders, pt_m, br_f, cv_m, ua_f, pt_f, br_m, ...
+    """
+    by_origin: dict[str, list[Identity]] = {}
+    for identity in identities:
+        by_origin.setdefault(identity.origin, []).append(identity)
+    groups = list(by_origin.values())
+    out: list[Identity] = []
+    for k in range(max((len(g) for g in groups), default=0)):
+        for j, group in enumerate(groups):
+            left = [i for i in group if i not in out]
+            if left:
+                preferred = group[(j + k) % len(group)]
+                out.append(preferred if preferred in left else left[0])
+    return out
+
+
 def pilot_design(design: Design) -> Design:
     """The design restricted to its `[pilot]` slice; the config itself is left as it is."""
     p = design.pilot
@@ -133,7 +154,7 @@ def pilot_design(design: Design) -> Design:
         quality_levels=first(design.quality_levels, p.quality_levels),
         base_cvs_per_role=design.base_cvs_per_role if p.base_cvs_per_role is None
         else min(design.base_cvs_per_role, p.base_cvs_per_role),
-        identities=first(design.identities, p.identities),
+        identities=design.identities if p.identities is None else spread_identities(design.identities)[: p.identities],
         languages=first(design.languages, p.languages),
         conditions=first(design.conditions, p.conditions),
         models=first(design.models, p.models),

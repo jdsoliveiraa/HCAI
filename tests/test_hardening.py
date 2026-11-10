@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from conftest import scores_by_name
-from hcai.config import Pools, RunSettings, load_design, pilot_design
+from hcai.config import PilotSlice, Pools, RunSettings, load_design, pilot_design
 from hcai.llm import FakeLLMClient, LLMRequest
 
 from hcai.runner import execute, read_results, run_experiment, write_results
@@ -370,3 +370,73 @@ def test_pilot_estimate_counts_the_variants_the_full_run_will_render_whatever_th
 
     # one name per base CV x identity: more names spread over the CVs, they don't multiply the calls
     assert run.totals["pilot"]["cv_scale"] == len(build_variants(design)) / len(build_variants(pilot)) == 4.0
+
+
+def test_a_pilot_sized_results_table_can_be_analysed(design, tmp_path):
+    from hcai.analysis import analyse, results_frame
+
+    def respond(request):  # the Screener rejects one CV, so screen-pass varies within the single base CV
+        if "passed" in (request.response_schema or {}).get("properties", {}):
+            return {"passed": "João Silva" in " ".join(m["content"] for m in request.messages), "reason": "r"}
+        return GOOD(request)
+
+    rows = run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache")
+
+    analysis = analyse(results_frame(rows), "pt_m", n_boot=50, n_model_boot=0, n_perm=99)
+
+    assert analysis is not None
+
+
+def test_the_variants_config_run_can_be_analysed(tmp_path):
+    from pathlib import Path
+
+    from hcai.analysis import analyse, load_results
+    from hcai.cli import _fake_response, run_command
+
+    config = Path(__file__).parent.parent / "configs" / "variants.toml"
+    run_command(config, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=FakeLLMClient(_fake_response))
+
+    analysis = analyse(load_results(tmp_path / "results.csv"), "pt_m", n_boot=50, n_model_boot=0, n_perm=99)
+
+    assert analysis is not None
+
+
+@pytest.mark.parametrize("pilot_slice", [None, PilotSlice(identities=3, languages=1)])
+def test_pilot_scales_match_the_variants_and_pools_the_runner_builds(pilot_slice):
+    from pathlib import Path
+
+    from hcai.runner import build_pools
+    from hcai.variants import build_variants
+
+    full = load_design(Path(__file__).parent.parent / "configs" / "variants.toml")  # EN + PT, name-bank identities
+    full = replace(full, conditions=["C0", "C1"], models=["model-a", "model-b"],
+                   pools=Pools(equal_quality=True, mixed_quality=2, mixed_size=8))
+    if pilot_slice is not None:
+        full = pilot_design(replace(full, pilot=pilot_slice))
+
+    variants = build_variants(full)
+    ranked = sum(
+        len(pool.members)
+        for role in full.roles for language in full.languages
+        for pool in build_pools(full, role, language, [v for v in variants if v.role == role and v.language == language])
+    )
+    runs = len(full.conditions) * len(full.models)
+
+    assert full.size == len(variants) * runs
+    assert full.ranked_slots == ranked * runs
+
+
+@pytest.mark.parametrize("n", [2, 4])
+def test_a_pilot_slice_of_identities_spreads_over_origins_and_genders(n):
+    from pathlib import Path
+
+    full = load_design(Path(__file__).parent.parent / "configs" / "variants.toml")  # name bank: 4 origins x 2 genders
+
+    kept = pilot_design(replace(full, pilot=PilotSlice(identities=n))).identities
+
+    assert len(kept) == n
+    assert len({i.origin for i in kept}) == n and len({i.gender for i in kept}) == 2
+
+
+def test_a_pilot_keeping_every_identity_keeps_their_order(wide_design):
+    assert pilot_design(wide_design).identities == wide_design.identities

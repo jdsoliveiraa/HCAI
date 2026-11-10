@@ -312,8 +312,10 @@ def _models(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Genera
     for agent, rows in _agent_outcomes(df).items():
         d = _model_frame(rows)
         formula = _formula(d) if len(d) else None
-        # No model without variation, or without the reference identity (e.g. it was screened out everywhere).
-        if formula is None or d["y"].nunique() < 2 or reference not in set(d["identity"]):
+        # No model without variation, without the reference identity (e.g. it was screened out everywhere),
+        # or with a single base CV (one cluster / random-effect group: a pilot-sized table).
+        if (formula is None or d["y"].nunique() < 2 or reference not in set(d["identity"])
+                or d["base_cv"].nunique() < 2):
             continue
         design_info: DesignInfo = cast(Any, dmatrix(formula.split("~", 1)[1], d, return_type="dataframe")).design_info
         contrasts = _contrast_matrix(d, design_info, reference)
