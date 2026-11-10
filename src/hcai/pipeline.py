@@ -22,7 +22,7 @@ for _key, _value in {
 import json  # noqa: E402
 import time  # noqa: E402
 from collections.abc import Callable  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+from dataclasses import dataclass, replace  # noqa: E402
 from typing import Any  # noqa: E402
 
 from crewai import Agent, BaseLLM, Crew, Process, Task  # noqa: E402
@@ -51,6 +51,32 @@ EVALUATOR_SCHEMA = {
     "required": ["score", "rationale"],
     "additionalProperties": False,
 }
+
+
+RUBRIC_POINTS = 10  # each criterion is scored 0..RUBRIC_POINTS
+
+
+def rubric_schema(n_criteria: int) -> dict[str, Any]:
+    """C2/C3 Evaluator: one score per job criterion (numbered 1..n), each with the CV text quoted as evidence."""
+    item = {
+        "type": "object",
+        "properties": {
+            "criterion": {"type": "integer", "enum": list(range(1, n_criteria + 1))},
+            "score": {"type": "integer", "minimum": 0, "maximum": RUBRIC_POINTS},
+            "quote": {"type": "string"},
+        },
+        "required": ["criterion", "score", "quote"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "criteria": {"type": "array", "items": item, "minItems": n_criteria, "maxItems": n_criteria},
+            "rationale": {"type": "string"},
+        },
+        "required": ["criteria", "rationale"],
+        "additionalProperties": False,
+    }
 
 
 def ranker_schema(n_candidates: int) -> dict[str, Any]:
@@ -208,6 +234,39 @@ def _check_evaluation(p: Any) -> str:
     return ""
 
 
+def _rubric_checker(n: int) -> Validator:
+    def check(p: Any) -> str:
+        if not isinstance(p, dict) or not isinstance(p.get("criteria"), list) or not isinstance(p.get("rationale"), str):
+            return "unparseable rubric output"
+        items = p["criteria"]
+        if not all(isinstance(c, dict) and type(c.get("criterion")) is int and type(c.get("score")) is int
+                   and isinstance(c.get("quote"), str) for c in items):
+            return "unparseable rubric criterion"
+        if sorted(c["criterion"] for c in items) != list(range(1, n + 1)):
+            return f"criteria are not exactly 1..{n}: {[c['criterion'] for c in items]}"
+        for c in items:
+            if not 0 <= c["score"] <= RUBRIC_POINTS:
+                return f"criterion {c['criterion']} score out of range: {c['score']}"
+            if c["score"] > 0 and not c["quote"].strip():
+                return f"criterion {c['criterion']} has a score but no quoted evidence"
+        return ""
+
+    return check
+
+
+def rubric_result(parsed: dict[str, Any], criteria: list[str]) -> dict[str, Any]:
+    """A validated rubric answer in criterion order, with the criterion texts and the 0-100 total.
+
+    The total is computed here (sum of the criterion scores over the maximum, rounded half to even),
+    not asked of the model, so it always follows the rubric.
+    """
+    by_id = {c["criterion"]: c for c in parsed["criteria"]}
+    items: list[dict[str, Any]] = [dict(criterion=text, score=by_id[i]["score"], quote=by_id[i]["quote"])
+                                   for i, text in enumerate(criteria, start=1)]
+    total = round(100 * sum(int(c["score"]) for c in items) / (RUBRIC_POINTS * len(items)))
+    return dict(score=total, rationale=parsed["rationale"], criteria=items)
+
+
 def _passed(output: TaskOutput) -> bool:
     """ConditionalTask gate: the Evaluator runs only when the Screener returned a valid pass."""
     try:
@@ -218,12 +277,23 @@ def _passed(output: TaskOutput) -> bool:
 
 
 def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, temperature: float,
-                        seed: int | None, retry: Retry = Retry()) -> tuple[AgentOutput, AgentOutput | None]:
-    """Run the Screener, then the Evaluator only on a CV the Screener passed (`None` otherwise)."""
+                        seed: int | None, retry: Retry = Retry(),
+                        criteria: list[str] | None = None) -> tuple[AgentOutput, AgentOutput | None]:
+    """Run the Screener, then the Evaluator only on a CV the Screener passed (`None` otherwise).
+
+    With `criteria` (conditions C2/C3) the Evaluator is the rubric Evaluator: it scores each criterion
+    0..RUBRIC_POINTS and quotes the CV text behind each score; its parsed output is `rubric_result`
+    (`score` is the 0-100 total, `criteria` the per-criterion scores and quotes).
+    """
     screener_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=SCREENER_SCHEMA,
                              validate=_check_screening, retry=retry)
-    evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=EVALUATOR_SCHEMA,
-                              validate=_check_evaluation, retry=retry)
+    if criteria:
+        evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed,
+                                  schema=rubric_schema(len(criteria)), validate=_rubric_checker(len(criteria)),
+                                  retry=retry)
+    else:
+        evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=EVALUATOR_SCHEMA,
+                                  validate=_check_evaluation, retry=retry)
     screener = _agent(
         "Screener", "Decide whether each candidate meets every mandatory requirement of the job ad.",
         "You screen CVs for a recruitment team. You check only the mandatory requirements.", screener_llm,
@@ -241,12 +311,25 @@ def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, 
         expected_output='JSON: {"passed": true|false, "reason": "..."}',
         agent=screener,
     )
-    evaluate = ConditionalTask(
-        description=(
+    if criteria:
+        listed = "\n".join(f"{i}. {c}" for i, c in enumerate(criteria, start=1))
+        evaluate_description = (
+            f"Score the candidate's CV on each job criterion below separately, from 0 to {RUBRIC_POINTS}. For "
+            "every criterion, quote verbatim the CV text that supports the score; a criterion the CV gives no "
+            "evidence for scores 0 with an empty quote. Give a short overall rationale."
+            f"\n\n## Criteria\n{listed}\n\n{documents}"
+        )
+        evaluate_output = ('JSON: {"criteria": [{"criterion": number, "score": 0-' f"{RUBRIC_POINTS}"
+                           ', "quote": "verbatim CV text"}, ...], "rationale": "..."}')
+    else:
+        evaluate_description = (
             "Score how well the candidate's CV fits the job ad from 0 to 100 and give a short rationale."
             f"\n\n{documents}"
-        ),
-        expected_output='JSON: {"score": 0-100, "rationale": "..."}',
+        )
+        evaluate_output = 'JSON: {"score": 0-100, "rationale": "..."}'
+    evaluate = ConditionalTask(
+        description=evaluate_description,
+        expected_output=evaluate_output,
         agent=evaluator,
         context=[],  # the Evaluator judges the CV itself, not the Screener's reason
         condition=_passed,
@@ -261,7 +344,10 @@ def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, 
     screening = screener_llm.output()
     if not evaluator_llm.called:
         return screening, None
-    return screening, evaluator_llm.output()
+    evaluation = evaluator_llm.output()
+    if criteria and evaluation.parsed is not None:
+        evaluation = replace(evaluation, parsed=rubric_result(evaluation.parsed, criteria))
+    return screening, evaluation
 
 
 def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperature: float,

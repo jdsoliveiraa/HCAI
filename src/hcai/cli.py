@@ -42,6 +42,11 @@ def run_command(
         p = totals["pilot"]
         summary += (f"\npilot: the full design has {p['cv_scale']:g}x these CVs and {p['ranker_scale']:g}x the "
                     f"Ranker load; estimated full-run cost ${p['estimated_full_cost']:.2f} (before caching)")
+    for condition, by_model in totals.get("oversight", {}).items():
+        for model, c in by_model.items():
+            summary += (f"\noversight {condition} {model}: {c['escalated']} of {c['judged']} Evaluator decisions "
+                        f"escalated ({c['flagged']} flagged by the judge, {c['near_cutoff']} near the cutoff, "
+                        f"{c['judge_missing']} without a verdict) -> {Path(out_dir) / 'review_queue.csv'}")
     if run.stability:
         summary += "\n\n" + format_stability(run.stability) + f"\n-> {Path(out_dir) / 'stability.json'}"
     return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary
@@ -82,6 +87,14 @@ def _fake_response(request: LLMRequest) -> dict:
         return {"passed": True, "reason": "fake LLM: everyone passes, no LLM was called"}
     if "ranking" in props:
         return {"ranking": props["ranking"]["items"]["enum"], "rationale": "fake LLM: order as shown"}
+    if "criteria" in props:  # rubric Evaluator (C2/C3): middling scores, quoting nothing in particular
+        n = len(props["criteria"]["items"]["properties"]["criterion"]["enum"])
+        return {"criteria": [{"criterion": i, "score": 5, "quote": "fake LLM quote"} for i in range(1, n + 1)],
+                "rationale": "fake LLM: fixed rubric, no LLM was called"}
+    if "verdicts" in props:  # oversight judge
+        n = len(props["verdicts"]["items"]["properties"]["criterion"]["enum"])
+        return {"verdicts": [{"criterion": i, "verdict": "faithful", "reason": "fake LLM judge"}
+                             for i in range(1, n + 1)]}
     return {"score": 50, "rationale": "fake LLM: fixed score, no LLM was called"}
 
 

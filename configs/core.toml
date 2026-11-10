@@ -25,6 +25,16 @@ temperature = 0.7
 # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
 borderline = { average = 1, weak = 1 }
 
+# Oversight of the rubric conditions (C2, C3 = C1 + C2; add them to [design] conditions to run them).
+# The judge checks each quoted piece of evidence; a decision is escalated to the human review queue
+# (review_queue.csv) when a quote is flagged or the score is within `margin` points of the shortlist cutoff.
+[oversight]
+# judge_model defaults to [generator] model (the third model family).
+# judge_model = "google/gemini-2.5-flash"
+# "median" (the median Evaluator score of the role x language x condition x model) or a fixed score, e.g. 70.
+cutoff = "median"
+margin = 5
+
 # Runner: retries and the stability sample (none of this changes the design).
 [run]
 # A malformed or failed agent call is retried this many times, then its rows are recorded as missing.

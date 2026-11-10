@@ -13,6 +13,7 @@ from typing import Any
 
 from hcai.config import Design
 from hcai.llm import CachedClient, LLMClient, MeteredClient
+from hcai.oversight import escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
 from hcai.variants import Variant, build_variants
@@ -46,6 +47,13 @@ class ResultRow:
     order_seed: int | None = None  # Ranker rows: seed of the pool's input-order shuffle
     attempts: int = 0  # LLM calls behind this row, retries included (on the row that carries the tokens)
     repeat: int = 0  # 0 in the results; k >= 1 for the k-th re-run of the call in the stability sample
+    # Rubric conditions (C2, C3), see `hcai.oversight`:
+    evidence: str = ""  # Evaluator rows: JSON list of {criterion, score, quote}; `score` is their 0-100 total
+    judge_verdicts: str = ""  # judge rows: JSON list of {criterion, verdict, reason}
+    judge_flag: bool | None = None  # judge and Evaluator rows: any unfaithful justification (None: no verdict)
+    escalated: bool | None = None  # Evaluator rows: sent to the human review queue
+    escalation_reason: str = ""  # Evaluator rows: "flagged quote", "judge missing" and/or "near cutoff", "; "-joined
+    judge_model: str = ""  # judge rows: the model that judged (`model` stays the pipeline model it judged)
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
 
 
@@ -97,7 +105,8 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
 
     `results.csv` is the results table and `run_summary.json` its token, call and cost totals. With a
     stability sample (`[run] repeat_fraction`), `repeats.csv` holds the re-runs and `stability.json`
-    their agreement with the original answers.
+    their agreement with the original answers. With a rubric condition (C2, C3), `review_queue.csv`
+    holds the escalated Evaluator rows, counted under `oversight` in the totals.
     """
     out_dir = Path(out_dir)
     meter = MeteredClient(client)
@@ -107,6 +116,8 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
         totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
     report = stability_report(rows, repeats)
     write_results(rows, out_dir / "results.csv")
+    if any(uses_rubric(c) for c in design.conditions):
+        write_results([r for r in rows if r.escalated], out_dir / "review_queue.csv")
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
     if repeats:
         write_results(repeats, out_dir / "repeats.csv")
@@ -139,6 +150,9 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
     - `calls`, `cost_spent`: what this run sent to the provider and paid (measured below the cache);
       `cache_hits` = attempts - calls.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
+    - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
+    - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions judged, flagged,
+      near the cutoff, left without a verdict, and escalated to the human review queue.
     """
 
     def tally(subset: list[ResultRow]) -> dict[str, Any]:
@@ -158,16 +172,39 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
     for r in rows:
         status[r.status] = status.get(r.status, 0) + 1
     every = rows + repeats
-    models = list(dict.fromkeys(r.model for r in every))
+    models = list(dict.fromkeys(_billed_model(r) for r in every))
     by_model = {}
     for m in models:
-        subset = [r for r in every if r.model == m]
+        subset = [r for r in every if _billed_model(r) == m]
         by_model[m] = {**tally(subset), **spent([m], subset)}
-    return dict(
+    totals = dict(
         rows=len(rows), status=status, **tally(every), **spent(models, every), by_model=by_model,
         by_agent={a: tally([r for r in every if r.agent == a]) for a in dict.fromkeys(r.agent for r in every)},
         repeat_sample=tally(repeats),
     )
+    if any(r.escalated is not None for r in rows):
+        totals["oversight"] = oversight_counts(rows)
+    return totals
+
+
+def _billed_model(r: ResultRow) -> str:
+    return r.judge_model or r.model
+
+
+def oversight_counts(rows: list[ResultRow]) -> dict[str, dict[str, dict[str, int]]]:
+    """Per condition and model: Evaluator decisions judged, flagged, near the cutoff, without a verdict, escalated."""
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for r in rows:
+        if r.agent != "evaluator" or r.escalated is None:
+            continue
+        c = out.setdefault(r.condition, {}).setdefault(
+            r.model, dict(judged=0, flagged=0, near_cutoff=0, judge_missing=0, escalated=0))
+        c["judged"] += 1
+        c["flagged"] += r.judge_flag is True
+        c["near_cutoff"] += "near cutoff" in r.escalation_reason
+        c["judge_missing"] += r.judge_flag is None
+        c["escalated"] += r.escalated
+    return out
 
 
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
@@ -187,6 +224,14 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
         (role, language): (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
         for role in design.roles for language in design.languages
     }
+    criteria: dict[tuple[str, str], list[str]] = {}
+    if any(uses_rubric(c) for c in design.conditions):  # also checked before any LLM call
+        if design.judge_model is None:
+            raise ValueError("a rubric condition (C2/C3) needs a judge: set [oversight] judge_model or [generator] model")
+        for key, ad in job_ads.items():
+            criteria[key] = job_criteria(ad)
+            if not criteria[key]:
+                raise ValueError(f"job ad {key} lists no criteria (bullet lines) for the rubric Evaluator")
     cached = CachedClient(client, cache_dir)
     # Each repeat is the identical request, cached in its own namespace: paid once, replayed on reruns.
     repeat_clients = tuple(CachedClient(client, Path(cache_dir) / "repeats" / f"r{k}")
@@ -200,15 +245,20 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
             pools = build_pools(design, role, language, group)
             for condition in design.conditions:
                 for model in design.models:
-                    ctx = _Context(cached, design, job_ad, language, condition, model)
+                    rubric = criteria.get((role, language)) if uses_rubric(condition) else None
+                    ctx = _Context(cached, design, job_ad, language, condition, model, rubric)
                     passed: dict[str, bool | None] = {}
+                    block: list[ResultRow] = []
                     for v in group:
                         screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
-                        rows += [screener_row, evaluator_row]
+                        block += [screener_row, evaluator_row]
+                        if rubric and evaluator_row.status == "ok":
+                            block.append(_judge(ctx, v, evaluator_row))
                         passed[v.id] = screener_row.screen_pass
                         if ctx.sampled(v.id):
                             for k, again in enumerate(repeat_clients, start=1):
                                 repeats += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
+                    rows += _escalate(block, design) if rubric else block
                     for pool in pools:
                         rows += _rank_pool(ctx, pool, passed)
                         if ctx.sampled(pool.id):
@@ -225,6 +275,7 @@ class _Context:
     language: str
     condition: str
     model: str
+    criteria: list[str] | None = None  # rubric conditions: the job criteria the Evaluator scores
 
     def using(self, client: LLMClient) -> _Context:
         return replace(self, client=client)
@@ -255,7 +306,7 @@ _NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, 
 def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRow]:
     screening, evaluation = screen_and_evaluate(
         ctx.client, model=ctx.model, job_ad=ctx.job_ad, cv=v.text,
-        temperature=ctx.design.temperature, seed=ctx.design.seed, retry=ctx.retry,
+        temperature=ctx.design.temperature, seed=ctx.design.seed, retry=ctx.retry, criteria=ctx.criteria,
     )
     s = screening.parsed
     screener_row = ResultRow(
@@ -270,8 +321,41 @@ def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRo
         evaluator_row = ResultRow(
             **ctx.key(v, "evaluator"), score=e["score"] if e else None, rationale=e["rationale"] if e else "",
             **_usage(evaluation), status="ok" if e else "missing", error=evaluation.error,
+            evidence=json.dumps(e["criteria"], ensure_ascii=False) if e and "criteria" in e else "",
         )
     return screener_row, evaluator_row
+
+
+def _judge(ctx: _Context, v: Variant, evaluator_row: ResultRow) -> ResultRow:
+    """The judge's verdicts on a rubric Evaluator row's quotes, as a judge row (billed to the judge model)."""
+    judge_model = ctx.design.judge_model
+    assert judge_model is not None  # checked in `_run` before any call
+    out = judge(ctx.client, model=judge_model, cv=v.text, evidence=json.loads(evaluator_row.evidence),
+                temperature=ctx.design.temperature, seed=ctx.design.seed, retry=ctx.retry)
+    j = out.parsed
+    return ResultRow(
+        **ctx.key(v, "judge"), score=None, rationale="", **_usage(out), status="ok" if j else "missing",
+        error=out.error, judge_verdicts=json.dumps(j["verdicts"], ensure_ascii=False) if j else "",
+        judge_flag=j["flag"] if j else None, judge_model=judge_model,
+    )
+
+
+def _escalate(block: list[ResultRow], design: Design) -> list[ResultRow]:
+    """Apply the escalation rule to the scored Evaluator rows of one role x language x condition x model.
+
+    The judge's flag is copied onto its Evaluator row; the cutoff is the fixed one or the block's median score.
+    """
+    flags = {(r.base_cv, r.identity): r.judge_flag for r in block if r.agent == "judge"}
+    scored = [r for r in block if r.agent == "evaluator" and r.status == "ok" and r.score is not None]
+    cutoff = shortlist_cutoff([r.score for r in scored if r.score is not None], design.oversight)
+    out = []
+    for r in block:
+        if r in scored and r.score is not None:
+            flag = flags.get((r.base_cv, r.identity))
+            reasons = escalation_reasons(r.score, flag, cutoff, design.oversight)
+            r = replace(r, judge_flag=flag, escalated=bool(reasons), escalation_reason="; ".join(reasons))
+        out.append(r)
+    return out
 
 
 def _rank_pool(ctx: _Context, pool: Pool, passed: dict[str, bool | None]) -> list[ResultRow]:
@@ -309,7 +393,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[str, bool | None]) -> lis
 
 _INT_FIELDS = {"prompt_tokens", "completion_tokens", "attempts", "repeat"}
 _OPTIONAL_INT_FIELDS = {"score", "input_position", "rank", "order_seed"}
-_OPTIONAL_BOOL_FIELDS = {"screen_pass", "top3"}
+_OPTIONAL_BOOL_FIELDS = {"screen_pass", "top3", "judge_flag", "escalated"}
 
 
 def write_results(rows: list[ResultRow], path: str | Path) -> None:

@@ -66,6 +66,26 @@ class RunSettings:
 
 
 @dataclass(frozen=True)
+class Oversight:
+    """The oversight layer of the rubric conditions (C2, C3): the LLM judge and the escalation rule.
+
+    An Evaluator decision is escalated to the human review queue when the judge flags one of its quotes
+    (or gives no valid verdict), or when its score is within `margin` points of the shortlist `cutoff`.
+    `cutoff` is a fixed score, or "median": the median Evaluator score of the same role x language x
+    condition x model (the analysis's primary selection rule). `judge_model` defaults to the generator's
+    model, the third model family.
+    """
+
+    judge_model: str | None = None
+    cutoff: float | str = "median"
+    margin: float = 5.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.cutoff, str) and self.cutoff != "median":
+            raise ValueError(f'[oversight] cutoff must be a score or "median", not {self.cutoff!r}')
+
+
+@dataclass(frozen=True)
 class PilotSlice:
     """The pilot slice (the `[pilot]` config section): how many of each factor's levels a pilot keeps.
 
@@ -101,7 +121,15 @@ class Design:
     generator: Generator | None = None
     run: RunSettings = field(default_factory=RunSettings)
     pilot: PilotSlice = field(default_factory=PilotSlice)
+    oversight: Oversight = field(default_factory=Oversight)
     pilot_of: Design | None = None  # set on a pilot design only: the full design it is a slice of
+
+    @property
+    def judge_model(self) -> str | None:
+        """The oversight judge's model: `[oversight] judge_model`, else the generator's (third-family) model."""
+        if self.oversight.judge_model:
+            return self.oversight.judge_model
+        return self.generator.model if self.generator else None
 
     @property
     def size(self) -> int:
@@ -193,6 +221,7 @@ def load_design(path: str | Path) -> Design:
         generator=Generator(**raw["generator"]) if "generator" in raw else None,
         run=RunSettings(**raw.get("run", {})),
         pilot=PilotSlice(**raw.get("pilot", {})),
+        oversight=Oversight(**raw.get("oversight", {})),
     )
 
 
