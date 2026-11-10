@@ -11,27 +11,38 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from hcai.config import load_design
+from hcai.config import load_design, pilot_design
 from hcai.corpus import CorpusFrozen, fake_generator_response, generate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
-from hcai.report import format_report, score_gaps
-from hcai.runner import run_experiment, write_results
+from hcai.report import format_report, format_stability, score_gaps
+from hcai.runner import execute
 from hcai.variants import IdentityError, TemplateError, VariantCheckError, build_variants, write_variants
 
 
-def run_command(config: str | Path, out_dir: str | Path, cache_dir: str | Path, client: LLMClient) -> str:
+def run_command(
+    config: str | Path, out_dir: str | Path, cache_dir: str | Path, client: LLMClient, pilot: bool = False,
+) -> str:
     design = load_design(config)
-    rows = run_experiment(design, client, cache_dir=cache_dir)
-    write_results(rows, Path(out_dir) / "results.csv")
-    missing = sum(r.status != "ok" for r in rows)
-    spent = sum(r.cost for r in rows if not r.cached)
-    hits = sum(r.cached for r in rows)
+    if pilot:
+        design = pilot_design(design)
+    run = execute(design, client, out_dir=out_dir, cache_dir=cache_dir)
+    totals = run.totals
+    status = totals["status"]
     reference = design.identities[0].id
     summary = (
-        f"\n\n{len(rows)} rows ({missing} missing, {hits} from cache), spent ${spent:.4f} this run"
-        f" -> {Path(out_dir) / 'results.csv'}"
+        f"\n\n{totals['rows']} rows ({status.get('missing', 0)} missing, {status.get('rejected', 0)} rejected); "
+        f"{totals['calls']} LLM calls, {totals['cache_hits']} from cache; "
+        f"{totals['prompt_tokens']} prompt + {totals['completion_tokens']} completion tokens; "
+        f"spent ${totals['cost_spent']:.4f} this run (the outputs cost ${totals['cost_total']:.4f} in all)"
+        f" -> {Path(out_dir) / 'results.csv'}, {Path(out_dir) / 'run_summary.json'}"
     )
-    return format_report(score_gaps(rows, reference=reference), reference=reference) + summary
+    if "pilot" in totals:
+        p = totals["pilot"]
+        summary += (f"\npilot: the full design has {p['cv_scale']:g}x these CVs and {p['ranker_scale']:g}x the "
+                    f"Ranker load; estimated full-run cost ${p['estimated_full_cost']:.2f} (before caching)")
+    if run.stability:
+        summary += "\n\n" + format_stability(run.stability) + f"\n-> {Path(out_dir) / 'stability.json'}"
+    return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary
 
 
 def corpus_command(
@@ -74,7 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run a design config and report paired score gaps")
     run.add_argument("config", type=Path)
-    run.add_argument("--out", type=Path, default=Path("results"), help="output directory (default: results)")
+    run.add_argument("--out", type=Path, default=None,
+                     help="output directory (default: results, or results/pilot with --pilot)")
+    run.add_argument("--pilot", action="store_true",
+                     help="run only the config's [pilot] slice and estimate the full run's cost")
     run.add_argument(
         "--cache", type=Path, default=None,
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
@@ -114,8 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     # Fake responses are keyed like real ones, so they must never share a cache with real runs.
     client: LLMClient = FakeLLMClient(_fake_response) if args.fake_llm else OpenRouterClient()
     cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
+    out = args.out or Path("results/pilot" if args.pilot else "results")
     try:
-        print(run_command(args.config, out_dir=args.out, cache_dir=cache, client=client))
+        print(run_command(args.config, out_dir=out, cache_dir=cache, client=client, pilot=args.pilot))
     except (TemplateError, IdentityError, VariantCheckError, FileNotFoundError) as e:  # raised before any LLM call
         print(f"run: {e}", file=sys.stderr)
         return 1

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any
 from statistics import mean
 
 from hcai.runner import ResultRow
@@ -57,4 +58,18 @@ def format_report(gaps: list[Gap], reference: str) -> str:
         )
     if not gaps:
         lines.append("(no complete pairs)")
+    return "\n".join(lines)
+
+
+def format_stability(report: list[dict[str, Any]]) -> str:
+    """The stability sample's report (see `hcai.stability.stability_report`) as a table."""
+    lines = ["Stability (repeat sample; agreement = share of repeats matching the original answer)", ""]
+    header = f"{'model':<28} {'cond':<5} {'lang':<5} {'agent':<10} {'agreement':>9} {'pairs':>6} {'mean SD':>8}"
+    lines += [header, "-" * len(header)]
+    for s in report:
+        sd = "" if s["mean_sd"] is None else f"{s['mean_sd']:.2f}"
+        lines.append(
+            f"{s['model']:<28} {s['condition']:<5} {s['language']:<5} {s['agent']:<10} "
+            f"{s['agreement']:>9.2f} {s['pairs']:>6} {sd:>8}"
+        )
     return "\n".join(lines)

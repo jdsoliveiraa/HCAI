@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from hcai.names import GENDERS, NameBank, load_name_bank
@@ -53,6 +53,39 @@ class Generator:
 
 
 @dataclass(frozen=True)
+class RunSettings:
+    """How the runner calls the LLMs (the `[run]` config section); none of this changes the design."""
+
+    # A malformed or failed agent call is retried this many times, then its row is recorded as missing.
+    retries: int = 2
+    # Seconds to wait before retrying a call that raised (e.g. an HTTP error), doubled on each retry.
+    retry_backoff: float = 2.0
+    # Stability sample: this fraction of the CVs and Ranker pools is re-run `repeats` times.
+    repeat_fraction: float = 0.0
+    repeats: int = 1
+
+
+@dataclass(frozen=True)
+class PilotSlice:
+    """The pilot slice (the `[pilot]` config section): how many of each factor's levels a pilot keeps.
+
+    Each count keeps the first N levels as listed in the design (N identities are spread over origins and
+    genders, see `spread_identities`); `None` keeps them all. The default is the first role and one base
+    CV per quality level, under every identity, language, condition and model, so the pilot exercises
+    every model and condition and its cost can be scaled up to the full run.
+    """
+
+    roles: int | None = 1
+    quality_levels: int | None = None
+    base_cvs_per_role: int | None = 1
+    identities: int | None = None
+    languages: int | None = None
+    conditions: int | None = None
+    models: int | None = None
+    mixed_quality: int | None = 1
+
+
+@dataclass(frozen=True)
 class Design:
     roles: list[str]
     quality_levels: list[str]
@@ -66,6 +99,69 @@ class Design:
     seed: int | None = 42
     pools: Pools = field(default_factory=Pools)
     generator: Generator | None = None
+    run: RunSettings = field(default_factory=RunSettings)
+    pilot: PilotSlice = field(default_factory=PilotSlice)
+    pilot_of: Design | None = None  # set on a pilot design only: the full design it is a slice of
+
+    @property
+    def size(self) -> int:
+        """CV variants x language x condition x model: what the Screener and Evaluator calls scale with.
+
+        Each base CV x identity gets one name from the identity's names, so the names don't multiply it.
+        """
+        return (len(self.roles) * len(self.quality_levels) * self.base_cvs_per_role * len(self.identities)
+                * len(self.languages) * len(self.conditions) * len(self.models))
+
+    @property
+    def ranked_slots(self) -> int:
+        """CVs shown to the Ranker over all pools (if all are screened in): what Ranker tokens scale with."""
+        bases = len(self.quality_levels) * self.base_cvs_per_role
+        per_role = ((bases * len(self.identities) if self.pools.equal_quality else 0)
+                    + self.pools.mixed_quality * min(self.pools.mixed_size, bases))
+        return per_role * len(self.roles) * len(self.languages) * len(self.conditions) * len(self.models)
+
+
+def spread_identities(identities: list[Identity]) -> list[Identity]:
+    """The identities reordered so that the first N cover as many origins, then both genders, as they can.
+
+    Rounds over the origins (in order of first appearance), each round shifting which of an origin's
+    identities is taken: with 4 origins x 2 genders, pt_m, br_f, cv_m, ua_f, pt_f, br_m, ...
+    """
+    by_origin: dict[str, list[Identity]] = {}
+    for identity in identities:
+        by_origin.setdefault(identity.origin, []).append(identity)
+    groups = list(by_origin.values())
+    out: list[Identity] = []
+    for k in range(max((len(g) for g in groups), default=0)):
+        for j, group in enumerate(groups):
+            left = [i for i in group if i not in out]
+            if left:
+                preferred = group[(j + k) % len(group)]
+                out.append(preferred if preferred in left else left[0])
+    return out
+
+
+def pilot_design(design: Design) -> Design:
+    """The design restricted to its `[pilot]` slice; the config itself is left as it is."""
+    p = design.pilot
+
+    def first[T](levels: list[T], n: int | None) -> list[T]:
+        return list(levels if n is None else levels[:n])
+
+    pilot = replace(
+        design,
+        roles=first(design.roles, p.roles),
+        quality_levels=first(design.quality_levels, p.quality_levels),
+        base_cvs_per_role=design.base_cvs_per_role if p.base_cvs_per_role is None
+        else min(design.base_cvs_per_role, p.base_cvs_per_role),
+        identities=design.identities if p.identities is None else spread_identities(design.identities)[: p.identities],
+        languages=first(design.languages, p.languages),
+        conditions=first(design.conditions, p.conditions),
+        models=first(design.models, p.models),
+        pools=design.pools if p.mixed_quality is None
+        else replace(design.pools, mixed_quality=min(design.pools.mixed_quality, p.mixed_quality)),
+    )
+    return replace(pilot, pilot_of=design)
 
 
 def load_design(path: str | Path) -> Design:
@@ -95,6 +191,8 @@ def load_design(path: str | Path) -> Design:
         seed=d.get("seed", 42),
         pools=Pools(**raw.get("pools", {})),
         generator=Generator(**raw["generator"]) if "generator" in raw else None,
+        run=RunSettings(**raw.get("run", {})),
+        pilot=PilotSlice(**raw.get("pilot", {})),
     )
 
 
