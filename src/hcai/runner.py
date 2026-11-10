@@ -13,7 +13,7 @@ from typing import Any
 
 from hcai.config import Design
 from hcai.llm import CachedClient, LLMClient, MeteredClient
-from hcai.oversight import escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
+from hcai.oversight import C3_READY, escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
 from hcai.variants import Variant, build_variants
@@ -29,7 +29,7 @@ class ResultRow:
     language: str
     condition: str
     model: str
-    agent: str  # "screener", "evaluator" or "ranker"
+    agent: str  # "screener", "evaluator", "ranker", or "judge" (rubric conditions: the oversight judge)
     score: int | None
     rationale: str
     prompt_tokens: int
@@ -49,10 +49,11 @@ class ResultRow:
     repeat: int = 0  # 0 in the results; k >= 1 for the k-th re-run of the call in the stability sample
     # Rubric conditions (C2, C3), see `hcai.oversight`:
     evidence: str = ""  # Evaluator rows: JSON list of {criterion, score, quote}; `score` is their 0-100 total
-    judge_verdicts: str = ""  # judge rows: JSON list of {criterion, verdict, reason}
+    judge_verdicts: str = ""  # judge rows, copied onto their Evaluator row: JSON list of {criterion, verdict, reason}
     judge_flag: bool | None = None  # judge and Evaluator rows: any unfaithful justification (None: no verdict)
     escalated: bool | None = None  # Evaluator rows: sent to the human review queue
-    escalation_reason: str = ""  # Evaluator rows: "flagged quote", "judge missing" and/or "near cutoff", "; "-joined
+    # Evaluator rows: "flagged quote", "judge missing" and/or "near cutoff", or "evaluator missing"; "; "-joined
+    escalation_reason: str = ""
     judge_model: str = ""  # judge rows: the model that judged (`model` stays the pipeline model it judged)
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
 
@@ -151,8 +152,9 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
       `cache_hits` = attempts - calls.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
-    - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions judged, flagged,
-      near the cutoff, left without a verdict, and escalated to the human review queue.
+    - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (screened in),
+      how many the judge gave a verdict on, flagged, were near the cutoff, had no verdict or no valid
+      Evaluator answer, and were escalated to the human review queue.
     """
 
     def tally(subset: list[ResultRow]) -> dict[str, Any]:
@@ -192,17 +194,19 @@ def _billed_model(r: ResultRow) -> str:
 
 
 def oversight_counts(rows: list[ResultRow]) -> dict[str, dict[str, dict[str, int]]]:
-    """Per condition and model: Evaluator decisions judged, flagged, near the cutoff, without a verdict, escalated."""
+    """Per condition and model: the escalation tally of the rubric Evaluator decisions (see `run_totals`)."""
     out: dict[str, dict[str, dict[str, int]]] = {}
     for r in rows:
         if r.agent != "evaluator" or r.escalated is None:
             continue
-        c = out.setdefault(r.condition, {}).setdefault(
-            r.model, dict(judged=0, flagged=0, near_cutoff=0, judge_missing=0, escalated=0))
-        c["judged"] += 1
+        c = out.setdefault(r.condition, {}).setdefault(r.model, dict(
+            decisions=0, judged=0, flagged=0, near_cutoff=0, judge_missing=0, evaluator_missing=0, escalated=0))
+        c["decisions"] += 1
+        c["judged"] += r.judge_flag is not None
         c["flagged"] += r.judge_flag is True
         c["near_cutoff"] += "near cutoff" in r.escalation_reason
-        c["judge_missing"] += r.judge_flag is None
+        c["judge_missing"] += "judge missing" in r.escalation_reason
+        c["evaluator_missing"] += r.status == "missing"
         c["escalated"] += r.escalated
     return out
 
@@ -225,6 +229,8 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
         for role in design.roles for language in design.languages
     }
     criteria: dict[tuple[str, str], list[str]] = {}
+    if "C3" in design.conditions and not C3_READY:
+        raise ValueError("condition C3 (C1 blinding + C2 rubric) needs C1's blinding (#7), which is not available yet")
     if any(uses_rubric(c) for c in design.conditions):  # also checked before any LLM call
         if design.judge_model is None:
             raise ValueError("a rubric condition (C2/C3) needs a judge: set [oversight] judge_model or [generator] model")
@@ -341,19 +347,25 @@ def _judge(ctx: _Context, v: Variant, evaluator_row: ResultRow) -> ResultRow:
 
 
 def _escalate(block: list[ResultRow], design: Design) -> list[ResultRow]:
-    """Apply the escalation rule to the scored Evaluator rows of one role x language x condition x model.
+    """Apply the escalation rule to the Evaluator rows of one role x language x condition x model.
 
-    The judge's flag is copied onto its Evaluator row; the cutoff is the fixed one or the block's median score.
+    The judge's flag and verdicts are copied onto its Evaluator row, so the review queue is self-contained;
+    the cutoff is the fixed one or the median of the block's valid scores. An Evaluator that gave no valid
+    answer for a screened-in CV is escalated too ("evaluator missing"); screened-out CVs are not decisions.
     """
-    flags = {(r.base_cv, r.identity): r.judge_flag for r in block if r.agent == "judge"}
-    scored = [r for r in block if r.agent == "evaluator" and r.status == "ok" and r.score is not None]
-    cutoff = shortlist_cutoff([r.score for r in scored if r.score is not None], design.oversight)
+    judged = {(r.base_cv, r.identity): r for r in block if r.agent == "judge"}
+    scores = [r.score for r in block if r.agent == "evaluator" and r.status == "ok" and r.score is not None]
+    cutoff = shortlist_cutoff(scores, design.oversight)
     out = []
     for r in block:
-        if r in scored and r.score is not None:
-            flag = flags.get((r.base_cv, r.identity))
+        if r.agent == "evaluator" and r.status == "ok" and r.score is not None:
+            j = judged.get((r.base_cv, r.identity))
+            flag = j.judge_flag if j else None
             reasons = escalation_reasons(r.score, flag, cutoff, design.oversight)
-            r = replace(r, judge_flag=flag, escalated=bool(reasons), escalation_reason="; ".join(reasons))
+            r = replace(r, judge_flag=flag, judge_verdicts=j.judge_verdicts if j else "", escalated=bool(reasons),
+                        escalation_reason="; ".join(reasons))
+        elif r.agent == "evaluator" and r.status == "missing":
+            r = replace(r, escalated=True, escalation_reason="evaluator missing")
         out.append(r)
     return out
 

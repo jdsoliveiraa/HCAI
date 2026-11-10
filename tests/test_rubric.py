@@ -183,11 +183,13 @@ def test_execute_counts_escalations_writes_the_review_queue_and_bills_the_judge(
     run = execute(c2_design, client, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
 
     oversight = run.totals["oversight"]
-    assert oversight["C2"]["model-a"] == dict(judged=2, flagged=1, near_cutoff=0, judge_missing=0, escalated=1)
+    assert oversight["C2"]["model-a"] == dict(decisions=2, judged=2, flagged=1, near_cutoff=0, judge_missing=0,
+                                              evaluator_missing=0, escalated=1)
     assert run.totals["by_model"]["judge-model"]["calls"] == 2
     assert run.totals["calls"] == len(client.calls) and run.totals["cache_hits"] == 0
     queue = read_results(tmp_path / "out" / "review_queue.csv")
     assert [(r.identity, r.agent) for r in queue] == [("br_f", "evaluator")]
+    assert "unfaithful" in queue[0].judge_verdicts  # the reviewer sees which criterion was flagged and why
     assert read_results(tmp_path / "out" / "results.csv") == run.rows
 
 
@@ -218,10 +220,7 @@ def test_a_quote_missing_for_a_positive_score_is_retried(c2_design, tmp_path):
     assert sorted(r.attempts for r in evaluator.values()) == [1, 2]
 
 
-def test_c3_is_enabled_from_the_config_and_uses_the_rubric(tmp_path, corpus_dir):
-    (corpus_dir / "data_analyst" / "job_ad.en.md").write_text(JOB_AD)
-    config = tmp_path / "design.toml"
-    config.write_text(f"""
+C3_CONFIG = """
 [design]
 roles = ["data_analyst"]
 quality_levels = ["high"]
@@ -244,11 +243,30 @@ model = "third-family"
 [oversight]
 cutoff = 70
 margin = 3
-""")
-    design = load_design(config)
-    assert design.oversight == Oversight(judge_model=None, cutoff=70, margin=3)
+"""
 
-    rows = run_experiment(design, FakeLLMClient(fake_crew({"João Silva": rubric([10, 10, 10, 6])})),
+
+def test_c3_is_enabled_from_the_config_but_refuses_to_run_without_blinding(tmp_path, corpus_dir):
+    (corpus_dir / "data_analyst" / "job_ad.en.md").write_text(JOB_AD)
+    config = tmp_path / "design.toml"
+    config.write_text(C3_CONFIG.format(corpus_dir=corpus_dir))
+    design = load_design(config)
+    assert design.conditions == ["C3"]
+    assert design.oversight == Oversight(judge_model=None, cutoff=70, margin=3)
+    client = FakeLLMClient(fake_crew({"João Silva": rubric([10, 10, 10, 6])}))
+
+    with pytest.raises(ValueError, match="C3.*blinding"):  # until #7: C3 would silently duplicate C2
+        run_experiment(design, client, cache_dir=tmp_path / "cache")
+    assert client.calls == []
+
+
+def test_c3_uses_the_rubric_and_the_generator_model_as_judge_once_blinding_exists(tmp_path, corpus_dir, monkeypatch):
+    monkeypatch.setattr("hcai.runner.C3_READY", True)  # stands in for #7 being merged
+    (corpus_dir / "data_analyst" / "job_ad.en.md").write_text(JOB_AD)
+    config = tmp_path / "design.toml"
+    config.write_text(C3_CONFIG.format(corpus_dir=corpus_dir))
+
+    rows = run_experiment(load_design(config), FakeLLMClient(fake_crew({"João Silva": rubric([10, 10, 10, 6])})),
                           cache_dir=tmp_path / "cache")
 
     evaluator, judge = by_agent(rows, "evaluator")["pt_m"], by_agent(rows, "judge")["pt_m"]
@@ -288,3 +306,69 @@ def test_results_with_oversight_columns_round_trip_through_csv(c2_design, tmp_pa
     for column in ["evidence", "judge_verdicts", "judge_flag", "escalated", "escalation_reason", "judge_model"]:
         assert column in header
     assert read_results(path) == rows
+
+
+def test_screened_out_cvs_are_neither_escalated_nor_in_the_median(c2_design, tmp_path):
+    identities = c2_design.identities + [
+        Identity(id="cv_m", gender="male", origin="palop", names=["Carlos Tavares"], nationality="Cape Verdean")]
+    design = replace(c2_design, identities=identities, oversight=Oversight(judge_model="judge-model", margin=5))
+    crew = fake_crew({"João Silva": rubric([4, 4, 4, 4]), "Ana Souza": rubric([8, 8, 8, 8])})
+
+    def respond(request):
+        if "passed" in (request.response_schema or {}).get("properties", {}):
+            rejected = "Carlos Tavares" in " ".join(m["content"] for m in request.messages)
+            return {"passed": not rejected, "reason": "screened"}
+        return crew(request)
+
+    evaluator = by_agent(run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache"), "evaluator")
+
+    assert evaluator["cv_m"].status == "rejected" and evaluator["cv_m"].escalated is None
+    # median of 40 and 80 is 60: neither within 5 (a rejected CV counted as 0 would pull it to 40)
+    assert evaluator["pt_m"].escalated is False and evaluator["br_f"].escalated is False
+
+
+def test_an_evaluator_with_no_valid_answer_is_escalated_and_counted(c2_design, tmp_path):
+    crew = fake_crew({"João Silva": rubric([10, 10, 10, 6]), "Ana Souza": rubric([4, 4, 2, 0])})
+
+    def respond(request):
+        props = (request.response_schema or {}).get("properties", {})
+        if "criteria" in props and "Ana Souza" in " ".join(m["content"] for m in request.messages):
+            return "not json"
+        return crew(request)
+
+    run = execute(c2_design, FakeLLMClient(respond), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+
+    evaluator = by_agent(run.rows, "evaluator")
+    assert evaluator["br_f"].status == "missing"
+    assert evaluator["br_f"].escalated is True and evaluator["br_f"].escalation_reason == "evaluator missing"
+    assert "br_f" not in by_agent(run.rows, "judge")
+    counts = run.totals["oversight"]["C2"]["model-a"]
+    assert (counts["decisions"], counts["judged"], counts["evaluator_missing"], counts["escalated"]) == (2, 1, 1, 1)
+
+
+def test_a_c0_and_c2_run_queues_only_c2_rows_and_samples_stability_under_c2(c2_design, tmp_path):
+    from hcai.config import RunSettings
+
+    c2 = fake_crew({"João Silva": rubric([8, 8, 7, 4]), "Ana Souza": rubric([8, 8, 7, 4])})
+
+    def respond(request):
+        if "score" in (request.response_schema or {}).get("properties", {}):
+            return {"score": 70, "rationale": "C0 score at the cutoff"}
+        return c2(request)
+
+    design = replace(c2_design, conditions=["C0", "C2"], run=RunSettings(repeat_fraction=1.0, repeats=1))
+
+    run = execute(design, FakeLLMClient(respond), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+
+    queue = read_results(tmp_path / "out" / "review_queue.csv")
+    assert {(r.condition, r.identity) for r in queue} == {("C2", "pt_m"), ("C2", "br_f")}
+    assert list(run.totals["oversight"]) == ["C2"]
+    c2_repeats = [r for r in run.repeats if r.condition == "C2" and r.agent == "evaluator"]
+    assert {r.score for r in c2_repeats} == {68}
+    assert any(s["condition"] == "C2" and s["agent"] == "evaluator" and s["agreement"] == 1.0 for s in run.stability)
+
+
+@pytest.mark.parametrize("bad", [{"margin": -1}, {"cutoff": "mean"}, {"cutoff": True}])
+def test_invalid_oversight_settings_are_rejected(bad):
+    with pytest.raises(ValueError):
+        Oversight(**bad)

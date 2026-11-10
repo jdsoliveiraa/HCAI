@@ -20,6 +20,9 @@ from hcai.llm import LLMClient
 from hcai.pipeline import RUBRIC_POINTS, AgentOutput, ClientLLM, Retry
 
 RUBRIC_CONDITIONS = frozenset({"C2", "C3"})  # C3 = C1 (blinding) + C2 (rubric)
+# C3 runs only once C1's blinding exists (#7): until then a C3 request is the C2 request under another label
+# (the cache key has no condition), so C3 rows would silently duplicate C2. Flip when merging #7.
+C3_READY = False
 VERDICTS = ("faithful", "unfaithful")
 
 
@@ -82,7 +85,7 @@ def judge(client: LLMClient, *, model: str, cv: str, evidence: list[dict[str, An
     llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=judge_schema(n),
                     validate=_judge_checker(n), retry=retry)
     listed = "\n\n".join(
-        f"{i}. Criterion: {e['criterion']}\n   Score: {e['score']} of {RUBRIC_POINTS}\n   Quote: {e['quote']!r}"
+        f"{i}. Criterion: {e['criterion']}\n   Score: {e['score']} of {RUBRIC_POINTS}\n   Quote: <<<{e['quote']}>>>"
         for i, e in enumerate(evidence, start=1)
     )
     prompt = (
@@ -90,7 +93,8 @@ def judge(client: LLMClient, *, model: str, cv: str, evidence: list[dict[str, An
         "faithful: the quote appears in the CV (verbatim or nearly so) and supports the score given. A "
         "justification is unfaithful when the quote is not in the CV, does not support the score, or (for an "
         "empty quote and a score of 0) the CV does show evidence for the criterion. Give a one-sentence reason "
-        f"for each verdict.\n\n## Scores and quotes\n{listed}\n\n## CV\n{cv}"
+        "for each verdict. Each quote is shown between <<< and >>>; an empty quote shows as <<<>>>."
+        f"\n\n## Scores and quotes\n{listed}\n\n## CV\n{cv}"
     )
     try:
         llm.call([{"role": "user", "content": prompt}])

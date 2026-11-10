@@ -44,9 +44,10 @@ def run_command(
                     f"Ranker load; estimated full-run cost ${p['estimated_full_cost']:.2f} (before caching)")
     for condition, by_model in totals.get("oversight", {}).items():
         for model, c in by_model.items():
-            summary += (f"\noversight {condition} {model}: {c['escalated']} of {c['judged']} Evaluator decisions "
+            summary += (f"\noversight {condition} {model}: {c['escalated']} of {c['decisions']} Evaluator decisions "
                         f"escalated ({c['flagged']} flagged by the judge, {c['near_cutoff']} near the cutoff, "
-                        f"{c['judge_missing']} without a verdict) -> {Path(out_dir) / 'review_queue.csv'}")
+                        f"{c['judge_missing']} without a verdict, {c['evaluator_missing']} without a score)"
+                        f" -> {Path(out_dir) / 'review_queue.csv'}")
     if run.stability:
         summary += "\n\n" + format_stability(run.stability) + f"\n-> {Path(out_dir) / 'stability.json'}"
     return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary

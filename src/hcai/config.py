@@ -81,8 +81,10 @@ class Oversight:
     margin: float = 5.0
 
     def __post_init__(self) -> None:
-        if isinstance(self.cutoff, str) and self.cutoff != "median":
+        if isinstance(self.cutoff, bool) or (isinstance(self.cutoff, str) and self.cutoff != "median"):
             raise ValueError(f'[oversight] cutoff must be a score or "median", not {self.cutoff!r}')
+        if isinstance(self.margin, bool) or self.margin < 0:
+            raise ValueError(f"[oversight] margin must be a non-negative number of points, not {self.margin!r}")
 
 
 @dataclass(frozen=True)
