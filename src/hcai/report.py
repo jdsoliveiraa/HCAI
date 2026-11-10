@@ -73,3 +73,23 @@ def format_stability(report: list[dict[str, Any]]) -> str:
             f"{s['agreement']:>9.2f} {s['pairs']:>6} {sd:>8}"
         )
     return "\n".join(lines)
+
+
+def format_proxy_leaks(summary: list[dict[str, Any]]) -> str:
+    """The proxy-leak summary (see `hcai.blinding.proxy_leak_summary`) as a table."""
+
+    def pct(share: float | None) -> str:
+        return "-" if share is None else f"{100 * share:.0f}%"
+
+    lines = ["Proxy leaks under blinding (redacted = cues the Blinder left in; kept = share surviving verbatim)", ""]
+    header = (f"{'model':<28} {'cond':<5} {'lang':<5} {'CVs':>4} {'redacted':>8} {'gendered':>8} "
+              f"{'university':>10} {'languages':>9} {'location':>8}")
+    lines += [header, "-" * len(header)]
+    for s in summary:
+        lines.append(
+            f"{s['model']:<28} {s['condition']:<5} {s['language']:<5} {s['cvs']:>4} {s['redacted']:>8} "
+            f"{s['with_own_gender_words']:>8} {pct(s['universities_kept']):>10} {pct(s['languages_kept']):>9} "
+            f"{pct(s['location_kept']):>8}"
+        )
+    lines.append("(gendered = blinded CVs still holding a gendered word of the candidate's gender)")
+    return "\n".join(lines)

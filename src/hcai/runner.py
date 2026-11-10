@@ -5,12 +5,13 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from itertools import zip_longest
 from pathlib import Path
 from random import Random
 from typing import Any
 
+from hcai.blinding import BLINDING_CONDITIONS, blind_variant, proxy_leak_summary, proxy_leaks
 from hcai.config import Design
 from hcai.llm import CachedClient, LLMClient, MeteredClient
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
@@ -90,6 +91,7 @@ class Run:
     repeats: list[ResultRow]  # stability sample: re-runs of sampled calls, `repeat` = 1..k
     totals: dict[str, Any]
     stability: list[dict[str, Any]]
+    proxy_leaks: list[dict[str, Any]] = field(default_factory=list)  # C1: what survives blinding (summary)
 
 
 def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path) -> Run:
@@ -97,7 +99,8 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
 
     `results.csv` is the results table and `run_summary.json` its token, call and cost totals. With a
     stability sample (`[run] repeat_fraction`), `repeats.csv` holds the re-runs and `stability.json`
-    their agreement with the original answers.
+    their agreement with the original answers. With condition C1, `proxy_leaks.csv` holds what survived
+    blinding per blinded CV and `proxy_leaks.json` its summary per model x condition x language.
     """
     out_dir = Path(out_dir)
     meter = MeteredClient(client)
@@ -111,7 +114,19 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     if repeats:
         write_results(repeats, out_dir / "repeats.csv")
         (out_dir / "stability.json").write_text(json.dumps(report, indent=2) + "\n")
-    return Run(rows=rows, repeats=repeats, totals=totals, stability=report)
+    leaks = proxy_leaks(design, rows)
+    leak_summary = proxy_leak_summary(leaks)
+    if leaks:
+        _write_table([asdict(x) for x in leaks], out_dir / "proxy_leaks.csv")
+        (out_dir / "proxy_leaks.json").write_text(json.dumps(leak_summary, indent=2) + "\n")
+    return Run(rows=rows, repeats=repeats, totals=totals, stability=report, proxy_leaks=leak_summary)
+
+
+def _write_table(records: list[dict[str, Any]], path: Path) -> None:
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(records[0]))
+        writer.writeheader()
+        writer.writerows(records)
 
 
 def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[str, float]:
@@ -201,15 +216,25 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
             for condition in design.conditions:
                 for model in design.models:
                     ctx = _Context(cached, design, job_ad, language, condition, model)
+                    crew_group, crew_pools, unblinded = group, pools, {}
+                    if condition in BLINDING_CONDITIONS:  # C1: the crew sees the Blinder's text only
+                        blinder_rows, crew_group, unblinded = _blind_group(ctx, group)
+                        rows += blinder_rows
+                        by_id = {v.id: v for v in crew_group}
+                        crew_pools = [replace(p, members=[by_id[m.id] for m in p.members]) for p in pools]
                     passed: dict[str, bool | None] = {}
-                    for v in group:
+                    for v in crew_group:
+                        if v.id in unblinded:
+                            rows += _not_run(ctx, v, unblinded[v.id])
+                            passed[v.id] = None
+                            continue
                         screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
                         rows += [screener_row, evaluator_row]
                         passed[v.id] = screener_row.screen_pass
                         if ctx.sampled(v.id):
                             for k, again in enumerate(repeat_clients, start=1):
                                 repeats += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
-                    for pool in pools:
+                    for pool in crew_pools:
                         rows += _rank_pool(ctx, pool, passed)
                         if ctx.sampled(pool.id):
                             for k, again in enumerate(repeat_clients, start=1):
@@ -272,6 +297,32 @@ def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRo
             **_usage(evaluation), status="ok" if e else "missing", error=evaluation.error,
         )
     return screener_row, evaluator_row
+
+
+def _blind_group(ctx: _Context, group: list[Variant]) -> tuple[list[ResultRow], list[Variant], dict[str, str]]:
+    """C1: blind every CV of the group. Returns the Blinder rows, the variants with the blinded text (the
+    original variant where blinding failed), and, per failed variant id, the error."""
+    rows: list[ResultRow] = []
+    blinded: list[Variant] = []
+    failed: dict[str, str] = {}
+    for v in group:
+        out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
+        rows.append(ResultRow(
+            **ctx.key(v, "blinder"), score=None, rationale=text or "", **_usage(out),
+            status="ok" if text is not None else "missing", error=out.error,
+        ))
+        if text is None:
+            failed[v.id] = f"blinding failed: {out.error}"
+            blinded.append(v)
+        else:
+            blinded.append(replace(v, text=text))
+    return rows, blinded, failed
+
+
+def _not_run(ctx: _Context, v: Variant, error: str) -> list[ResultRow]:
+    """Screener and Evaluator rows of a CV the crew could not be shown (its blinding failed): missing, no call."""
+    return [ResultRow(**ctx.key(v, agent), score=None, rationale="", **_NO_CALL, status="missing", error=error)
+            for agent in ("screener", "evaluator")]
 
 
 def _rank_pool(ctx: _Context, pool: Pool, passed: dict[str, bool | None]) -> list[ResultRow]:
