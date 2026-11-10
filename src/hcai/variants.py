@@ -28,6 +28,7 @@ from pathlib import Path
 from string import Template
 
 from hcai.config import Design, Identity
+from hcai.ptpt import describe, ptbr_terms
 
 NATIONALITY_LABEL = {"en": "Nationality", "pt": "Nacionalidade"}
 
@@ -53,6 +54,7 @@ PRONOUN_PAIRS = [
 # masculine or feminine form leaks into the other gender's variants. A word that does not refer to the
 # candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`. The PT-PT list is not
 # exhaustive: it catches the common job titles and adjectives, template authors still slot the rest.
+# PT-PT templates must also be free of common PT-BR terms (`hcai.ptpt`): no dialect cue in the body.
 SLOT_ONLY_WORDS = {
     "en": {"he", "she", "him", "her", "his", "hers", "himself", "herself", "mr", "ms", "mrs"},
     "pt": {
@@ -69,6 +71,13 @@ SLOT_ONLY_WORDS = {
             ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
             ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
             ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
+            ("inscrito", "inscrita"), ("registado", "registada"), ("especializado", "especializada"),
+            ("qualificado", "qualificada"), ("habilitado", "habilitada"), ("promovido", "promovida"),
+            ("contratado", "contratada"), ("nomeado", "nomeada"), ("eleito", "eleita"),
+            ("distinguido", "distinguida"), ("premiado", "premiada"), ("focado", "focada"),
+            ("orientado", "orientada"), ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
+            ("revisor", "revisora"), ("tesoureiro", "tesoureira"), ("fundador", "fundadora"),
+            ("autor", "autora"), ("orientador", "orientadora"), ("candidato", "candidata"),
         ]
         for form in (masc, fem)
     },
@@ -162,6 +171,8 @@ def _validate_template(template: str, language: str) -> None:
         raise TemplateError(
             f"gendered word(s) {unslotted} outside a {{{{masc|fem}}}} slot; write {{{{X|X}}}} if one does not refer to the candidate"
         )
+    if language == "pt" and (brazilian := ptbr_terms(template)):
+        raise TemplateError(f"PT-PT template uses PT-BR term(s): {describe(brazilian)}")
 
 
 def base_cv_templates(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:

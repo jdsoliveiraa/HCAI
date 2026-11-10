@@ -7,7 +7,8 @@ import pytest
 
 from hcai.cli import main
 from hcai.config import Design, Generator, load_design
-from hcai.corpus import CorpusFrozen, GenerationFailed, generate_corpus, load_corpus
+from conftest import scores_by_name
+from hcai.corpus import CorpusFrozen, GenerationFailed, generate_corpus, load_corpus, translate_corpus
 from hcai.llm import FakeLLMClient, LLMRequest
 from hcai.config import identities_from_name_bank
 from hcai.names import load_name_bank
@@ -265,3 +266,190 @@ def test_the_generator_model_may_not_be_one_of_the_audited_pipeline_models(corpu
 
     with pytest.raises(ValueError, match="third family"):
         generate_corpus(design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "cache")
+
+
+# --- PT-PT translations (#14) ------------------------------------------------------------------------------
+
+
+def pt_job_ad_response() -> dict:
+    return {
+        "title": "Emprego", "location": "Lisboa", "summary": "Uma empresa em Lisboa está a contratar.",
+        "mandatory": ["Licenciatura numa área relevante", "Pelo menos 2 anos de experiência", "Português fluente"],
+        "desirable": ["Liderança de equipas", "Uma certificação profissional"],
+    }
+
+
+def pt_cv_response(**changes) -> dict:
+    """The PT-PT translation of `cv_response()`: same structure and dates, gendered words in slots."""
+    cv = {
+        "headline": "{{Profissional licenciado|Profissional licenciada}} com 3 anos de experiência",
+        "summary": "Apresenta resultados com custos abaixo de $5k por projeto; {{inscrito|inscrita}} na Ordem.",
+        "experience": [{
+            "title": "{{Técnico Especialista|Técnica Especialista}}", "employer": "Empresa Lda", "location": "Lisboa",
+            "start": "2021", "end": "presente", "bullets": ["Fez bem o seu trabalho com a equipa."],
+        }],
+        "education": [{"degree": "Licenciatura em Algo", "institution": "Universidade de Lisboa", "year": "2020"}],
+        "skills": ["Competência A", "Competência B"],
+        "certifications": [],
+    }
+    return {**cv, **changes}
+
+
+def bilingual_responder(pt_cvs=None, pt_ad=None):
+    """Fake generator: EN job ads and base CVs, and their PT-PT translations (answers from `pt_cvs` first)."""
+    answers = iter(pt_cvs or [])
+
+    def respond(request: LLMRequest) -> dict:
+        title = (request.response_schema or {}).get("title")
+        if title == "job_ad":
+            return job_ad_response()
+        if title == "job_ad_translation":
+            return pt_ad or pt_job_ad_response()
+        if title == "base_cv_translation":
+            return next(answers, pt_cv_response())
+        return cv_response()
+
+    return respond
+
+
+@pytest.fixture
+def bilingual_design(corpus_design: Design) -> Design:
+    return replace(corpus_design, languages=["en", "pt"], identities=identities_from_name_bank(load_name_bank(BANK)))
+
+
+def test_every_base_cv_and_job_ad_has_a_pt_counterpart_with_the_same_id_and_quality(bilingual_design, tmp_path):
+
+    generate_corpus(bilingual_design, FakeLLMClient(bilingual_responder()), cache_dir=tmp_path / "cache")
+    corpus = load_corpus(bilingual_design.corpus_dir)
+
+    assert corpus.languages == ["en", "pt"]
+    assert sorted(corpus.translated_job_ads["pt"]) == ["accountant", "nurse"]
+    for role in ["nurse", "accountant"]:
+        ad = (bilingual_design.corpus_dir / role / "job_ad.pt.md").read_text()
+        assert "## Requisitos obrigatórios" in ad and "Pelo menos 2 anos de experiência" in ad
+    for cv in corpus.base_cvs:
+        path = bilingual_design.corpus_dir / f"{cv.id}.pt.md"
+        assert path.read_text() == cv.template("pt")
+        assert "## Experiência" in path.read_text() and "Nacionalidade: $nationality" in path.read_text()
+    by_language = {lang: {(v.base_cv, v.quality) for v in build_variants(replace(bilingual_design, languages=[lang]))}
+                   for lang in ["en", "pt"]}
+    assert by_language["pt"] == by_language["en"] == {(cv.id, cv.quality) for cv in corpus.base_cvs}
+
+
+def test_pt_variants_pass_the_diff_check_and_inflect_by_gender_for_all_eight_identities(bilingual_design, tmp_path):
+
+    generate_corpus(bilingual_design, FakeLLMClient(bilingual_responder()), cache_dir=tmp_path / "cache")
+
+    variants = [v for v in build_variants(bilingual_design) if v.language == "pt"]  # raises if the check fails
+
+    assert len(variants) == 12 * 8
+    assert len({v.identity for v in variants}) == 8
+    for v in variants:
+        assert all(line in v.text.splitlines() for line in WORK_ELIGIBILITY["pt"])
+        assert "Autorização para trabalhar em Portugal" in v.text and "Português: proficiência" in v.text
+        feminine = v.gender == "female"
+        assert ("Profissional licenciada" in v.text) == feminine and ("Técnica Especialista" in v.text) == feminine
+        assert ("inscrito" in v.text) != feminine
+        assert "$5k" in v.text
+
+
+@pytest.mark.parametrize("bad, reason", [
+    (pt_cv_response(summary="Gerenciamento de projetos com a equipe."), "Brazilian"),
+    (pt_cv_response(summary="Enfermeiro com experiência."), "slot"),
+    (pt_cv_response(summary="{{Analista escolhido|Analista escolhida}} pela direção; escolhido em 2022."), "gendered"),
+    (pt_cv_response(skills=["Competência A"]), "skills"),
+    (pt_cv_response(experience=[{**pt_cv_response()["experience"][0], "start": "2019"}]), "start"),
+])
+def test_a_translation_that_is_not_faithful_pt_pt_with_slotted_gendered_words_is_regenerated(
+    bilingual_design, tmp_path, bad, reason,
+):
+    client = FakeLLMClient(bilingual_responder(pt_cvs=[bad]))
+
+    corpus = generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    retried = [c for c in client.calls if (c.response_schema or {}).get("title") == "base_cv_translation"
+               and "previous answer was rejected" in c.messages[-1]["content"]]
+    assert len(retried) == 1 and reason in retried[0].messages[-1]["content"]
+    assert all(cv.translations["pt"] == pt_cv_response() for cv in corpus.base_cvs)
+    build_variants(bilingual_design)
+
+
+def test_a_generator_that_keeps_writing_brazilian_portuguese_fails_and_writes_nothing(bilingual_design, tmp_path):
+
+    brazilian = pt_job_ad_response() | {"summary": "Uma empresa procura um desenvolvedor para o time."}
+    client = FakeLLMClient(bilingual_responder(pt_ad=brazilian))
+
+    with pytest.raises(GenerationFailed, match="Brazilian"):
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+    assert not bilingual_design.corpus_dir.exists()
+
+
+def test_translations_are_made_by_the_third_family_generator_not_an_audited_model(bilingual_design, tmp_path):
+
+    client = FakeLLMClient(bilingual_responder())
+    generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    translations = [c for c in client.calls if "translation" in (c.response_schema or {}).get("title", "")]
+    assert len(translations) == 2 + 12  # one per job ad and base CV
+    assert {c.model for c in translations} == {"generator/model"}
+
+    audited = replace(bilingual_design, generator=Generator(model=bilingual_design.models[0]))
+    with pytest.raises(ValueError, match="third family"):
+        translate_corpus(audited, FakeLLMClient(bilingual_responder()), cache_dir=tmp_path / "cache", force=True)
+
+
+def test_translating_a_frozen_english_corpus_adds_pt_and_leaves_the_english_files_unchanged(bilingual_design, tmp_path):
+
+    english_only = replace(bilingual_design, languages=["en"])
+    generate_corpus(english_only, FakeLLMClient(bilingual_responder()), cache_dir=tmp_path / "cache")
+    root = bilingual_design.corpus_dir
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file() and p.name != "manifest.json"}
+
+    translate_corpus(bilingual_design, FakeLLMClient(bilingual_responder()), cache_dir=tmp_path / "cache")
+
+    assert {p: p.read_bytes() for p in before} == before
+    corpus = load_corpus(root)
+    assert corpus.languages == ["en", "pt"]
+    assert [cv.id for cv in corpus.base_cvs] == [cv.id for cv in load_corpus(root).base_cvs]
+    assert all((root / f"{cv.id}.pt.md").exists() for cv in corpus.base_cvs)
+    build_variants(bilingual_design)
+
+    again = FakeLLMClient(bilingual_responder())
+    with pytest.raises(CorpusFrozen):
+        translate_corpus(bilingual_design, again, cache_dir=tmp_path / "other-cache")
+    assert again.calls == []
+    translate_corpus(bilingual_design, again, cache_dir=tmp_path / "other-cache", force=True)
+    assert len(again.calls) == 2 + 12
+
+
+def test_an_unsupported_language_is_refused_before_any_llm_call(bilingual_design, tmp_path):
+    client = FakeLLMClient(bilingual_responder())
+
+    with pytest.raises(ValueError, match="'fr'"):
+        generate_corpus(replace(bilingual_design, languages=["en", "fr"]), client, cache_dir=tmp_path / "cache")
+    assert client.calls == []
+
+
+def test_core_config_runs_in_en_and_pt_with_rows_for_every_agent(tmp_path, monkeypatch):
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert load_design(CORE).languages == ["en", "pt"]
+    config = tmp_path / "core.toml"
+    config.write_text(
+        CORE.read_text()
+        .replace('corpus_dir = "../data/corpus/v1"', 'corpus_dir = "corpus/v1"')
+        .replace('name_bank = "../data/names/name_bank.toml"', f'name_bank = "{BANK}"')
+    )
+    assert main(["corpus", str(config), "--cache", str(tmp_path / "gen-cache"), "--fake-llm"]) == 0
+    config.write_text(config.read_text().replace('corpus_dir = "corpus/v1"', 'corpus_dir = "corpus/v1-fake"'))
+    core = load_design(config)
+    # A slice of the core design, so the test stays fast: one base CV per role x quality level, one model.
+    design = replace(core, base_cvs_per_role=1, models=core.models[:1])
+
+    rows = run_experiment(design, FakeLLMClient(scores_by_name({}, default=50)), cache_dir=tmp_path / "run-cache")
+
+    assert {(r.language, r.agent) for r in rows} == {(lang, agent) for lang in ["en", "pt"]
+                                                     for agent in ["screener", "evaluator", "ranker"]}
+    assert all(r.status == "ok" for r in rows)
+    per_language = {lang: sum(r.agent == "evaluator" and r.language == lang for r in rows) for lang in ["en", "pt"]}
+    assert per_language == {"en": 3 * 3 * 8, "pt": 3 * 3 * 8}
