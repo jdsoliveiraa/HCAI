@@ -22,6 +22,13 @@ Every table is computed per agent (RQ2) and per condition (RQ3):
 Ranker tables use only complete equal-quality pools (every identity screened in and ranked), as
 ADR 0001 asks, so every identity has the same chance of the top 3 under no bias.
 
+Caveats: Evaluator scores exist only for screened-in CVs, so a biased Screener truncates the
+Evaluator's gaps towards zero (read Evaluator results next to the Screener's). Impact ratios divide
+by the best identity's rate (four-fifths convention), not the reference's. Cohen's d_z uses the SD of
+pair-level gaps, while the gap's p-value comes from a t-test on per-CV mean gaps (pairs within a CV
+are not independent). The `random_effects` column records whether (1|name) was fitted: with one name
+per identity it is aliased with the identity fixed effects and is dropped.
+
 Run: `uv run python -m hcai.analysis results/results.csv --reference pt_m --out results/analysis`.
 """
 
@@ -51,6 +58,8 @@ ALPHA = 0.05
 _POOL_INSTANCE = ["pool", "language", "condition", "model"]
 _COVARIATES = ["role", "language"]
 _OUTCOMES = {"screener": "screen_pass", "evaluator": "score", "ranker": "top3"}
+_IMPACT_OUTCOMES = {**_OUTCOMES, "evaluator": "score_at_or_above_median"}
+_MODEL_FACTORS = ["gender", "origin", "condition", "role", "language", "model"]
 
 
 @dataclass(frozen=True)
@@ -257,7 +266,6 @@ def _impact_ratios(df: pd.DataFrame, complete: pd.DataFrame) -> pd.DataFrame:
         "evaluator": evaluator.assign(selected=evaluator["y"] >= median),
         "ranker": complete.assign(selected=complete["top3"]),
     }
-    outcome_names = {"screener": "screen_pass", "evaluator": "score_at_or_above_median", "ranker": "top3"}
     records = []
     for agent, rows in selected.items():
         for condition, g in rows.groupby("condition", observed=True):
@@ -265,7 +273,7 @@ def _impact_ratios(df: pd.DataFrame, complete: pd.DataFrame) -> pd.DataFrame:
             best = rates["mean"].max()
             for identity, r in rates.iterrows():
                 ratio = r["mean"] / best if best > 0 else float("nan")
-                records.append({"agent": agent, "outcome": outcome_names[agent], "condition": condition,
+                records.append({"agent": agent, "outcome": _IMPACT_OUTCOMES[agent], "condition": condition,
                                 "identity": identity, "n": int(r["size"]), "selected": int(r["sum"]),
                                 "rate": float(r["mean"]), "impact_ratio": float(ratio),
                                 "below_threshold": bool(ratio < IMPACT_THRESHOLD)})
@@ -294,7 +302,7 @@ def _formula(d: pd.DataFrame) -> str | None:
 
 def _model_frame(rows: pd.DataFrame) -> pd.DataFrame:
     d = rows.copy()
-    for column in ("gender", "origin", "condition", "role", "language", "model"):
+    for column in _MODEL_FACTORS:
         d[column] = d[column].cat.remove_unused_categories()
     return d.reset_index(drop=True)
 
@@ -311,16 +319,18 @@ def _models(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Genera
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             if agent == "evaluator":
-                fit = _fit_mixed(d, formula)
+                fit, random_effects = _fit_mixed(d, formula)
                 params, cov, scale = fit.fe_params, fit.cov_params().loc[fit.fe_params.index, fit.fe_params.index], fit.scale
             else:
                 fit = smf.glm(formula, d, family=sm.families.Binomial()).fit(
                     cov_type="cluster", cov_kwds={"groups": pd.factorize(d["base_cv"])[0]})
                 params, cov, scale = fit.params, fit.cov_params(), None
+                random_effects = "none (cluster-robust SEs by base CV)"
             boot = _bootstrap_mixed(d, formula, n_boot, rng) if agent == "evaluator" and n_boot > 0 else None
         assert list(params.index) == list(design_info.column_names)
         meta = {"agent": agent, "outcome": _OUTCOMES[agent],
-                "model_kind": "mixed_lm" if agent == "evaluator" else "logit_cluster", "n_obs": len(d)}
+                "model_kind": "mixed_lm" if agent == "evaluator" else "logit_cluster",
+                "random_effects": random_effects, "n_obs": len(d)}
         term_tables.append(_term_table(params, cov, boot, meta))
         contrast_tables.append(_contrast_table(contrasts, params, cov, boot, scale, meta))
     terms = pd.concat(term_tables, ignore_index=True) if term_tables else pd.DataFrame()
@@ -328,13 +338,13 @@ def _models(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Genera
     return terms, contrasts_df
 
 
-def _fit_mixed(d: pd.DataFrame, formula: str):
+def _fit_mixed(d: pd.DataFrame, formula: str) -> tuple[Any, str]:
     """Crossed random intercepts for base CV and (when identities have several names) name."""
     vc = {"cv": "0 + C(base_cv)"}
     if d["name"].nunique() > d["identity"].nunique():
         vc["name"] = "0 + C(name)"
     model = smf.mixedlm(formula, d, groups=np.ones(len(d)), re_formula="0", vc_formula=vc)
-    return model.fit(reml=True)
+    return model.fit(reml=True), " + ".join(f"(1|{'CV' if k == 'cv' else k})" for k in vc)
 
 
 def _bootstrap_mixed(d: pd.DataFrame, formula: str, n_boot: int, rng: np.random.Generator) -> np.ndarray:
@@ -346,7 +356,7 @@ def _bootstrap_mixed(d: pd.DataFrame, formula: str, n_boot: int, rng: np.random.
         sample = rng.choice(cvs, size=len(cvs), replace=True)
         resampled = pd.concat([by_cv[cv].assign(base_cv=f"{cv}#{k}") for k, cv in enumerate(sample)], ignore_index=True)
         try:
-            draws.append(_fit_mixed(resampled, formula).fe_params.to_numpy())
+            draws.append(_fit_mixed(resampled, formula)[0].fe_params.to_numpy())
         except (np.linalg.LinAlgError, ValueError):
             continue
     return np.array(draws)

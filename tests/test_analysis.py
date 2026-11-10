@@ -185,6 +185,7 @@ def test_a_planted_mitigation_effect_shows_up_in_the_identity_by_condition_terms
     assert three_way["estimate"] == pytest.approx(5.0, abs=1.5)
     assert three_way["p_holm"] < 0.05
     assert three_way["n_boot"] == 5
+    assert three_way["random_effects"] == "(1|CV) + (1|name)"
 
     gaps = a.gaps[(a.gaps["agent"] == "evaluator") & (a.gaps["identity"] == "br_f")].set_index("condition")
     assert gaps.loc["C0", "estimate"] == pytest.approx(-5.0, abs=1.0)
