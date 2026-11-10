@@ -129,7 +129,7 @@ def analyse(
     return Analysis(
         gaps=gaps,
         equivalence=_equivalence(gaps, margin),
-        impact_ratios=_impact_ratios(df, complete, cutoff, n_perm, rng),
+        impact_ratios=_impact_ratios(df, complete, cutoff, n_perm, np.random.default_rng([seed, 1])),
         model_terms=terms,
         identity_contrasts=contrasts,
         rank_identity=_rank_test(complete, "identity", n_perm, rng),
@@ -557,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n-boot", type=int, default=2000, help="paired-gap bootstrap resamples (default: 2000)")
     parser.add_argument("--n-model-boot", type=int, default=200,
                         help="mixed-model bootstrap refits, about 1 s each (default: 200; 0 = Wald CIs only)")
-    parser.add_argument("--n-perm", type=int, default=5000, help="rank permutations (default: 5000)")
+    parser.add_argument("--n-perm", type=int, default=5000, help="rank and impact-ratio permutations (default: 5000)")
     parser.add_argument("--cutoff", type=float, default=SELECTION_CUTOFF,
                         help=f"Evaluator score selected under the robustness impact-ratio rule (default: {SELECTION_CUTOFF:g})")
     parser.add_argument("--seed", type=int, default=0)

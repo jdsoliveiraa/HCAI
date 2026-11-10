@@ -151,6 +151,7 @@ def test_with_no_planted_effect_nothing_survives_holm_and_the_equivalence_check_
     for name, table in tested.items():
         assert len(table) > 0, name
         assert (table["p_holm"].dropna() >= 0.05).all(), f"{name}: {table[table['p_holm'] < 0.05]}"
+    assert not a.impact_ratios["flagged"].any(), a.impact_ratios[a.impact_ratios["flagged"]]
     assert set(a.equivalence["condition"]) == {"C0", "C1"}
     assert a.equivalence["equivalent"].all()
     assert (a.equivalence["margin"] == 2.0).all()
@@ -261,10 +262,13 @@ def with_evaluator_scores(rows: list[ResultRow], score_of) -> list[ResultRow]:
 
 
 def test_ties_at_the_median_are_not_selected_and_the_cutoff_is_configurable(tmp_path):
-    # Every Evaluator score is 70 except br_f's 71: the median of each group is 70, so only br_f is
-    # strictly above it. A cutoff of 70 selects everyone; a cutoff of 71 selects br_f alone.
+    # Every nurse's Evaluator score is 70 and every accountant's 80, except br_f's, one point higher.
+    # The median is taken per role (× language × model × condition), so in each role only br_f is
+    # strictly above it; one median over both roles would select every accountant. A cutoff of 70
+    # selects everyone; a cutoff of 71 selects br_f's nurse scores and every accountant score.
     rows = synthetic_results(conditions=("C0",), languages=("en",), base_per_cell=4, screen_threshold=0)
-    rows = with_evaluator_scores(rows, lambda r: 71 if r.identity == "br_f" else 70)
+    rows = with_evaluator_scores(
+        rows, lambda r: (80 if r.base_cv.startswith("accountant") else 70) + (1 if r.identity == "br_f" else 0))
 
     default = run(tmp_path, rows)
     median = evaluator_rows(default, "median").set_index("identity")
@@ -278,7 +282,7 @@ def test_ties_at_the_median_are_not_selected_and_the_cutoff_is_configurable(tmp_
 
     raised = evaluator_rows(run(tmp_path, rows, cutoff=71), "cutoff").set_index("identity")
     assert raised.loc["br_f", "rate"] == 1.0
-    assert (raised.drop(index="br_f")["rate"] == 0.0).all()
+    assert (raised.drop(index="br_f")["rate"] == 0.5).all()  # accountants only
     assert (raised["cutoff"] == 71).all()
 
 
@@ -300,6 +304,9 @@ def test_a_planted_selection_gap_is_flagged_under_both_evaluator_rules(tmp_path)
 
 
 def test_with_no_planted_effect_neither_evaluator_rule_flags_anything(tmp_path):
+    # Only `flagged` (a ratio below 0.8 that survives Holm) is asserted: the permutation test is
+    # sensitive enough that a chance ratio of ~0.9 sometimes survives Holm at its nominal 5% rate
+    # (4 of seeds 0-19 at this size), but none of those falls below 0.8.
     a = run(tmp_path, synthetic_results(base_per_cell=20, seed=0))
 
     for rule in ("median", "cutoff"):
@@ -307,7 +314,6 @@ def test_with_no_planted_effect_neither_evaluator_rule_flags_anything(tmp_path):
         assert set(table["condition"]) == {"C0", "C1"}
         assert len(table) == 16, rule
         assert not table["flagged"].any(), table[table["flagged"]]
-        assert (table["p_holm"] >= 0.05).all(), table[table["p_holm"] < 0.05]
 
 
 def test_holm_is_applied_within_each_rules_family_not_across_the_two(tmp_path):
