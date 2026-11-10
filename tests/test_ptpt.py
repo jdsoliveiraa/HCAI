@@ -18,6 +18,10 @@ PT_HEADER = "$name\nNacionalidade: $nationality\n$work_eligibility\n\n"
     ("Experiência em UTI", ["UTI"]),
     ("Atualmente está trabalhando num hospital", ["está trabalhando"]),
     ("Prêmio de mérito acadêmico", ["Prêmio", "acadêmico"]),
+    ("Planejamento e monitoramento de doentes crônicos", ["Planejamento", "monitoramento", "crônicos"]),
+    ("Prestou contas a título autônomo; inventário de patrimônio", ["autônomo", "patrimônio"]),
+    ("Estou atualmente estudando; estão indo bem", ["Estou atualmente estudando", "estão indo"]),
+    ("Equipe de vendas e outra equipe", ["Equipe"]),
 ])
 def test_common_ptbr_terms_are_flagged(text, flagged):
     assert ptbr_terms(text) == flagged
@@ -30,6 +34,8 @@ def test_common_ptbr_terms_are_flagged(text, flagged):
     "Registo de dados na base de dados; contacto com clientes; secção de contabilidade",
     "Prémio de mérito académico; experiência em UCI; está a trabalhar num hospital",
     "Utilização de MS Excel e SQL",
+    "Licenciatura em Biologia Celular; cadastro predial; contador de energia; órgão colegial",
+    "Bacharel em Enfermagem (pré-Bolonha); doentes crónicos; trabalhador autónomo",
 ])
 def test_european_portuguese_is_not_flagged(text):
     assert ptbr_terms(text) == []

@@ -354,11 +354,12 @@ def test_pt_variants_pass_the_diff_check_and_inflect_by_gender_for_all_eight_ide
 
 
 @pytest.mark.parametrize("bad, reason", [
-    (pt_cv_response(summary="Gerenciamento de projetos com a equipe."), "Brazilian"),
-    (pt_cv_response(summary="Enfermeiro com experiência."), "slot"),
-    (pt_cv_response(summary="{{Analista escolhido|Analista escolhida}} pela direção; escolhido em 2022."), "gendered"),
+    (pt_cv_response(summary="Gerenciamento de projetos abaixo de $5k com a equipe."), "Brazilian"),
+    (pt_cv_response(summary="Enfermeiro com custos abaixo de $5k."), "slot"),
+    (pt_cv_response(summary="{{Analista escolhido|Analista escolhida}} pela direção; escolhido abaixo de $5k."), "gendered"),
     (pt_cv_response(skills=["Competência A"]), "skills"),
     (pt_cv_response(experience=[{**pt_cv_response()["experience"][0], "start": "2019"}]), "start"),
+    (pt_cv_response(headline="Profissional com 5 anos de experiência"), "number"),
 ])
 def test_a_translation_that_is_not_faithful_pt_pt_with_slotted_gendered_words_is_regenerated(
     bilingual_design, tmp_path, bad, reason,
@@ -367,11 +368,27 @@ def test_a_translation_that_is_not_faithful_pt_pt_with_slotted_gendered_words_is
 
     corpus = generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
 
-    retried = [c for c in client.calls if (c.response_schema or {}).get("title") == "base_cv_translation"
-               and "previous answer was rejected" in c.messages[-1]["content"]]
-    assert len(retried) == 1 and reason in retried[0].messages[-1]["content"]
+    translations = [c for c in client.calls if (c.response_schema or {}).get("title") == "base_cv_translation"]
+    assert len(translations) == 12 + 1  # the bad answer was retried once
     assert all(cv.translations["pt"] == pt_cv_response() for cv in corpus.base_cvs)
     build_variants(bilingual_design)
+
+    always_bad = FakeLLMClient(bilingual_responder(pt_cvs=[bad] * 3))
+    with pytest.raises(GenerationFailed, match=reason):
+        generate_corpus(bilingual_design, always_bad, cache_dir=tmp_path / "other-cache", force=True)
+
+
+def test_an_invariant_title_holding_the_other_gender_s_form_is_not_a_leak(bilingual_design, tmp_path):
+    head_nurse = pt_cv_response(
+        summary="{{Enfermeiro|Enfermeira}} com custos abaixo de $5k; reporta à {{Enfermeira-Chefe|Enfermeira-Chefe}}.",
+    )
+    client = FakeLLMClient(bilingual_responder(pt_cvs=[head_nurse] * 12))
+
+    corpus = generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert all(cv.translations["pt"] == head_nurse for cv in corpus.base_cvs)
+    male = next(v for v in build_variants(bilingual_design) if v.language == "pt" and v.gender == "male")
+    assert "Enfermeiro com custos" in male.text and "reporta à Enfermeira-Chefe" in male.text
 
 
 def test_a_generator_that_keeps_writing_brazilian_portuguese_fails_and_writes_nothing(bilingual_design, tmp_path):
@@ -392,6 +409,7 @@ def test_translations_are_made_by_the_third_family_generator_not_an_audited_mode
     translations = [c for c in client.calls if "translation" in (c.response_schema or {}).get("title", "")]
     assert len(translations) == 2 + 12  # one per job ad and base CV
     assert {c.model for c in translations} == {"generator/model"}
+    assert load_corpus(bilingual_design.corpus_dir).translated_by["pt"].model == "generator/model"
 
     audited = replace(bilingual_design, generator=Generator(model=bilingual_design.models[0]))
     with pytest.raises(ValueError, match="third family"):
@@ -418,8 +436,12 @@ def test_translating_a_frozen_english_corpus_adds_pt_and_leaves_the_english_file
     with pytest.raises(CorpusFrozen):
         translate_corpus(bilingual_design, again, cache_dir=tmp_path / "other-cache")
     assert again.calls == []
-    translate_corpus(bilingual_design, again, cache_dir=tmp_path / "other-cache", force=True)
+    translator = replace(bilingual_design, generator=Generator(model="generator/other"))
+    translate_corpus(translator, again, cache_dir=tmp_path / "other-cache", force=True)
     assert len(again.calls) == 2 + 12
+    retranslated = load_corpus(root)
+    assert retranslated.translated_by["pt"].model == "generator/other"
+    assert retranslated.generator.model == "generator/model"  # the EN provenance is unchanged
 
 
 def test_an_unsupported_language_is_refused_before_any_llm_call(bilingual_design, tmp_path):
@@ -453,3 +475,20 @@ def test_core_config_runs_in_en_and_pt_with_rows_for_every_agent(tmp_path, monke
     assert all(r.status == "ok" for r in rows)
     per_language = {lang: sum(r.agent == "evaluator" and r.language == lang for r in rows) for lang in ["en", "pt"]}
     assert per_language == {"en": 3 * 3 * 8, "pt": 3 * 3 * 8}
+
+
+def test_the_fake_generator_survives_a_retried_translation(bilingual_design, tmp_path):
+    from hcai.corpus import fake_generator_response
+
+    first = iter([True])
+
+    def respond(request: LLMRequest) -> dict:
+        answer = fake_generator_response(request)
+        if (request.response_schema or {}).get("title") == "base_cv_translation" and next(first, False):
+            return {**answer, "skills": []}  # rejected, so the next request carries a retry note
+        return answer
+
+    corpus = generate_corpus(bilingual_design, FakeLLMClient(respond), cache_dir=tmp_path / "cache")
+
+    assert all("pt" in cv.translations for cv in corpus.base_cvs)
+    build_variants(bilingual_design)

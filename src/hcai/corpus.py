@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -230,6 +231,8 @@ class Corpus:
     base_cvs: list[BaseCV] = field(default_factory=list)
     # Translated job ads: language -> role -> job ad.
     translated_job_ads: dict[str, dict[str, JobAd]] = field(default_factory=dict)
+    # Who translated each language: the generator model at the translation temperature.
+    translated_by: dict[str, Generator] = field(default_factory=dict)
 
     @property
     def languages(self) -> list[str]:
@@ -309,8 +312,10 @@ def load_corpus(corpus_dir: str | Path) -> Corpus:
         }
         base_cvs.append(BaseCV(id=entry["id"], role=entry["role"], quality=entry["quality"],
                                borderline=entry["borderline"], content=content, translations=translations))
+    translated_by = {language: Generator(**g) for language, g in manifest.get("translated_by", {}).items()}
     return Corpus(version=manifest["version"], generator=Generator(**manifest["generator"]),
-                  job_ads=job_ads, base_cvs=base_cvs, translated_job_ads=translated_job_ads)
+                  job_ads=job_ads, base_cvs=base_cvs, translated_job_ads=translated_job_ads,
+                  translated_by=translated_by)
 
 
 # --- generation --------------------------------------------------------------------------------------------
@@ -442,7 +447,9 @@ def _translate(
                                   language: _translate_base_cv(client, design, generator, cv, language, max_attempts)})
         for cv in corpus.base_cvs
     ]
-    return replace(corpus, base_cvs=base_cvs, translated_job_ads={**corpus.translated_job_ads, language: ads})
+    translator = Generator(model=generator.model, temperature=TRANSLATION_TEMPERATURE)
+    return replace(corpus, base_cvs=base_cvs, translated_job_ads={**corpus.translated_job_ads, language: ads},
+                   translated_by={**corpus.translated_by, language: translator})
 
 
 _DIALECT_RULES = (
@@ -469,6 +476,7 @@ def _translate_job_ad(
         for key in ("mandatory", "desirable"):
             if len(parsed[key]) != len(source[key]) or not all(isinstance(r, str) and r.strip() for r in parsed[key]):
                 raise _Invalid(f"'{key}' must translate each of the {len(source[key])} requirements, in order")
+        _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
         return JobAd(role=ad.role, title=parsed["title"], location=parsed["location"], summary=parsed["summary"],
                      mandatory=list(parsed["mandatory"]), desirable=list(parsed["desirable"]), language=language)
@@ -484,7 +492,8 @@ def _translate_base_cv(
     prompt = (
         f"Translate this CV into {TRANSLATION_LANGUAGES[language]}. It is CV {cv.id} (a {cv.quality} candidate): "
         "keep its content and quality level exactly, with the same jobs, bullets, degrees, certifications and "
-        "skills, in the same order, and every number and date. Keep employer and institution names (translate "
+        "skills, in the same order, and every number and date exactly (write numbers as digits, as in the "
+        "original). Keep employer and institution names (translate "
         "a generic descriptor, e.g. University of Lisbon -> Universidade de Lisboa), translate 'present' "
         "(presente). Do not add or drop anything, and do not add a name, pronoun, nationality or language: a "
         f"fixed header is added for you. {_DIALECT_RULES}\n\n"
@@ -494,7 +503,8 @@ def _translate_base_cv(
         "or phrase, with its article if it has one: {{Engenheiro de Software|Engenheira de Software}}, "
         "{{Licenciado|Licenciada}} em Enfermagem, {{o primeiro classificado|a primeira classificada}}. A "
         "gendered word that does not refer to the candidate (e.g. a manager's title, or 'Ordem dos "
-        "Enfermeiros') is written twice the same: {{Enfermeiros|Enfermeiros}}. Never put only an article in a "
+        "Enfermeiros', or 'certificado' meaning a certificate) is written twice the same: "
+        "{{Enfermeiros|Enfermeiros}}, {{Enfermeira-Chefe|Enfermeira-Chefe}}. Never put only an article in a "
         "slot, never put a slot inside a word, and write no pronouns (ele/ela).\n\n"
         f"{SOURCE_MARKER}{json.dumps(source, ensure_ascii=False, indent=2)}"
     )
@@ -502,6 +512,7 @@ def _translate_base_cv(
     def validate(parsed: Any) -> dict[str, Any]:
         _expect_keys(parsed, CV_TRANSLATION_SCHEMA)
         _check_same_structure(source, parsed)
+        _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
         _check_translation_renders(parsed, language)
         return parsed
@@ -528,7 +539,18 @@ def _check_same_structure(source: dict[str, Any], parsed: dict[str, Any]) -> Non
             raise _Invalid(f"education entry {i} must keep its year {src['year']!r}")
 
 
+def _check_same_numbers(source: dict[str, Any], parsed: dict[str, Any]) -> None:
+    """Every number of the original, and no other: years of experience, percentages and requirement minimums set
+    the quality level, so a translation may not change them."""
+    original, translated = Counter(_digits(_strings(source))), Counter(_digits(_strings(parsed)))
+    if original != translated:
+        missing, extra = sorted((original - translated).elements()), sorted((translated - original).elements())
+        raise _Invalid(f"the translation must keep every number of the original (missing {missing}, added {extra})")
+
+
 def _digits(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [d for v in value for d in _digits(v)]
     return re.findall(r"\d+", str(value))
 
 
@@ -690,6 +712,7 @@ def _write(corpus: Corpus, design: Design, out: Path) -> None:
         ],
         "languages": corpus.languages,
         "translated_job_ads": _translated_job_ads_manifest(corpus),
+        "translated_by": {language: asdict(g) for language, g in corpus.translated_by.items()},
     }
     (staging / MANIFEST).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     if out.exists():
@@ -720,6 +743,7 @@ def _write_translations(corpus: Corpus, out: Path, languages: list[str]) -> None
     manifest = json.loads((out / MANIFEST).read_text())
     manifest["languages"] = corpus.languages
     manifest["translated_job_ads"] = _translated_job_ads_manifest(corpus)
+    manifest["translated_by"] = {language: asdict(g) for language, g in corpus.translated_by.items()}
     tmp = out / (MANIFEST + ".tmp")
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     tmp.replace(out / MANIFEST)
@@ -732,7 +756,9 @@ def fake_generator_response(request: LLMRequest) -> dict[str, Any]:
     """A fixed, valid job ad or base CV, so the corpus pipeline can be exercised without calling an LLM."""
     title = (request.response_schema or {}).get("title")
     if title in ("job_ad_translation", "base_cv_translation"):
-        return _fake_translation(title, json.loads(request.messages[-1]["content"].split(SOURCE_MARKER)[-1]))
+        # raw_decode: a retry appends a note after the source JSON.
+        source_text = request.messages[-1]["content"].split(SOURCE_MARKER, 1)[1]
+        return _fake_translation(title, json.JSONDecoder().raw_decode(source_text)[0])
     if title == "job_ad":
         return {
             "title": "Fake job (no LLM was called)", "location": "Lisbon", "summary": "Fake job ad.",
@@ -759,25 +785,29 @@ def fake_generator_response(request: LLMRequest) -> dict[str, Any]:
 
 
 def _fake_translation(title: str, source: dict[str, Any]) -> dict[str, Any]:
-    """A fixed PT-PT translation with the source's structure and dates, and a gendered word in a slot."""
+    """A fixed PT-PT translation with the source's structure, dates and numbers, and a gendered word in a slot."""
+    def pt(text: str, original: str) -> str:  # keep the original's numbers, as a real translation must
+        return " ".join([text, *_digits(original)])
+
     if title == "job_ad_translation":
         return {
-            "title": "Emprego fictício (nenhum LLM foi chamado)", "location": "Lisboa",
-            "summary": "Anúncio de emprego fictício.",
-            "mandatory": [f"Requisito obrigatório {i}" for i, _ in enumerate(source["mandatory"], 1)],
-            "desirable": [f"Requisito preferencial {i}" for i, _ in enumerate(source["desirable"], 1)],
+            "title": pt("Emprego fictício (nenhum LLM foi chamado)", source["title"]), "location": "Lisboa",
+            "summary": pt("Anúncio de emprego fictício.", source["summary"]),
+            "mandatory": [pt("Requisito obrigatório", r) for r in source["mandatory"]],
+            "desirable": [pt("Requisito preferencial", r) for r in source["desirable"]],
         }
     return {
-        "headline": "{{Candidato fictício|Candidata fictícia}} (nenhum LLM foi chamado)",
-        "summary": "Profissional com experiência, {{licenciado|licenciada}}.",
+        "headline": pt("{{Candidato fictício|Candidata fictícia}} (nenhum LLM foi chamado)", source["headline"]),
+        "summary": pt("Profissional com experiência, {{licenciado|licenciada}}.", source["summary"]),
         "experience": [
-            {"title": "{{Especialista|Especialista}}", "employer": job["employer"], "location": "Lisboa",
+            {"title": pt("{{Especialista|Especialista}}", job["title"]), "employer": job["employer"],
+             "location": pt("Lisboa", job["location"]),
              "start": job["start"], "end": "presente" if job["end"] == "present" else job["end"],
-             "bullets": [f"Tarefa {i}." for i, _ in enumerate(job["bullets"], 1)]}
+             "bullets": [pt("Tarefa.", b) for b in job["bullets"]]}
             for job in source["experience"]
         ],
-        "education": [{"degree": "Licenciatura", "institution": ed["institution"], "year": ed["year"]}
+        "education": [{"degree": pt("Licenciatura", ed["degree"]), "institution": ed["institution"], "year": ed["year"]}
                       for ed in source["education"]],
-        "skills": [f"Competência {i}" for i, _ in enumerate(source["skills"], 1)],
-        "certifications": [f"Certificação {i}" for i, _ in enumerate(source["certifications"], 1)],
+        "skills": [pt("Competência", sk) for sk in source["skills"]],
+        "certifications": [pt("Certificação", c) for c in source["certifications"]],
     }

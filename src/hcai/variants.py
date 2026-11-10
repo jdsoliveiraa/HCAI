@@ -71,13 +71,13 @@ SLOT_ONLY_WORDS = {
             ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
             ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
             ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
-            ("inscrito", "inscrita"), ("registado", "registada"), ("especializado", "especializada"),
-            ("qualificado", "qualificada"), ("habilitado", "habilitada"), ("promovido", "promovida"),
+            ("inscrito", "inscrita"), ("especializado", "especializada"),
+            ("habilitado", "habilitada"), ("promovido", "promovida"),
             ("contratado", "contratada"), ("nomeado", "nomeada"), ("eleito", "eleita"),
             ("distinguido", "distinguida"), ("premiado", "premiada"), ("focado", "focada"),
-            ("orientado", "orientada"), ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
+            ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
             ("revisor", "revisora"), ("tesoureiro", "tesoureira"), ("fundador", "fundadora"),
-            ("autor", "autora"), ("orientador", "orientadora"), ("candidato", "candidata"),
+            ("orientador", "orientadora"), ("candidato", "candidata"),
         ]
         for form in (masc, fem)
     },
@@ -254,6 +254,7 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
     """
     gendered = list(gendered)
     classes = _form_classes([*gendered, *PRONOUN_PAIRS])
+    invariant = sorted({m for m, f in gendered if m == f and m}, key=len, reverse=True)
     other_forms = {"en": _other_gender_forms([*gendered, *PRONOUN_PAIRS]), "pt": _other_gender_forms(gendered)}
     problems: list[str] = []
     groups: dict[tuple[str, str], list[Variant]] = {}
@@ -262,7 +263,12 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
         missing = [line for line in WORK_ELIGIBILITY[v.language] if line not in v.text.splitlines()]
         if missing:
             problems.append(f"{v.id}: missing work-eligibility line(s): {missing}")
-        leaked = [f for f in other_forms[v.language][v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", v.text)]
+        # An invariant `{{X|X}}` phrase may contain the other gender's form ("Enfermeira-Chefe" next to
+        # {{Enfermeiro|Enfermeira}}): it is the same in every variant, so it is not a leak.
+        text = v.text
+        for form in invariant:
+            text = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", "\0", text)
+        leaked = [f for f in other_forms[v.language][v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", text)]
         if leaked:
             problems.append(f"{v.id}: {v.gender} variant has the other gender's form(s): {leaked}")
     for group in groups.values():
