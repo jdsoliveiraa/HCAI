@@ -35,3 +35,20 @@ nationality = "Brazilian"
 equal_quality = true
 mixed_quality = 0
 mixed_size = 8
+
+# Runner: retries and the stability sample (none of this changes the design).
+[run]
+# A malformed or failed agent call is retried this many times, then its rows are recorded as missing.
+retries = 2
+# Seconds before retrying a call that raised (e.g. an HTTP error), doubled on each retry.
+retry_backoff = 2.0
+# Stability sample: this share of the CVs and Ranker pools is re-run `repeats` times (identical requests,
+# cached apart from the results) and compared with the original answers in stability.json.
+repeat_fraction = 0.0  # e.g. 0.05 in a real run
+repeats = 1
+
+# Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
+[pilot]
+roles = 1
+base_cvs_per_role = 1
+mixed_quality = 1

@@ -188,3 +188,57 @@ def test_pilot_summary_extrapolates_the_cost_of_the_full_run(wide_design, tmp_pa
 
     assert run.totals["cost_total"] == 2.5  # per model: 2 Screener + 2 Evaluator + 1 Ranker
     assert run.totals["pilot"] == {"full_design_scale": 4.0, "estimated_full_cost": 10.0}
+
+
+def drifting_scores():
+    """João Silva scores 70, 72, 74, ... on successive calls; Ana Souza always 65."""
+    calls = {"João Silva": 0}
+
+    def respond(request: LLMRequest):
+        if is_evaluator(request) and "João Silva" in request.messages[-1]["content"]:
+            calls["João Silva"] += 1
+            return {"score": 68 + 2 * calls["João Silva"], "rationale": "drifts"}
+        return GOOD(request)
+
+    return respond
+
+
+def test_repeat_sample_produces_a_stability_report(design, tmp_path):
+    design = replace(design, run=RunSettings(repeat_fraction=1.0, repeats=2))
+
+    run = execute(design, FakeLLMClient(drifting_scores()), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+
+    assert [r.score for r in run.rows if r.agent == "evaluator"] == [70, 65]  # the results keep the first answer
+    assert {r.repeat for r in run.repeats} == {1, 2}
+    stability = {(s["model"], s["condition"], s["agent"]): s for s in run.stability}
+    evaluator = stability[("model-a", "C0", "evaluator")]
+    assert evaluator["items"] == 2 and evaluator["pairs"] == 4
+    assert evaluator["agreement"] == 0.5  # João's two repeats differ from his original score, Ana's match
+    assert evaluator["mean_abs_diff"] == 1.5  # (2 + 4 + 0 + 0) / 4
+    assert evaluator["mean_sd"] == 1.0  # SD of [70, 72, 74] is 2, of [65, 65, 65] is 0
+    assert stability[("model-a", "C0", "screener")]["agreement"] == 1.0
+    assert stability[("model-a", "C0", "ranker")]["agreement"] == 1.0
+    assert json.loads((tmp_path / "out" / "stability.json").read_text()) == run.stability
+    assert (tmp_path / "out" / "repeats.csv").exists()
+
+
+def test_repeats_are_paid_for_once_and_counted_in_the_totals(design, tmp_path):
+    design = replace(design, run=RunSettings(repeat_fraction=1.0, repeats=1))
+    first = execute(design, PricedClient(drifting_scores()), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+    client = PricedClient(drifting_scores())
+
+    second = execute(design, client, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+
+    assert first.totals["repeat_sample"]["calls"] == 5
+    assert first.totals["cost_total"] == 2.5  # 5 calls for the results, 5 for one repeat of each
+    assert client.calls == []
+    assert second.stability == first.stability
+
+
+def test_no_repeat_sample_by_default(design, tmp_path):
+    client = FakeLLMClient(GOOD)
+
+    run = execute(design, client, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache")
+
+    assert run.repeats == [] and run.stability == []
+    assert len(client.calls) == 5

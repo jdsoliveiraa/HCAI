@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from itertools import zip_longest
 from pathlib import Path
 from random import Random
@@ -15,6 +15,7 @@ from typing import Any
 from hcai.config import Design, Identity
 from hcai.llm import CachedClient, LLMClient
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
+from hcai.stability import stability_report
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class ResultRow:
     top3: bool | None = None  # Ranker rows: on the shortlist
     order_seed: int | None = None  # Ranker rows: seed of the pool's input-order shuffle
     attempts: int = 0  # LLM calls behind this row, retries included (on the row that carries the tokens)
+    repeat: int = 0  # 0 in the results; k >= 1 for the k-th re-run of the call in the stability sample
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
 
 
@@ -105,28 +107,40 @@ def build_pools(design: Design, role: str, language: str, variants: list[Variant
 
 @dataclass(frozen=True)
 class Run:
-    rows: list[ResultRow]
+    rows: list[ResultRow]  # the results table
+    repeats: list[ResultRow]  # stability sample: re-runs of sampled calls, `repeat` = 1..k
     totals: dict[str, Any]
+    stability: list[dict[str, Any]]
 
 
 def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path) -> Run:
-    """Run the design and write `results.csv` and `run_summary.json` (token and cost totals) to `out_dir`."""
+    """Run the design and write its outputs to `out_dir`.
+
+    `results.csv` is the results table and `run_summary.json` its token, call and cost totals. With a
+    stability sample (`[run] repeat_fraction`), `repeats.csv` holds the re-runs and `stability.json`
+    their agreement with the original answers.
+    """
     out_dir = Path(out_dir)
-    rows = run_experiment(design, client, cache_dir)
-    totals = run_totals(rows)
+    rows, repeats = _run(design, client, cache_dir)
+    totals = run_totals(rows, repeats)
     if design.pilot_scale is not None:
         totals["pilot"] = dict(full_design_scale=round(design.pilot_scale, 4),
                                estimated_full_cost=round(totals["cost_total"] * design.pilot_scale, 4))
+    report = stability_report(rows, repeats)
     write_results(rows, out_dir / "results.csv")
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
-    return Run(rows=rows, totals=totals)
+    if repeats:
+        write_results(repeats, out_dir / "repeats.csv")
+        (out_dir / "stability.json").write_text(json.dumps(report, indent=2) + "\n")
+    return Run(rows=rows, repeats=repeats, totals=totals, stability=report)
 
 
-def run_totals(rows: list[ResultRow]) -> dict[str, Any]:
-    """Token, call and cost totals of a run, overall and per model and agent.
+def run_totals(rows: list[ResultRow], repeats: list[ResultRow] | None = None) -> dict[str, Any]:
+    """Token, call and cost totals of a run, overall and per model and agent, stability sample included.
 
-    `cost_total` is what the results cost to produce (cache hits count their original cost), `cost_spent`
+    `cost_total` is what the outputs cost to produce (cache hits count their original cost), `cost_spent`
     what this run paid (cache hits are free). `calls` are LLM calls made this run, retries included.
+    `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     """
 
     def tally(subset: list[ResultRow]) -> dict[str, Any]:
@@ -142,16 +156,28 @@ def run_totals(rows: list[ResultRow]) -> dict[str, Any]:
     status: dict[str, int] = {}
     for r in rows:
         status[r.status] = status.get(r.status, 0) + 1
+    repeats = repeats or []
+    every = rows + repeats
     return dict(
-        rows=len(rows), status=status, **tally(rows),
-        by_model={m: tally([r for r in rows if r.model == m]) for m in dict.fromkeys(r.model for r in rows)},
-        by_agent={a: tally([r for r in rows if r.agent == a]) for a in dict.fromkeys(r.agent for r in rows)},
+        rows=len(rows), status=status, **tally(every),
+        by_model={m: tally([r for r in every if r.model == m]) for m in dict.fromkeys(r.model for r in every)},
+        by_agent={a: tally([r for r in every if r.agent == a]) for a in dict.fromkeys(r.agent for r in every)},
+        repeat_sample=tally(repeats),
     )
 
 
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
+    """The results table of the design (the stability sample, if any, is run too but not returned)."""
+    return _run(design, client, cache_dir)[0]
+
+
+def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list[ResultRow], list[ResultRow]]:
     cached = CachedClient(client, cache_dir)
+    # Each repeat is the identical request, cached in its own namespace: paid once, replayed on reruns.
+    repeat_clients = tuple(CachedClient(client, Path(cache_dir) / "repeats" / f"r{k}")
+                           for k in range(1, design.run.repeats + 1)) if design.run.repeat_fraction > 0 else ()
     rows: list[ResultRow] = []
+    repeats: list[ResultRow] = []
     for role in design.roles:
         for language in design.languages:
             job_ad = (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
@@ -170,9 +196,15 @@ def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> 
                         screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
                         rows += [screener_row, evaluator_row]
                         passed[(v.base_cv, v.identity.id)] = screener_row.screen_pass
+                        if ctx.sampled(v.base_cv, v.identity.id, v.name):
+                            for k, again in enumerate(repeat_clients, start=1):
+                                repeats += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
                     for pool in pools:
                         rows += _rank_pool(ctx, pool, passed)
-    return rows
+                        if ctx.sampled(pool.id):
+                            for k, again in enumerate(repeat_clients, start=1):
+                                repeats += [replace(r, repeat=k) for r in _rank_pool(ctx.using(again), pool, passed)]
+    return rows, repeats
 
 
 @dataclass(frozen=True)
@@ -183,6 +215,15 @@ class _Context:
     language: str
     condition: str
     model: str
+
+    def using(self, client: LLMClient) -> _Context:
+        return replace(self, client=client)
+
+    def sampled(self, *item: str) -> bool:
+        """Whether this CV or pool, under this language, condition and model, is in the stability sample."""
+        fraction = self.design.run.repeat_fraction
+        draw = stable_seed(self.design.seed, "repeat", *item, self.language, self.condition, self.model)
+        return fraction > 0 and draw / 2**32 < fraction
 
     @property
     def retry(self) -> Retry:
@@ -256,7 +297,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | N
     return rows
 
 
-_INT_FIELDS = {"prompt_tokens", "completion_tokens", "attempts"}
+_INT_FIELDS = {"prompt_tokens", "completion_tokens", "attempts", "repeat"}
 _OPTIONAL_INT_FIELDS = {"score", "input_position", "rank", "order_seed"}
 _OPTIONAL_BOOL_FIELDS = {"screen_pass", "top3"}
 

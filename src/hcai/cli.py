@@ -36,6 +36,14 @@ def run_command(
     if "pilot" in t:
         summary += (f"\npilot: the full design is {t['pilot']['full_design_scale']:g}x this slice, "
                     f"estimated full-run cost ${t['pilot']['estimated_full_cost']:.2f} (before caching)")
+    if run.stability:
+        summary += "\n\nStability (repeat sample; agreement = share of repeats matching the original answer)\n"
+        summary += "\n".join(
+            f"{s['model']:<28} {s['condition']:<5} {s['language']:<5} {s['agent']:<10} "
+            f"agreement {s['agreement']:.2f} over {s['pairs']} pairs"
+            + (f", mean SD {s['mean_sd']:.2f}" if s["mean_sd"] is not None else "")
+            for s in run.stability
+        ) + f"\n-> {Path(out_dir) / 'stability.json'}"
     return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary
 
 
