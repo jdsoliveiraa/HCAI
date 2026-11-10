@@ -23,6 +23,10 @@ Every table is computed per agent (RQ2) and per condition (RQ3):
   the reference condition ("identity_x_condition"), averaged over the observed role/language/model mix.
 - `rank_identity` and `rank_position`: permutation tests of mean rank per identity and, separately,
   per input position, in complete equal-quality pools (ranks permuted within each pool).
+- `ranking_quality` (RQ3, `hcai.quality`): Spearman between Evaluator scores and the true quality level,
+  and the Ranker's pairwise accuracy on mixed-quality pools, per condition and model, against C0.
+- `oversight` (RQ4, `hcai.audit`): the judge's flag rate and the escalations (the cost of oversight) per
+  rubric condition and model. The human audit's κ comes from `python -m hcai.audit` (it needs the labels).
 
 Ranker tables use only complete equal-quality pools (every identity screened in and ranked), as
 ADR 0001 asks, so every identity has the same chance of the top 3 under no bias.
@@ -55,6 +59,8 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from scipy import stats
 
+from hcai.audit import oversight_table
+from hcai.quality import QUALITY_ORDER, ranking_quality
 from hcai.runner import ResultRow, read_results
 
 IMPACT_THRESHOLD = 0.8
@@ -77,6 +83,8 @@ class Analysis:
     identity_contrasts: pd.DataFrame
     rank_identity: pd.DataFrame
     rank_position: pd.DataFrame
+    ranking_quality: pd.DataFrame
+    oversight: pd.DataFrame
 
     def write(self, out_dir: str | Path) -> list[Path]:
         """Write each table as `<out_dir>/<table>.csv`."""
@@ -110,6 +118,7 @@ def analyse(
     seed: int = 0,
     margin: float = EQUIVALENCE_MARGIN,
     cutoff: float = SELECTION_CUTOFF,
+    quality_order: Sequence[str] = QUALITY_ORDER,
 ) -> Analysis:
     """Compute every fairness table from a results table.
 
@@ -118,6 +127,8 @@ def analyse(
     give the mixed model's bootstrap CIs (each refits the model, about a second on the core design; 0
     skips them and leaves the Wald CIs). `n_perm` permutations serve the rank tests and the impact-ratio
     tests. `cutoff` is the Evaluator score selected under the robustness rule for impact ratios.
+    `quality_order` lists the corpus's quality levels, best first, for the ranking-quality table
+    (`hcai.quality`; `n_boot` resamples give its CIs).
     """
     if n_boot < 1:
         raise ValueError("n_boot must be at least 1: the paired-gap CIs and the equivalence check need it")
@@ -134,6 +145,8 @@ def analyse(
         identity_contrasts=contrasts,
         rank_identity=_rank_test(complete, "identity", n_perm, rng),
         rank_position=_rank_test(complete, "input_position", n_perm, rng),
+        ranking_quality=ranking_quality(results, quality_order=quality_order, n_boot=n_boot, seed=seed),
+        oversight=oversight_table(results),
     )
 
 
@@ -562,10 +575,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n-perm", type=int, default=5000, help="rank and impact-ratio permutations (default: 5000)")
     parser.add_argument("--cutoff", type=float, default=SELECTION_CUTOFF,
                         help=f"Evaluator score selected under the robustness impact-ratio rule (default: {SELECTION_CUTOFF:g})")
+    parser.add_argument("--quality-order", default=",".join(QUALITY_ORDER),
+                        help=f"the corpus's quality levels, best first (default: {','.join(QUALITY_ORDER)})")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
     analysis = analyse(load_results(args.results), reference=args.reference, n_boot=args.n_boot,
-                       n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed, cutoff=args.cutoff)
+                       n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed, cutoff=args.cutoff,
+                       quality_order=[q.strip() for q in args.quality_order.split(",") if q.strip()])
     paths = analysis.write(args.out)
     print(_summary(analysis))
     print(f"\n{len(paths)} tables -> {args.out}")
@@ -590,6 +606,12 @@ def _summary(a: Analysis) -> str:
     for name, table in (("rank by identity", a.rank_identity), ("rank by position", a.rank_position)):
         if not table.empty:
             lines.append(f"{name}: {int((table['p_holm'] < ALPHA).sum())} of {len(table)} survive Holm")
+    for _, q in a.ranking_quality[a.ranking_quality["model"] == "all"].iterrows():
+        lines.append(f"ranking quality {q['metric']} {q['condition']}: {q['estimate']:.3f} "
+                     f"[{q['ci95_low']:.3f}, {q['ci95_high']:.3f}], vs {q['reference']} {q['delta']:+.3f}")
+    for _, o in a.oversight[a.oversight["model"] == "all"].iterrows():
+        lines.append(f"oversight {o['condition']}: judge flagged {o['flagged']} of {o['judged']} "
+                     f"({o['flag_rate']:.0%}), {o['escalated']} of {o['decisions']} decisions escalated")
     return "\n".join(lines) or "no analysable rows"
 
 
