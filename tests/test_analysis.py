@@ -201,7 +201,7 @@ def test_every_table_is_written_tidy_per_agent_and_condition(tmp_path, capsys):
                                     screen_threshold=55, seed=4), results)
 
     assert main([str(results), "--reference", "pt_m", "--out", str(tmp_path / "out"),
-                 "--n-boot", "200", "--n-model-boot", "0", "--n-perm", "199"]) == 0
+                 "--n-boot", "200", "--n-model-boot", "0", "--n-perm", "199", "--cutoff", "65"]) == 0
 
     tables = {p.stem: pd.read_csv(p) for p in (tmp_path / "out").glob("*.csv")}
     assert set(tables) == {"gaps", "equivalence", "impact_ratios", "model_terms", "identity_contrasts",
@@ -217,7 +217,15 @@ def test_every_table_is_written_tidy_per_agent_and_condition(tmp_path, capsys):
     for name in ("rank_identity", "rank_position"):
         assert set(tables[name]["condition"]) == conditions
     assert set(tables["equivalence"]["condition"]) == conditions
-    assert "paired gaps" in capsys.readouterr().out
+    impact = tables["impact_ratios"]
+    assert set(zip(impact["agent"], impact["rule"], impact["rule_role"])) == {
+        ("screener", "decision", "primary"), ("ranker", "decision", "primary"),
+        ("evaluator", "median", "primary"), ("evaluator", "cutoff", "robustness")}
+    assert set(impact.loc[impact["rule"] == "cutoff", "cutoff"]) == {65.0}
+    assert set(impact.loc[impact["rule"] == "cutoff", "outcome"]) == {"score_at_or_above_65"}
+    out = capsys.readouterr().out
+    assert "paired gaps" in out
+    assert "evaluator median (primary)" in out and "evaluator cutoff (robustness)" in out
 
 
 def test_an_unknown_reference_identity_is_refused(tmp_path):
@@ -233,3 +241,83 @@ def test_a_reference_identity_screened_out_everywhere_shows_in_the_screener_with
     assert one(a.impact_ratios, agent="screener", condition="C0", identity="pt_m")["impact_ratio"] == 0.0
     assert set(a.gaps["agent"]) == {"screener"}  # no Evaluator scores or complete pools hold pt_m
     assert "evaluator" not in set(a.model_terms["agent"])
+
+
+# --- Evaluator impact ratios under two selection rules (#15) ----------------------------------------
+
+
+def evaluator_rows(a: Analysis, rule: str) -> pd.DataFrame:
+    return a.impact_ratios[(a.impact_ratios["agent"] == "evaluator") & (a.impact_ratios["rule"] == rule)]
+
+
+def with_evaluator_scores(rows: list[ResultRow], score_of) -> list[ResultRow]:
+    """Replace every screened-in Evaluator score with `score_of(row)`."""
+    out = []
+    for r in rows:
+        if r.agent == "evaluator" and r.status == "ok":
+            r = ResultRow(**{**r.__dict__, "score": score_of(r)})
+        out.append(r)
+    return out
+
+
+def test_ties_at_the_median_are_not_selected_and_the_cutoff_is_configurable(tmp_path):
+    # Every Evaluator score is 70 except br_f's 71: the median of each group is 70, so only br_f is
+    # strictly above it. A cutoff of 70 selects everyone; a cutoff of 71 selects br_f alone.
+    rows = synthetic_results(conditions=("C0",), languages=("en",), base_per_cell=4, screen_threshold=0)
+    rows = with_evaluator_scores(rows, lambda r: 71 if r.identity == "br_f" else 70)
+
+    default = run(tmp_path, rows)
+    median = evaluator_rows(default, "median").set_index("identity")
+    assert median.loc["br_f", "rate"] == 1.0
+    assert (median.drop(index="br_f")["rate"] == 0.0).all()
+    assert (median["rule_role"] == "primary").all()
+    cutoff = evaluator_rows(default, "cutoff").set_index("identity")
+    assert (cutoff["rate"] == 1.0).all()
+    assert (cutoff["cutoff"] == 70).all()
+    assert (cutoff["rule_role"] == "robustness").all()
+
+    raised = evaluator_rows(run(tmp_path, rows, cutoff=71), "cutoff").set_index("identity")
+    assert raised.loc["br_f", "rate"] == 1.0
+    assert (raised.drop(index="br_f")["rate"] == 0.0).all()
+    assert (raised["cutoff"] == 71).all()
+
+
+def test_a_planted_selection_gap_is_flagged_under_both_evaluator_rules(tmp_path):
+    # A 10-point drop moves enough br_f scores below the median and the 70 cutoff to push its
+    # selection rate under four-fifths of the best; 5 points often does not (it shifts few scores
+    # across a threshold), so this test plants a gap that is large in selection terms.
+    a = run(tmp_path, synthetic_results(gaps={("br_f", "C0"): -10.0, ("br_f", "C1"): -10.0}))
+
+    for rule, role in (("median", "primary"), ("cutoff", "robustness")):
+        table = evaluator_rows(a, rule)
+        for condition in ("C0", "C1"):
+            hit = one(table, condition=condition, identity="br_f")
+            assert hit["rule_role"] == role
+            assert hit["impact_ratio"] < 0.8
+            assert hit["p_holm"] < 0.05
+            assert hit["flagged"]
+        assert set(table.loc[table["flagged"], "identity"]) == {"br_f"}, rule
+
+
+def test_with_no_planted_effect_neither_evaluator_rule_flags_anything(tmp_path):
+    a = run(tmp_path, synthetic_results(base_per_cell=20, seed=0))
+
+    for rule in ("median", "cutoff"):
+        table = evaluator_rows(a, rule)
+        assert set(table["condition"]) == {"C0", "C1"}
+        assert len(table) == 16, rule
+        assert not table["flagged"].any(), table[table["flagged"]]
+        assert (table["p_holm"] >= 0.05).all(), table[table["p_holm"] < 0.05]
+
+
+def test_holm_is_applied_within_each_rules_family_not_across_the_two(tmp_path):
+    a = run(tmp_path, synthetic_results(gaps={("br_f", "C0"): -10.0}, seed=1))
+
+    # Holm multiplies a family's smallest p by the family size: 16 (8 identities × 2 conditions) per
+    # rule, not the 32 that pooling the Evaluator's two rules would give.
+    for rule in ("median", "cutoff"):
+        family = evaluator_rows(a, rule)
+        assert len(family) == 16
+        smallest = family["p"].min()
+        assert family["p_holm"].min() == pytest.approx(min(1.0, 16 * smallest))
+        assert family["p_holm"].min() < min(1.0, 32 * smallest)
