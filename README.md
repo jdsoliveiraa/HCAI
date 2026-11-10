@@ -68,6 +68,23 @@ uv run hcai corpus configs/core.toml --fake-llm   # smoke test: fake generator, 
 - **Borderline CVs** meet every mandatory requirement but only just; the last N CVs of a role × quality level are borderline, per `[generator] borderline`, and carry a note saying which requirement is borderline.
 - **Frozen and versioned:** the corpus is written to `corpus_dir` (e.g. `data/corpus/v1`) with a `manifest.json` holding each CV's stable id (`<role>/<quality>/cvNN`), its ground-truth quality level and borderline tag. Running again refuses to overwrite it; pass `--force`, or point `corpus_dir` to a new version. Each CV is also stored as structured JSON next to its `.en.md` template.
 
+## Condition C1: blinding
+
+Add `"C1"` to a config's `conditions` (e.g. `conditions = ["C0", "C1"]`) to run every CV through a **Blinder** agent before the crew. Rows of that condition have `condition = "C1"`.
+
+- **Blinder:** a one-agent CrewAI crew on the same pipeline model as the crew (cached, retried and faked like the other agents). It is asked to remove the name, nationality, age cues and gender markers (pronouns, gendered words and their agreement) and keep everything else. Its row in the results table has `agent = "blinder"`, its tokens and cost, and in `rationale` its own answer (before redaction).
+- **Redaction:** the Blinder's answer is checked against the demographic tokens: every name of the design's identities (full names and their parts, in their own case or all caps), every identity's nationality in the CV's language (in PT-PT also its masculine form), and both forms of every gendered pair of the template and each word in which a phrase slot's forms differ (plus EN pronouns and titles). Any token it left in becomes `[redacted]`, so the Screener, Evaluator and Ranker only ever see the redacted blinded text. Lines that render the same for every identity (the right-to-work and proficiency lines, say) are left as they are. If the Blinder fails after its retries, the CV's Screener, Evaluator and Ranker rows are `missing` and the CV is not sent. See `docs/adr/0003-blinding-redacts-what-the-blinder-leaves.md`.
+- **Proxy leaks:** `results/proxy_leaks.csv` has one row per blinded CV: `redacted` (cues the Blinder left in; a `[redacted]` it wrote itself does not count), `own_gender_words` / `other_gender_words` (PT-PT gendered job titles, adjectives and participles, still in the crew's text; a lower bound, as the word list is not exhaustive; in EN the gendered words are all tokens, so only `redacted` measures gender leaks), and how many of the CV's universities and other languages, and whether its header location, survive verbatim. `proxy_leaks.json` and the printed table summarise them per model × condition × language.
+- `--fake-llm` uses a Blinder that returns the CV unchanged, so the redaction step does all the blinding.
+
+## Conditions C2 and C3: rubric, judge and escalation
+
+Add `"C2"` to `conditions` to swap in the **rubric Evaluator**, and `"C3"` for C1 + C2 (blinding, then the rubric). `core.toml` runs C0, C1 and C2; C3 is a stretch goal.
+
+- **Rubric:** the Evaluator scores each criterion of the job ad (one per bullet line) from 0 to 10 and quotes the CV text behind each score. The Evaluator row's `score` is the 0–100 total, and `evidence` holds the per-criterion scores and quotes as JSON.
+- **Judge:** a third-family model (`[oversight] judge_model`, default `[generator] model`) checks each quote against the CV the Evaluator saw (under C3, the blinded text). It writes a `judge` row with one verdict per criterion (`faithful`/`unfaithful` and a reason) in `judge_verdicts`, and `judge_flag`. The row is billed to `judge_model`.
+- **Escalation:** an Evaluator decision is `escalated` when a quote is flagged, the judge or the Evaluator gave no valid answer, or the score is within `[oversight] margin` of the cutoff (`cutoff = "median"`, the median score of the role × language × condition × model, or a fixed score). Escalated rows also go to `results/review_queue.csv` and are counted under `oversight` in `run_summary.json`. See `docs/adr/0004-rubric-evaluator-judge-rows-and-escalation.md`.
+
 ## Tests
 
 ```sh

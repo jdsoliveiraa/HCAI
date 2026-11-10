@@ -246,32 +246,81 @@ margin = 3
 """
 
 
-def test_c3_is_enabled_from_the_config_but_refuses_to_run_without_blinding(tmp_path, corpus_dir):
+def blinded_crew(quotes: list[str]):
+    """C3 fakes: the Blinder echoes the CV (so redaction removes the name and nationality), the rubric
+    Evaluator gives 10, 10, 10, 6 with `quotes`, and the judge checks each quote against the CV it is shown."""
+    from hcai.blinding import fake_blinding
+
+    evaluation = rubric([10, 10, 10, 6], quotes)
+
+    def respond(request: LLMRequest):
+        props = (request.response_schema or {}).get("properties", {})
+        text = "\n".join(m["content"] for m in request.messages)
+        if "blinded_cv" in props:
+            return fake_blinding(request)
+        if "passed" in props:
+            return {"passed": True, "reason": "meets the mandatory requirements"}
+        if "ranking" in props:
+            return {"ranking": props["ranking"]["items"]["enum"], "rationale": "kept the order shown"}
+        if "criteria" in props:
+            return evaluation
+        if "verdicts" in props:  # a faithful fake judge: is the quote in the CV it was shown?
+            cv = text.rsplit("## CV", 1)[1]
+            return {"verdicts": [
+                {"criterion": i, "verdict": "faithful" if q in cv else "unfaithful",
+                 "reason": "found in the CV" if q in cv else "not in the CV"}
+                for i, q in enumerate(quotes, start=1)]}
+        raise AssertionError(f"unexpected request: {list(props)}")
+
+    return respond
+
+
+def test_c3_is_enabled_from_the_config_and_blinds_before_the_rubric(tmp_path, corpus_dir):
     (corpus_dir / "data_analyst" / "job_ad.en.md").write_text(JOB_AD)
     config = tmp_path / "design.toml"
     config.write_text(C3_CONFIG.format(corpus_dir=corpus_dir))
     design = load_design(config)
     assert design.conditions == ["C3"]
     assert design.oversight == Oversight(judge_model=None, cutoff=70, margin=3)
-    client = FakeLLMClient(fake_crew({"João Silva": rubric([10, 10, 10, 6])}))
 
-    with pytest.raises(ValueError, match="C3.*blinding"):  # until #7: C3 would silently duplicate C2
-        run_experiment(design, client, cache_dir=tmp_path / "cache")
-    assert client.calls == []
+    rows = run_experiment(design, FakeLLMClient(blinded_crew([REAL_QUOTE] * 4)), cache_dir=tmp_path / "cache")
 
-
-def test_c3_uses_the_rubric_and_the_generator_model_as_judge_once_blinding_exists(tmp_path, corpus_dir, monkeypatch):
-    monkeypatch.setattr("hcai.runner.C3_READY", True)  # stands in for #7 being merged
-    (corpus_dir / "data_analyst" / "job_ad.en.md").write_text(JOB_AD)
-    config = tmp_path / "design.toml"
-    config.write_text(C3_CONFIG.format(corpus_dir=corpus_dir))
-
-    rows = run_experiment(load_design(config), FakeLLMClient(fake_crew({"João Silva": rubric([10, 10, 10, 6])})),
-                          cache_dir=tmp_path / "cache")
-
+    assert [r.agent for r in rows] == ["blinder", "screener", "evaluator", "judge", "ranker"]
+    assert all(r.condition == "C3" and r.status == "ok" for r in rows)
     evaluator, judge = by_agent(rows, "evaluator")["pt_m"], by_agent(rows, "judge")["pt_m"]
-    assert evaluator.condition == "C3" and evaluator.score == 90 and evaluator.evidence
+    assert evaluator.score == 90 and evaluator.evidence and evaluator.escalated is False
     assert judge.judge_model == "third-family"  # the judge defaults to the generator's (third) model family
+
+
+def test_under_c3_the_judge_checks_quotes_against_the_blinded_text(c2_design, tmp_path):
+    design = replace(c2_design, conditions=["C3"])
+    quotes = [REAL_QUOTE, "Nationality: [redacted]", "Nationality: Portuguese", REAL_QUOTE]
+
+    rows = run_experiment(design, FakeLLMClient(blinded_crew(quotes)), cache_dir=tmp_path / "cache")
+
+    # The blinded line is faithful; the identity text that blinding redacted is not, even for the Portuguese
+    # candidate whose unblinded CV does say "Nationality: Portuguese".
+    judge = by_agent(rows, "judge")["pt_m"]
+    assert [v["verdict"] for v in json.loads(judge.judge_verdicts)] == ["faithful", "faithful", "unfaithful", "faithful"]
+    evaluator = by_agent(rows, "evaluator")["pt_m"]
+    assert evaluator.judge_flag is True and evaluator.escalated is True
+
+
+def test_under_c3_a_failed_blinding_is_escalated_as_a_missing_decision(c2_design, tmp_path):
+    design = replace(c2_design, conditions=["C3"])
+    crew = blinded_crew([REAL_QUOTE] * 4)
+
+    def respond(request):
+        if "blinded_cv" in (request.response_schema or {}).get("properties", {}):
+            return "not json"
+        return crew(request)
+
+    rows = run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache")
+
+    evaluator = by_agent(rows, "evaluator")
+    assert all(r.status == "missing" and r.escalated and r.escalation_reason == "evaluator missing"
+               for r in evaluator.values())
+    assert by_agent(rows, "judge") == {}
 
 
 def test_a_rubric_condition_without_a_judge_model_fails_before_any_call(c2_design, tmp_path):

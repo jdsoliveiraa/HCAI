@@ -5,9 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from hcai.cli import main
+from hcai.cli import _fake_response, main
 from hcai.config import Design, Generator, load_design
-from conftest import scores_by_name
 from hcai.corpus import CorpusFrozen, GenerationFailed, generate_corpus, load_corpus, translate_corpus
 from hcai.llm import FakeLLMClient, LLMRequest
 from hcai.config import identities_from_name_bank
@@ -477,13 +476,17 @@ def test_core_config_runs_in_en_and_pt_with_rows_for_every_agent(tmp_path, monke
     # A slice of the core design, so the test stays fast: one base CV per role x quality level, one model.
     design = replace(core, base_cvs_per_role=1, models=core.models[:1])
 
-    rows = run_experiment(design, FakeLLMClient(scores_by_name({}, default=50)), cache_dir=tmp_path / "run-cache")
+    assert core.conditions == ["C0", "C1", "C2"]
 
-    assert {(r.language, r.agent) for r in rows} == {(lang, agent) for lang in ["en", "pt"]
-                                                     for agent in ["screener", "evaluator", "ranker"]}
+    rows = run_experiment(design, FakeLLMClient(_fake_response), cache_dir=tmp_path / "run-cache")
+
+    crew = ["screener", "evaluator", "ranker"]
+    agents = {"C0": crew, "C1": ["blinder", *crew], "C2": [*crew, "judge"]}
+    assert {(r.language, r.condition, r.agent) for r in rows} == {
+        (lang, c, agent) for lang in ["en", "pt"] for c, names in agents.items() for agent in names}
     assert all(r.status == "ok" for r in rows)
     per_language = {lang: sum(r.agent == "evaluator" and r.language == lang for r in rows) for lang in ["en", "pt"]}
-    assert per_language == {"en": 3 * 3 * 8, "pt": 3 * 3 * 8}
+    assert per_language == {"en": 3 * 3 * 8 * 3, "pt": 3 * 3 * 8 * 3}
 
 
 def test_the_fake_generator_survives_a_retried_translation(bilingual_design, tmp_path):

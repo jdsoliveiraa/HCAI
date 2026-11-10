@@ -3,6 +3,7 @@
 `hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them
 (in English, translated into the design's other languages); `--translate` adds the design's other languages
 to an already frozen corpus without regenerating it.
+With condition C1 in the design it also prints what survived blinding (`hcai.blinding`).
 `hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
 """
 
@@ -13,10 +14,11 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from hcai.blinding import fake_blinding
 from hcai.config import load_design, pilot_design
 from hcai.corpus import CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, translate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
-from hcai.report import format_report, format_stability, score_gaps
+from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
 from hcai.runner import execute
 from hcai.variants import IdentityError, TemplateError, VariantCheckError, build_variants, write_variants
 
@@ -50,6 +52,8 @@ def run_command(
                         f" -> {Path(out_dir) / 'review_queue.csv'}")
     if run.stability:
         summary += "\n\n" + format_stability(run.stability) + f"\n-> {Path(out_dir) / 'stability.json'}"
+    if run.proxy_leaks:
+        summary += "\n\n" + format_proxy_leaks(run.proxy_leaks) + f"\n-> {Path(out_dir) / 'proxy_leaks.csv'}"
     return format_report(score_gaps(run.rows, reference=reference), reference=reference) + summary
 
 
@@ -84,6 +88,8 @@ def variants_command(config: str | Path, out_dir: str | Path) -> str:
 
 def _fake_response(request: LLMRequest) -> dict:
     props = (request.response_schema or {}).get("properties", {})
+    if "blinded_cv" in props:
+        return fake_blinding(request)
     if "passed" in props:
         return {"passed": True, "reason": "fake LLM: everyone passes, no LLM was called"}
     if "ranking" in props:
