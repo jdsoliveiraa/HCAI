@@ -9,7 +9,8 @@ quality_levels = ["strong", "average", "weak"]
 base_cvs_per_role = 3
 # EN and PT-PT (RQ1). The generator writes EN, then translates every job ad and base CV into PT-PT.
 languages = ["en", "pt"]
-conditions = ["C0"]
+# C0 baseline, C1 blinding, C2 rubric + judge + escalation. C3 (C1 + C2) is a stretch goal: add "C3" to run it.
+conditions = ["C0", "C1", "C2"]
 # Placeholder pipeline models (one commercial, one open-weight); the concrete ids are chosen in the pilot.
 models = ["openai/gpt-4o-mini", "meta-llama/llama-3.3-70b-instruct"]
 temperature = 0.0
@@ -24,6 +25,16 @@ model = "google/gemini-2.5-flash"
 temperature = 0.7
 # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
 borderline = { average = 1, weak = 1 }
+
+# Oversight of the rubric conditions (C2, and C3 = C1 + C2 when it is listed in [design] conditions).
+# The judge checks each quoted piece of evidence; a decision is escalated to the human review queue
+# (review_queue.csv) when a quote is flagged or the score is within `margin` points of the shortlist cutoff.
+[oversight]
+# judge_model defaults to [generator] model (the third model family).
+# judge_model = "google/gemini-2.5-flash"
+# "median" (the median Evaluator score of the role x language x condition x model) or a fixed score, e.g. 70.
+cutoff = "median"
+margin = 5
 
 # Runner: retries and the stability sample (none of this changes the design).
 [run]

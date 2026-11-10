@@ -96,3 +96,23 @@ def test_run_prints_the_stability_report_when_the_config_asks_for_repeats(tmp_pa
 
     assert "Stability" in report and " 1.00 " in report
     assert (tmp_path / "stability.json").exists()
+
+
+def test_fake_llm_runs_condition_c2_and_reports_escalations(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config = tmp_path / "c2.toml"
+    corpus = SKELETON.parent.parent / "data" / "corpus"
+    config.write_text(
+        SKELETON.read_text()
+        .replace('conditions = ["C0"]', 'conditions = ["C0", "C2"]')
+        .replace('corpus_dir = "../data/corpus"', f'corpus_dir = "{corpus}"')
+        + '\n[oversight]\njudge_model = "judge-model"\ncutoff = 50\nmargin = 5\n'
+    )
+
+    exit_code = main(["run", str(config), "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache"),
+                      "--fake-llm"])
+
+    assert exit_code == 0
+    assert "oversight C2" in capsys.readouterr().out
+    queue = read_results(tmp_path / "out" / "review_queue.csv")
+    assert len(queue) == 2 and all(r.condition == "C2" and r.escalated for r in queue)  # fake scores sit at 50

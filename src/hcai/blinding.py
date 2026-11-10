@@ -28,7 +28,7 @@ from hcai.variants import (
 if TYPE_CHECKING:
     from hcai.runner import ResultRow
 
-BLINDING_CONDITIONS = frozenset({"C1"})
+BLINDING_CONDITIONS = frozenset({"C1", "C3"})  # C3 = C1 (blinding) + C2 (rubric)
 
 BLINDER_SCHEMA = {
     "type": "object",
