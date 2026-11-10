@@ -83,15 +83,19 @@ def build_pools(design: Design, role: str, language: str, variants: list[Variant
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
     """Run the crew on every variant of the design: Screener and Evaluator per CV, then the Ranker per pool.
 
-    All variants are rendered and pass the demographic-only diff check before any LLM call, so a bad
-    template or variant raises `TemplateError` / `VariantCheckError` without spending anything.
+    All variants are rendered and pass the demographic-only diff check, and all job ads are read, before
+    any LLM call: a bad template, variant, identity or missing file raises without spending anything.
     """
     variants = build_variants(design)
+    job_ads = {  # read up front, so a missing job ad also fails before any LLM call
+        (role, language): (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
+        for role in design.roles for language in design.languages
+    }
     cached = CachedClient(client, cache_dir)
     rows: list[ResultRow] = []
     for role in design.roles:
         for language in design.languages:
-            job_ad = (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
+            job_ad = job_ads[(role, language)]
             group = [v for v in variants if v.role == role and v.language == language]
             pools = build_pools(design, role, language, group)
             for condition in design.conditions:

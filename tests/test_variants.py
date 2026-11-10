@@ -9,7 +9,16 @@ from hcai.cli import main
 from hcai.config import Design, load_design
 from hcai.llm import FakeLLMClient
 from hcai.runner import run_experiment
-from hcai.variants import TemplateError, Variant, build_variants, check_variants, gendered_pairs, render_variant
+from hcai.variants import (
+    IdentityError,
+    TemplateError,
+    Variant,
+    build_variants,
+    check_variants,
+    gendered_pairs,
+    render_variant,
+    write_variants,
+)
 
 BANK = Path(__file__).parents[1] / "data" / "names" / "name_bank.toml"
 
@@ -201,10 +210,94 @@ def test_diff_check_fails_for_a_variant_with_the_other_gender_s_form(variant_des
     ("# $name\n{{He|She}} leads; she owns the roadmap.\n", "en"),  # a pronoun outside a slot
     ("# $name\nEngenheiro de Dados, 2022\n", "pt"),  # a PT gendered job title outside a slot
     ("# $name\nLicenciada em Gestão\n", "pt"),  # a PT gendered adjective outside a slot
+    ("# $name\nEstagiário de Dados, 2021\n", "pt"),  # a PT gendered intern title outside a slot
+    ("# $name\n{{o|a}} {{Engenheiro|Engenheira}} de Dados\n", "pt"),  # an article-only alternation
 ])
 def test_templates_that_break_the_slot_rules_are_rejected(template, language):
     with pytest.raises(TemplateError):
         render_variant(template, name="Rita Sousa", nationality="Portuguesa", gender="female", language=language)
+
+
+def test_all_caps_acronyms_are_not_mistaken_for_pronouns():
+    text = render_variant("# $name\nNationality: $nationality\n$work_eligibility\nAdvanced MS Excel; trained on the hospital HIS.\n",
+                          name="Rui Costa", nationality="Portuguese", gender="male", language="en")
+
+    assert "Advanced MS Excel; trained on the hospital HIS." in text
+
+
+def test_diff_check_flags_an_english_pronoun_of_the_other_gender_without_the_template_pairs(variant_design):
+    group = _variant_group(variant_design, language="en")
+    male = next(v for v in group if v.gender == "male")
+    leaked = replace(male, text=male.text.replace("He is", "She is"))
+
+    problems = check_variants([leaked if v is male else v for v in group])
+
+    assert any(leaked.id in p and "She" in p for p in problems)
+
+
+def test_identities_without_a_nationality_in_a_design_language_are_rejected(variant_design):
+    identities = [replace(i, nationalities={}) for i in variant_design.identities]
+
+    with pytest.raises(IdentityError, match="'pt'"):
+        build_variants(replace(variant_design, identities=identities))
+
+
+def test_identities_with_an_unknown_gender_are_rejected(variant_design):
+    identities = [replace(variant_design.identities[0], gender="x"), *variant_design.identities[1:]]
+
+    with pytest.raises(IdentityError, match="gender"):
+        build_variants(replace(variant_design, identities=identities))
+
+
+def test_a_base_cv_missing_in_the_first_language_is_an_error_not_silently_dropped(variant_design):
+    (variant_design.corpus_dir / "nurse/high/cv01.pt.md").rename(variant_design.corpus_dir / "nurse/high/cv00.pt.md")
+    (variant_design.corpus_dir / "nurse/high/cv01.en.md").rename(variant_design.corpus_dir / "nurse/high/cv00b.en.md")
+
+    with pytest.raises(FileNotFoundError, match="cv00"):
+        build_variants(variant_design)
+
+
+def test_a_config_may_not_set_both_a_name_bank_and_identity_tables(variant_design, tmp_path):
+    config = tmp_path / "design.toml"
+    config.write_text(config.read_text() + '\n[[identities]]\nid = "pt_m"\ngender = "male"\norigin = "portuguese"\n'
+                      'names = ["Rui Costa"]\nnationality = "Portuguese"\n')
+
+    with pytest.raises(ValueError, match="not both"):
+        load_design(config)
+
+
+def test_the_checked_in_variants_config_renders_and_passes_the_diff_check():
+    design = load_design(Path(__file__).parents[1] / "configs" / "variants.toml")
+
+    variants = build_variants(design)
+
+    assert len(variants) == 1 * 8 * 2
+    female_pt = next(v for v in variants if v.gender == "female" and v.language == "pt")
+    assert "Nacionalidade: " in female_pt.text and "Nacionalidade: Portuguese" not in female_pt.text
+
+
+def test_the_runner_makes_no_llm_call_when_a_job_ad_is_missing(variant_design, tmp_path):
+    for role in variant_design.roles:
+        (variant_design.corpus_dir / role / "job_ad.en.md").write_text("Job ad.")
+    (variant_design.corpus_dir / "data_analyst" / "job_ad.pt.md").write_text("Job ad.")  # nurse has no PT job ad
+    client = FakeLLMClient(scores_by_name({}, default=50))
+
+    with pytest.raises(FileNotFoundError, match="nurse"):
+        run_experiment(variant_design, client, cache_dir=tmp_path / "cache")
+
+    assert client.calls == []
+
+
+def test_rewriting_variants_removes_the_files_of_a_previous_larger_design(variant_design, tmp_path):
+    out = tmp_path / "variants"
+    main(["variants", str(tmp_path / "design.toml"), "--out", str(out)])
+    stale = out / "nurse/high/cv02/pt_m.en.md"
+    assert stale.exists()
+
+    write_variants(build_variants(replace(variant_design, base_cvs_per_role=1)), out)
+
+    assert not stale.exists()
+    assert len(list(out.rglob("*.md"))) == 2 * 8 * 2
 
 
 def test_the_runner_evaluates_exactly_the_variant_texts(variant_design, tmp_path):

@@ -49,8 +49,10 @@ PRONOUN_PAIRS = [
 ]
 
 # Gendered words that a template may only use inside a `{{masc|fem}}` slot (matched case-insensitively,
-# as whole words), so no masculine or feminine form leaks into the other gender's variants. A word that
-# does not refer to the candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`.
+# as whole words; all-caps tokens such as "MS Excel" or a hospital "HIS" are acronyms and exempt), so no
+# masculine or feminine form leaks into the other gender's variants. A word that does not refer to the
+# candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`. The PT-PT list is not
+# exhaustive: it catches the common job titles and adjectives, template authors still slot the rest.
 SLOT_ONLY_WORDS = {
     "en": {"he", "she", "him", "her", "his", "hers", "himself", "herself", "mr", "ms", "mrs"},
     "pt": {
@@ -64,10 +66,18 @@ SLOT_ONLY_WORDS = {
             ("formado", "formada"), ("certificado", "certificada"), ("dedicado", "dedicada"),
             ("motivado", "motivada"), ("organizado", "organizada"), ("proativo", "proativa"),
             ("empenhado", "empenhada"), ("ele", "ela"), ("dele", "dela"),
+            ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
+            ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
+            ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
         ]
         for form in (masc, fem)
     },
 }
+
+# Articles and contractions are too short to mask or leak-check reliably ("a" and "o" occur everywhere):
+# a slot must hold the whole gendered phrase, e.g. `{{o engenheiro|a engenheira}}`.
+_TOO_SHORT_FORMS = {"o", "a", "os", "as", "do", "da", "dos", "das", "no", "na", "nos", "nas", "ao", "à", "aos", "às",
+                    "um", "uma", "pelo", "pela"}
 
 _ALTERNATION = re.compile(r"\{\{([^{}|]*)\|([^{}|]*)\}\}")
 _GENDER_INDEX = {"male": 0, "female": 1}
@@ -75,6 +85,10 @@ _GENDER_INDEX = {"male": 0, "female": 1}
 
 class TemplateError(ValueError):
     """A base-CV template breaks the slot rules (see the module docstring)."""
+
+
+class IdentityError(ValueError):
+    """An identity cannot be rendered: unknown gender, or no nationality in a design language."""
 
 
 class VariantCheckError(Exception):
@@ -136,8 +150,13 @@ def _validate_template(template: str, language: str) -> None:
         before, after = template[m.start() - 1: m.start()], template[m.end(): m.end() + 1]
         if before.isalnum() or after.isalnum():
             raise TemplateError(f"gendered alternation {m.group(0)!r} must be a whole word, not part of one")
+        if any(form.strip().lower() in _TOO_SHORT_FORMS for form in m.groups()):
+            raise TemplateError(
+                f"gendered alternation {m.group(0)!r} is only an article; slot the whole phrase, e.g. {{{{o engenheiro|a engenheira}}}}"
+            )
     unslotted = sorted({
-        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", template)) if w.lower() in SLOT_ONLY_WORDS[language]
+        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", template))
+        if w.lower() in SLOT_ONLY_WORDS[language] and not (len(w) > 1 and w.isupper())
     })
     if unslotted:
         raise TemplateError(
@@ -155,14 +174,24 @@ def base_cv_templates(design: Design, role: str, quality: str, language: str) ->
 def build_variants(design: Design) -> list[Variant]:
     """Render every base CV x identity x language of the design, then check the variants.
 
-    The base CVs are taken from the first language; every one must exist in every language.
-    Raises `VariantCheckError` if variants of a base CV differ in anything but demographic cues.
+    Every base CV must exist in every language (else `FileNotFoundError`), every identity must be male or
+    female and have a nationality in every language (else `IdentityError`). Raises `VariantCheckError` if
+    variants of a base CV differ in anything but demographic cues.
     """
+    _check_identities(design)
     variants: list[Variant] = []
     problems: list[str] = []
     for role in design.roles:
         for quality in design.quality_levels:
-            for base_cv, _ in base_cv_templates(design, role, quality, design.languages[0]):
+            per_language = {
+                language: [b for b, _ in base_cv_templates(design, role, quality, language)]
+                for language in design.languages
+            }
+            for language, base_cvs in per_language.items():
+                extra = sorted(set(base_cvs) - set(per_language[design.languages[0]]))
+                if extra:
+                    raise FileNotFoundError(f"base CV(s) {extra} have a {language} version but no {design.languages[0]} one")
+            for base_cv in per_language[design.languages[0]]:
                 for language in design.languages:
                     template = _read_template(design, base_cv, language)
                     group = [_render(template, base_cv, identity, language) for identity in design.identities]
@@ -171,6 +200,17 @@ def build_variants(design: Design) -> list[Variant]:
     if problems:
         raise VariantCheckError(problems)
     return variants
+
+
+def _check_identities(design: Design) -> None:
+    for identity in design.identities:
+        if identity.gender not in _GENDER_INDEX:
+            raise IdentityError(f"identity {identity.id}: gender must be one of {sorted(_GENDER_INDEX)}, not {identity.gender!r}")
+        for language in design.languages:
+            try:
+                identity.nationality_in(language)
+            except ValueError as e:
+                raise IdentityError(str(e)) from e
 
 
 def _read_template(design: Design, base_cv: str, language: str) -> str:
@@ -199,11 +239,11 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
     Variants are compared within each (base CV, language) group after masking the demographic cues:
     the name, the nationality value after its label, and both forms of every gendered pair (the
     template's `gendered` alternations plus English pronouns). Each variant must also not contain the
-    other gender's form of a `gendered` pair. An empty list means the check passed.
+    other gender's form of a `gendered` pair, or in English of a pronoun. An empty list means the check passed.
     """
     gendered = list(gendered)
     classes = _form_classes([*gendered, *PRONOUN_PAIRS])
-    other_forms = _other_gender_forms(gendered)
+    other_forms = {"en": _other_gender_forms([*gendered, *PRONOUN_PAIRS]), "pt": _other_gender_forms(gendered)}
     problems: list[str] = []
     groups: dict[tuple[str, str], list[Variant]] = {}
     for v in variants:
@@ -211,7 +251,7 @@ def check_variants(variants: Sequence[Variant], gendered: Iterable[tuple[str, st
         missing = [line for line in WORK_ELIGIBILITY[v.language] if line not in v.text.splitlines()]
         if missing:
             problems.append(f"{v.id}: missing work-eligibility line(s): {missing}")
-        leaked = [f for f in other_forms[v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", v.text)]
+        leaked = [f for f in other_forms[v.language][v.gender] if re.search(rf"(?<!\w){re.escape(f)}(?!\w)", v.text)]
         if leaked:
             problems.append(f"{v.id}: {v.gender} variant has the other gender's form(s): {leaked}")
     for group in groups.values():
@@ -233,7 +273,8 @@ def _mask(v: Variant, classes: list[list[str]]) -> list[str]:
 
 
 def _other_gender_forms(pairs: list[tuple[str, str]]) -> dict[str, list[str]]:
-    """Per gender, the forms only the other gender uses (forms of invariant `{{X|X}}` pairs are excluded)."""
+    """Per gender, the forms only the other gender uses (forms also used by that gender, as in an
+    invariant `{{X|X}}` pair or the shared "her" of him/her and his/her, are excluded)."""
     masc, fem = {m for m, _ in pairs}, {f for _, f in pairs}
     return {"male": sorted(fem - masc), "female": sorted(masc - fem)}
 
@@ -252,8 +293,17 @@ def _form_classes(pairs: Iterable[tuple[str, str]]) -> list[list[str]]:
 
 
 def write_variants(variants: Sequence[Variant], out_dir: str | Path) -> Path:
-    """Write each variant to `<out>/<base_cv>/<identity>.<language>.md` and a `variants.csv` manifest."""
+    """Write each variant to `<out>/<base_cv>/<identity>.<language>.md` and a `variants.csv` manifest.
+
+    Variant files listed in a previous manifest at `out_dir` are removed first, so no stale variant
+    outlives a smaller design.
+    """
     out = Path(out_dir)
+    previous = out / "variants.csv"
+    if previous.exists():
+        with previous.open(newline="") as f:
+            for row in csv.DictReader(f):
+                (out / row["path"]).unlink(missing_ok=True)
     for v in variants:
         path = out / v.base_cv / f"{v.identity}.{v.language}.md"
         path.parent.mkdir(parents=True, exist_ok=True)

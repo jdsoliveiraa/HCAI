@@ -16,11 +16,16 @@ class Identity:
     origin: str
     names: list[str]
     nationality: str
-    # Nationality per language (e.g. {"en": "Brazilian", "pt": "Brasileira"}); falls back to `nationality`.
+    # Nationality per language (e.g. {"en": "Brazilian", "pt": "Brasileira"}); EN falls back to `nationality`.
     nationalities: dict[str, str] = field(default_factory=dict)
 
     def nationality_in(self, language: str) -> str:
-        return self.nationalities.get(language, self.nationality)
+        """The nationality in `language`; `nationality` is the English one, so other languages must be listed."""
+        if language in self.nationalities:
+            return self.nationalities[language]
+        if language == "en":
+            return self.nationality
+        raise ValueError(f"identity {self.id} has no nationality in {language!r}; add it to `nationalities`")
 
 
 @dataclass(frozen=True)
@@ -67,11 +72,13 @@ def load_design(path: str | Path) -> Design:
     """Load a design from TOML. `corpus_dir` and `name_bank` are resolved relative to the config file.
 
     With `name_bank` set, the identities are every gender x origin of the bank; otherwise they come
-    from the `[[identities]]` tables.
+    from the `[[identities]]` tables (setting both is an error).
     """
     path = Path(path)
     raw = tomllib.loads(path.read_text())
     d = raw["design"]
+    if "name_bank" in d and "identities" in raw:
+        raise ValueError(f"{path}: set either [design] name_bank or [[identities]], not both")
     return Design(
         roles=list(d["roles"]),
         quality_levels=list(d["quality_levels"]),

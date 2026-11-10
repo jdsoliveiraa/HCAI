@@ -16,7 +16,7 @@ from hcai.corpus import CorpusFrozen, fake_generator_response, generate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
 from hcai.report import format_report, score_gaps
 from hcai.runner import run_experiment, write_results
-from hcai.variants import TemplateError, VariantCheckError, build_variants, write_variants
+from hcai.variants import IdentityError, TemplateError, VariantCheckError, build_variants, write_variants
 
 
 def run_command(config: str | Path, out_dir: str | Path, cache_dir: str | Path, client: LLMClient) -> str:
@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "variants":
         try:
             print(variants_command(args.config, out_dir=args.out))
-        except (TemplateError, VariantCheckError, FileNotFoundError) as e:
+        except (TemplateError, IdentityError, VariantCheckError, FileNotFoundError) as e:
             print(f"variants: {e}", file=sys.stderr)
             return 1
         return 0
@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
     try:
         print(run_command(args.config, out_dir=args.out, cache_dir=cache, client=client))
-    except (TemplateError, VariantCheckError, FileNotFoundError) as e:  # raised before any LLM call
+    except (TemplateError, IdentityError, VariantCheckError, FileNotFoundError) as e:  # raised before any LLM call
         print(f"run: {e}", file=sys.stderr)
         return 1
     return 0

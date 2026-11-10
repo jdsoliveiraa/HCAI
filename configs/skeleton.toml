@@ -12,7 +12,7 @@ models = ["openai/gpt-4o-mini"]
 temperature = 0.0
 seed = 42
 # Base CVs live at <corpus_dir>/<role>/<quality>/<id>.<lang>.md, job ads at <corpus_dir>/<role>/job_ad.<lang>.md.
-# CV templates use $name and $nationality placeholders. Relative to this file.
+# CV templates are slot templates (see src/hcai/variants.py). Relative to this file.
 corpus_dir = "../data/corpus"
 
 [[identities]]

@@ -27,7 +27,7 @@ from typing import Any
 
 from hcai.config import Design, Generator
 from hcai.llm import CachedClient, LLMClient, LLMRequest
-from hcai.variants import TemplateError, render_variant
+from hcai.variants import WORK_ELIGIBILITY, TemplateError, render_variant
 
 MANIFEST = "manifest.json"
 LANGUAGE = "en"  # base CVs are written in English; other languages are rendered from the structured CV
@@ -290,7 +290,7 @@ def _generate_base_cv(
         "Identity-free: no name, contact details, photo, age or birth date, gender, pronouns, nationality or "
         "languages. A fixed header with the name, nationality, right to work in Portugal and languages "
         "(Portuguese native-level C2, English C1) is added for you:\n"
-        f"{HEADER}\n\n"
+        f"{HEADER.replace('$work_eligibility', chr(10).join(WORK_ELIGIBILITY[LANGUAGE]))}\n\n"
         "In 'mandatory_evidence' give, for EVERY mandatory requirement by its number, a short verbatim quote from "
         f"the CV body (not the header) that shows it is met; for a requirement met only by the header (languages, "
         f"right to work) give the evidence \"{HEADER_EVIDENCE}\". In 'desirable_met' list the numbers of the "
