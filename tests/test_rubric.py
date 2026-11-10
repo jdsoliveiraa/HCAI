@@ -285,7 +285,7 @@ def test_c3_is_enabled_from_the_config_and_blinds_before_the_rubric(tmp_path, co
 
     rows = run_experiment(design, FakeLLMClient(blinded_crew([REAL_QUOTE] * 4)), cache_dir=tmp_path / "cache")
 
-    assert [r.agent for r in rows] == ["blinder", "screener", "evaluator", "judge", "ranker"]
+    assert sorted(r.agent for r in rows) == ["blinder", "evaluator", "judge", "ranker", "screener"]
     assert all(r.condition == "C3" and r.status == "ok" for r in rows)
     evaluator, judge = by_agent(rows, "evaluator")["pt_m"], by_agent(rows, "judge")["pt_m"]
     assert evaluator.score == 90 and evaluator.evidence and evaluator.escalated is False
@@ -306,6 +306,25 @@ def test_under_c3_the_judge_checks_quotes_against_the_blinded_text(c2_design, tm
     assert evaluator.judge_flag is True and evaluator.escalated is True
 
 
+def test_under_c3_every_agent_after_the_blinder_sees_only_the_blinded_text(c2_design, tmp_path):
+    import re
+
+    client = FakeLLMClient(blinded_crew([REAL_QUOTE] * 4))
+
+    rows = run_experiment(replace(c2_design, conditions=["C3"]), client, cache_dir=tmp_path / "cache")
+
+    assert {r.agent for r in rows} == {"blinder", "screener", "evaluator", "judge", "ranker"}
+    downstream = [c for c in client.calls if "blinded_cv" not in (c.response_schema or {}).get("properties", {})]
+    kinds = {next(iter((c.response_schema or {})["properties"])) for c in downstream}
+    assert kinds == {"passed", "criteria", "verdicts", "ranking"}
+    for request in downstream:
+        text = "\n".join(m["content"] for m in request.messages)
+        assert REAL_QUOTE in text
+        assert "Nationality: [redacted]" in text  # the nationality line is blinded ("Portuguese" stays in the
+        for cue in ["João", "Silva", "Ana", "Souza", "Brazilian"]:  # shared proficiency line, as for every identity)
+            assert not re.search(rf"\b{cue}\b", text), cue
+
+
 def test_under_c3_a_failed_blinding_is_escalated_as_a_missing_decision(c2_design, tmp_path):
     design = replace(c2_design, conditions=["C3"])
     crew = blinded_crew([REAL_QUOTE] * 4)
@@ -318,7 +337,7 @@ def test_under_c3_a_failed_blinding_is_escalated_as_a_missing_decision(c2_design
     rows = run_experiment(design, FakeLLMClient(respond), cache_dir=tmp_path / "cache")
 
     evaluator = by_agent(rows, "evaluator")
-    assert all(r.status == "missing" and r.escalated and r.escalation_reason == "evaluator missing"
+    assert all(r.status == "missing" and r.escalated and r.escalation_reason == "blinding failed"
                for r in evaluator.values())
     assert by_agent(rows, "judge") == {}
 
@@ -421,3 +440,26 @@ def test_a_c0_and_c2_run_queues_only_c2_rows_and_samples_stability_under_c2(c2_d
 def test_invalid_oversight_settings_are_rejected(bad):
     with pytest.raises(ValueError):
         Oversight(**bad)
+
+
+def test_a_failed_screening_is_escalated_as_screener_missing(c2_design, tmp_path):
+    crew = fake_crew({"João Silva": rubric([10, 10, 10, 6]), "Ana Souza": rubric([4, 4, 2, 0])})
+
+    def respond(request):
+        props = (request.response_schema or {}).get("properties", {})
+        if "passed" in props and "Ana Souza" in " ".join(m["content"] for m in request.messages):
+            return "not json"
+        return crew(request)
+
+    evaluator = by_agent(run_experiment(c2_design, FakeLLMClient(respond), cache_dir=tmp_path / "cache"), "evaluator")
+
+    assert evaluator["br_f"].status == "missing"
+    assert evaluator["br_f"].escalated is True and evaluator["br_f"].escalation_reason == "screener missing"
+
+
+def test_a_pipeline_model_cannot_be_its_own_judge(c2_design, tmp_path):
+    client = FakeLLMClient(fake_crew({}))
+    with pytest.raises(ValueError, match="third"):
+        run_experiment(replace(c2_design, oversight=Oversight(judge_model="model-a")), client,
+                       cache_dir=tmp_path / "cache")
+    assert client.calls == []

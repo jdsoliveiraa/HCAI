@@ -55,7 +55,8 @@ class ResultRow:
     judge_verdicts: str = ""  # judge rows, copied onto their Evaluator row: JSON list of {criterion, verdict, reason}
     judge_flag: bool | None = None  # judge and Evaluator rows: any unfaithful justification (None: no verdict)
     escalated: bool | None = None  # Evaluator rows: sent to the human review queue
-    # Evaluator rows: "flagged quote", "judge missing" and/or "near cutoff", or "evaluator missing"; "; "-joined
+    # Evaluator rows: "flagged quote", "judge missing" and/or "near cutoff" ("; "-joined); or, for a CV with
+    # no Evaluator score, "evaluator missing", "screener missing" or "blinding failed"
     escalation_reason: str = ""
     judge_model: str = ""  # judge rows: the model that judged (`model` stays the pipeline model it judged)
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
@@ -170,9 +171,10 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
       `cache_hits` = attempts - calls.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
-    - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (screened in),
-      how many the judge gave a verdict on, flagged, were near the cutoff, had no verdict or no valid
-      Evaluator answer, and were escalated to the human review queue.
+    - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (every CV not
+      screened out), how many the judge gave a verdict on, flagged, were near the cutoff, had no verdict,
+      had no Evaluator score (`evaluator_missing`: the Evaluator, Screener or Blinder failed; the reason says
+      which), and were escalated to the human review queue.
     """
 
     def tally(subset: list[ResultRow]) -> dict[str, Any]:
@@ -250,6 +252,8 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
     if any(uses_rubric(c) for c in design.conditions):  # also checked before any LLM call
         if design.judge_model is None:
             raise ValueError("a rubric condition (C2/C3) needs a judge: set [oversight] judge_model or [generator] model")
+        if design.judge_model in design.models:
+            raise ValueError(f"the judge {design.judge_model!r} is an audited pipeline model; it must be a third family")
         for key, ad in job_ads.items():
             criteria[key] = job_criteria(ad)
             if not criteria[key]:
@@ -377,7 +381,8 @@ def _escalate(block: list[ResultRow], design: Design) -> list[ResultRow]:
 
     The judge's flag and verdicts are copied onto its Evaluator row, so the review queue is self-contained;
     the cutoff is the fixed one or the median of the block's valid scores. An Evaluator that gave no valid
-    answer for a screened-in CV is escalated too ("evaluator missing"); screened-out CVs are not decisions.
+    answer is escalated too, and so is a CV whose screening or blinding failed (no decision was made; the
+    reason says which agent failed); screened-out CVs are not decisions.
     """
     judged = {(r.base_cv, r.identity): r for r in block if r.agent == "judge"}
     scores = [r.score for r in block if r.agent == "evaluator" and r.status == "ok" and r.score is not None]
@@ -391,13 +396,21 @@ def _escalate(block: list[ResultRow], design: Design) -> list[ResultRow]:
             r = replace(r, judge_flag=flag, judge_verdicts=j.judge_verdicts if j else "", escalated=bool(reasons),
                         escalation_reason="; ".join(reasons))
         elif r.agent == "evaluator" and r.status == "missing":
-            r = replace(r, escalated=True, escalation_reason="evaluator missing")
+            r = replace(r, escalated=True, escalation_reason=_missing_reason(r))
         out.append(r)
     return out
 
 
+def _missing_reason(evaluator_row: ResultRow) -> str:
+    if evaluator_row.error.startswith("blinding failed"):
+        return "blinding failed"
+    if evaluator_row.error == "no screening decision":
+        return "screener missing"
+    return "evaluator missing"
+
+
 def _blind_group(ctx: _Context, group: list[Variant]) -> tuple[list[ResultRow], list[Variant], dict[str, str]]:
-    """C1: blind every CV of the group. Returns the Blinder rows, the variants with the blinded text (the
+    """C1, C3: blind every CV of the group. Returns the Blinder rows, the variants with the blinded text (the
     original variant where blinding failed), and, per failed variant id, the error."""
     rows: list[ResultRow] = []
     blinded: list[Variant] = []
