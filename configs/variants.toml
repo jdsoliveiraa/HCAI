@@ -1,0 +1,16 @@
+# Identity x language variants of the skeleton base CV: 8 identities from the name bank
+# (2 genders x 4 origins), EN and PT-PT. `hcai variants` renders and checks them;
+# `hcai run` evaluates them.
+
+[design]
+roles = ["data_analyst"]
+quality_levels = ["high"]
+base_cvs_per_role = 1
+languages = ["en", "pt"]
+conditions = ["C0"]
+models = ["openai/gpt-4o-mini"]
+temperature = 0.0
+seed = 42
+corpus_dir = "../data/corpus"
+# Identities are every gender x origin of the bank. Relative to this file.
+name_bank = "../data/names/name_bank.toml"

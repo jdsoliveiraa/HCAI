@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from hcai.names import GENDERS, NameBank, load_name_bank
+
 
 @dataclass(frozen=True)
 class Identity:
@@ -14,6 +16,16 @@ class Identity:
     origin: str
     names: list[str]
     nationality: str
+    # Nationality per language (e.g. {"en": "Brazilian", "pt": "Brasileira"}); EN falls back to `nationality`.
+    nationalities: dict[str, str] = field(default_factory=dict)
+
+    def nationality_in(self, language: str) -> str:
+        """The nationality in `language`; `nationality` is the English one, so other languages must be listed."""
+        if language in self.nationalities:
+            return self.nationalities[language]
+        if language == "en":
+            return self.nationality
+        raise ValueError(f"identity {self.id} has no nationality in {language!r}; add it to `nationalities`")
 
 
 @dataclass(frozen=True)
@@ -92,7 +104,10 @@ class Design:
 
     @property
     def size(self) -> int:
-        """CV variants x language x condition x model: what the Screener and Evaluator calls scale with."""
+        """CV variants x language x condition x model: what the Screener and Evaluator calls scale with.
+
+        Each base CV x identity gets one name from the identity's names, so the names don't multiply it.
+        """
         return (len(self.roles) * len(self.quality_levels) * self.base_cvs_per_role * len(self.identities)
                 * len(self.languages) * len(self.conditions) * len(self.models))
 
@@ -129,15 +144,24 @@ def pilot_design(design: Design) -> Design:
 
 
 def load_design(path: str | Path) -> Design:
-    """Load a design from TOML. `corpus_dir` is resolved relative to the config file."""
+    """Load a design from TOML. `corpus_dir` and `name_bank` are resolved relative to the config file.
+
+    With `name_bank` set, the identities are every gender x origin of the bank; otherwise they come
+    from the `[[identities]]` tables (setting both is an error).
+    """
     path = Path(path)
     raw = tomllib.loads(path.read_text())
     d = raw["design"]
+    if "name_bank" in d and "identities" in raw:
+        raise ValueError(f"{path}: set either [design] name_bank or [[identities]], not both")
     return Design(
         roles=list(d["roles"]),
         quality_levels=list(d["quality_levels"]),
         base_cvs_per_role=int(d["base_cvs_per_role"]),
-        identities=[Identity(**i) for i in raw.get("identities", [])],
+        identities=(
+            identities_from_name_bank(load_name_bank(path.parent / d["name_bank"]))
+            if "name_bank" in d else [Identity(**i) for i in raw.get("identities", [])]
+        ),
         languages=list(d["languages"]),
         conditions=list(d["conditions"]),
         models=list(d["models"]),
@@ -149,3 +173,15 @@ def load_design(path: str | Path) -> Design:
         run=RunSettings(**raw.get("run", {})),
         pilot=PilotSlice(**raw.get("pilot", {})),
     )
+
+
+def identities_from_name_bank(bank: NameBank) -> list[Identity]:
+    """One identity per origin x gender, origin-major, male first (so the first is <first origin>_m)."""
+    return [
+        Identity(
+            id=f"{origin.code}_{gender[0]}", gender=gender, origin=origin.key, names=origin.names[gender],
+            nationality=origin.nationality["en"], nationalities=dict(origin.nationality),
+        )
+        for origin in bank.origins
+        for gender in GENDERS
+    ]

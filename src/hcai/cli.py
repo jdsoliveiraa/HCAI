@@ -1,6 +1,7 @@
 """Command line: `hcai run <config.toml>` runs the design and prints the paired score-gap report.
 
 `hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them.
+`hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from hcai.corpus import CorpusFrozen, fake_generator_response, generate_corpus
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, OpenRouterClient
 from hcai.report import format_report, format_stability, score_gaps
 from hcai.runner import execute
+from hcai.variants import IdentityError, TemplateError, VariantCheckError, build_variants, write_variants
 
 
 def run_command(
@@ -57,6 +59,18 @@ def corpus_command(
     )
 
 
+def variants_command(config: str | Path, out_dir: str | Path) -> str:
+    """Render, check and write every identity x language variant of the design's base CVs."""
+    design = load_design(config)
+    variants = build_variants(design)
+    manifest = write_variants(variants, out_dir)
+    base_cvs = len({v.base_cv for v in variants})
+    return (
+        f"{len(variants)} variants ({base_cvs} base CVs x {len(design.identities)} identities"
+        f" x {len(design.languages)} languages), demographic-only diff check passed -> {manifest}"
+    )
+
+
 def _fake_response(request: LLMRequest) -> dict:
     props = (request.response_schema or {}).get("properties", {})
     if "passed" in props:
@@ -88,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
     )
     gen.add_argument("--fake-llm", action="store_true", help="smoke test: a fake generator writes <corpus_dir>-fake, no API calls")
+    variants = sub.add_parser("variants", help="render the identity x language CV variants and check them")
+    variants.add_argument("config", type=Path)
+    variants.add_argument("--out", type=Path, default=Path("data/variants"), help="output directory (default: data/variants)")
     args = parser.parse_args(argv)
 
     if args.command == "corpus":
@@ -100,11 +117,23 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command == "variants":
+        try:
+            print(variants_command(args.config, out_dir=args.out))
+        except (TemplateError, IdentityError, VariantCheckError, FileNotFoundError) as e:
+            print(f"variants: {e}", file=sys.stderr)
+            return 1
+        return 0
+
     # Fake responses are keyed like real ones, so they must never share a cache with real runs.
     client: LLMClient = FakeLLMClient(_fake_response) if args.fake_llm else OpenRouterClient()
     cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
     out = args.out or Path("results/pilot" if args.pilot else "results")
-    print(run_command(args.config, out_dir=out, cache_dir=cache, client=client, pilot=args.pilot))
+    try:
+        print(run_command(args.config, out_dir=out, cache_dir=cache, client=client, pilot=args.pilot))
+    except (TemplateError, IdentityError, VariantCheckError, FileNotFoundError) as e:  # raised before any LLM call
+        print(f"run: {e}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -129,12 +129,12 @@ def test_missing_rows_are_counted_in_the_totals(design, tmp_path):
 @pytest.fixture
 def wide_design(design, corpus_dir):
     """2 roles x 2 base CVs x 2 identities x 2 models."""
-    (corpus_dir / "data_analyst" / "high" / "cv2.en.md").write_text("$name\nNationality: $nationality\nSQL, R.")
+    (corpus_dir / "data_analyst" / "high" / "cv2.en.md").write_text("$name\nNationality: $nationality\n$work_eligibility\nSQL, R.")
     nurse = corpus_dir / "nurse" / "high"
     nurse.mkdir(parents=True)
     (corpus_dir / "nurse" / "job_ad.en.md").write_text("Nurse. Mandatory: licence.")
     for n in (1, 2):
-        (nurse / f"cv{n}.en.md").write_text(f"$name\nNationality: $nationality\nLicensed nurse, {n} years.")
+        (nurse / f"cv{n}.en.md").write_text(f"$name\nNationality: $nationality\n$work_eligibility\nLicensed nurse, {n} years.")
     return replace(design, roles=["data_analyst", "nurse"], base_cvs_per_role=2, models=["model-a", "model-b"])
 
 
@@ -357,3 +357,16 @@ def test_pilot_estimate_adds_the_expected_share_of_the_stability_sample(wide_des
 
     # results cost 2.5, x 4 for the full design, x (1 + 0.5 x 2) for the repeats, whatever the pilot drew
     assert run.totals["pilot"]["estimated_full_cost"] == 20.0
+
+
+def test_pilot_estimate_counts_the_variants_the_full_run_will_render_whatever_the_names(wide_design, tmp_path):
+    from hcai.variants import build_variants
+
+    many_names = [replace(i, names=[f"{i.names[0]} {k}" for k in range(4)]) for i in wide_design.identities]
+    design = replace(wide_design, identities=many_names)
+    pilot = pilot_design(design)
+
+    run = execute(pilot, PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    # one name per base CV x identity: more names spread over the CVs, they don't multiply the calls
+    assert run.totals["pilot"]["cv_scale"] == len(build_variants(design)) / len(build_variants(pilot)) == 4.0

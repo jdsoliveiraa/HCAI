@@ -15,8 +15,13 @@ NAMES = ["Tiago Martins", "Ana Souza", "Rui Costa", "Joana Lopes", "Kwame Tavare
 @pytest.fixture
 def pool_design(design: Design, corpus_dir) -> Design:
     """8 identities, 2 base CVs, 2 models: two equal-quality pools of 8 per model."""
-    (corpus_dir / "data_analyst" / "high" / "cv2.en.md").write_text("$name\nNationality: $nationality\nSQL, R.")
-    identities = [Identity(id=f"id{i}", gender="x", origin="y", names=[n], nationality="Z") for i, n in enumerate(NAMES)]
+    (corpus_dir / "data_analyst" / "high" / "cv2.en.md").write_text(
+        "$name\nNationality: $nationality\n$work_eligibility\nSQL, R."
+    )
+    identities = [
+        Identity(id=f"id{i}", gender=("male", "female")[i % 2], origin="y", names=[n], nationality="Z")
+        for i, n in enumerate(NAMES)
+    ]
     return Design(**{**design.__dict__, "identities": identities, "base_cvs_per_role": 2, "models": ["model-a", "model-b"]})
 
 
@@ -125,7 +130,7 @@ def test_mixed_quality_pools_come_from_the_config(pool_design, corpus_dir, tmp_p
     for quality, n in [("medium", 3), ("low", 3)]:
         (corpus_dir / "data_analyst" / quality).mkdir()
         for i in range(n):
-            (corpus_dir / "data_analyst" / quality / f"cv{i}.en.md").write_text(f"$name\n{quality} CV {i}")
+            (corpus_dir / "data_analyst" / quality / f"cv{i}.en.md").write_text(f"$name\n$work_eligibility\n{quality} CV {i}")
     design = replace(pool_design, quality_levels=["high", "medium", "low"], base_cvs_per_role=3, models=["model-a"],
                      pools=Pools(equal_quality=False, mixed_quality=2, mixed_size=8))
 

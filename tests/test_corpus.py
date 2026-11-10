@@ -6,13 +6,17 @@ from pathlib import Path
 import pytest
 
 from hcai.cli import main
-from hcai.config import Design, Generator, Identity, load_design
+from hcai.config import Design, Generator, load_design
 from hcai.corpus import CorpusFrozen, GenerationFailed, generate_corpus, load_corpus
 from hcai.llm import FakeLLMClient, LLMRequest
-from hcai.runner import render_cv, run_experiment
+from hcai.config import identities_from_name_bank
+from hcai.names import load_name_bank
+from hcai.runner import run_experiment
+from hcai.variants import WORK_ELIGIBILITY, build_variants, render_variant
 
 MANDATORY = ["Degree in a relevant field", "At least 2 years of experience", "Fluent Portuguese"]
 DESIRABLE = ["Team leadership", "A professional certification"]
+BANK = Path(__file__).parents[1] / "data" / "names" / "name_bank.toml"
 
 
 def job_ad_response(role: str = "role") -> dict:
@@ -55,10 +59,6 @@ def generator_responder(cv: dict | None = None):
         return cv if cv is not None else cv_response()
 
     return respond
-
-
-def brazilian() -> tuple[Identity, str]:
-    return Identity(id="br_f", gender="female", origin="brazilian", names=["Ana Souza"], nationality="Brazilian"), "Ana Souza"
 
 
 @pytest.fixture
@@ -198,9 +198,38 @@ def test_the_runner_evaluates_the_generated_corpus_with_identities_filled_in(cor
     evaluator_rows = [r for r in rows if r.agent == "evaluator"]
     assert len(evaluator_rows) == 12 * 2
     assert all(r.status == "ok" for r in rows)
-    variant = render_cv(load_corpus(corpus_design.corpus_dir).base_cvs[0].template(), *brazilian())
+    template = load_corpus(corpus_design.corpus_dir).base_cvs[0].template()
+    variant = render_variant(template, name="Ana Souza", nationality="Brazilian", gender="female", language="en")
     assert "Ana Souza" in variant and "Nationality: Brazilian" in variant
     assert "$name" not in variant and "$5k" in variant  # a literal $ in generated text survives rendering
+
+
+def test_the_generated_corpus_renders_through_the_slot_templates_for_every_name_bank_identity(corpus_design, tmp_path):
+
+    generate_corpus(corpus_design, FakeLLMClient(generator_responder()), cache_dir=tmp_path / "gen-cache")
+    design = replace(corpus_design, identities=identities_from_name_bank(load_name_bank(BANK)))
+
+    variants = build_variants(design)  # raises if the demographic-only diff check fails
+
+    assert len(variants) == 12 * 8
+    assert all(line in v.text.splitlines() for v in variants for line in WORK_ELIGIBILITY["en"])
+
+
+def test_a_base_cv_with_a_pronoun_outside_a_slot_is_regenerated(corpus_design, tmp_path):
+
+    gendered = cv_response()
+    gendered["summary"] = "She delivers results."
+    answers = iter([gendered])
+
+    def respond(request: LLMRequest) -> dict:
+        if request.response_schema and request.response_schema.get("title") == "job_ad":
+            return job_ad_response()
+        return next(answers, cv_response())
+
+    corpus = generate_corpus(corpus_design, FakeLLMClient(respond), cache_dir=tmp_path / "cache")
+
+    assert all("She " not in cv.template() for cv in corpus.base_cvs)
+    build_variants(corpus_design)
 
 
 CORE = Path(__file__).parent.parent / "configs" / "core.toml"
@@ -212,7 +241,11 @@ def test_core_config_generates_a_corpus_from_the_command_line_and_refuses_to_ove
     core = load_design(CORE)
     assert core.generator is not None and core.generator.model not in core.models
     config = tmp_path / "core.toml"
-    config.write_text(CORE.read_text().replace('corpus_dir = "../data/corpus/v1"', 'corpus_dir = "corpus/v1"'))
+    config.write_text(
+        CORE.read_text()
+        .replace('corpus_dir = "../data/corpus/v1"', 'corpus_dir = "corpus/v1"')
+        .replace('name_bank = "../data/names/name_bank.toml"', f'name_bank = "{BANK}"')
+    )
     args = ["corpus", str(config), "--cache", str(tmp_path / "cache"), "--fake-llm"]
 
     assert main(args) == 0

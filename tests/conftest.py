@@ -7,7 +7,7 @@ from hcai.config import Design, Identity
 from hcai.llm import FakeLLMClient, LLMRequest
 
 JOB_AD = "Data Analyst. Mandatory: SQL, Python. Desirable: dashboards."
-BASE_CV = "$name\nNationality: $nationality\nRight to work in Portugal.\n\nSQL, Python, 3 years of experience."
+BASE_CV = "$name\nNationality: $nationality\n$work_eligibility\n\nSQL, Python, 3 years of experience."
 
 
 @pytest.fixture(autouse=True)
@@ -54,8 +54,8 @@ def design(corpus_dir: Path) -> Design:
     )
 
 
-def scores_by_name(scores: dict[str, int]):
-    """Fake responder: the Evaluator's score depends on which name appears in the prompt.
+def scores_by_name(scores: dict[str, int], default: int | None = None):
+    """Fake responder: the Evaluator's score depends on which name appears in the prompt (else `default`).
 
     The Screener passes everyone and the Ranker keeps the order it was shown.
     """
@@ -70,6 +70,8 @@ def scores_by_name(scores: dict[str, int]):
         for name, score in scores.items():
             if name in text:
                 return {"score": score, "rationale": f"seen {name}"}
+        if default is not None:
+            return {"score": default, "rationale": "default score"}
         raise AssertionError("no known name in prompt")
 
     return respond

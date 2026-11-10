@@ -30,7 +30,6 @@ from crewai.tasks.conditional_task import ConditionalTask  # noqa: E402
 from crewai.tasks.task_output import TaskOutput  # noqa: E402
 from pydantic import PrivateAttr  # noqa: E402
 
-from hcai.evaluator import SCHEMA as EVALUATOR_SCHEMA  # noqa: E402
 from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage  # noqa: E402
 
 SCREENER_SCHEMA = {
@@ -40,6 +39,16 @@ SCREENER_SCHEMA = {
         "reason": {"type": "string"},
     },
     "required": ["passed", "reason"],
+    "additionalProperties": False,
+}
+
+EVALUATOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "rationale": {"type": "string"},
+    },
+    "required": ["score", "rationale"],
     "additionalProperties": False,
 }
 

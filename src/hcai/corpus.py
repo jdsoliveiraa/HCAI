@@ -3,7 +3,8 @@
 The generator model (a third family, never one of the audited pipeline models) writes each job ad and base CV
 as structured JSON from a fixed per-quality template. Every base CV must quote CV evidence for every mandatory
 requirement of its job ad; answers that do not are retried. Base CVs carry no identity: the name and
-nationality are `$name` / `$nationality` placeholders in a fixed header, filled in later per identity.
+nationality are `$name` / `$nationality` slots in a fixed header, filled in later per identity by
+`hcai.variants`, whose slot rules every generated base CV must pass (answers that break them are retried).
 
 On-disk layout of a corpus version (`design.corpus_dir`, e.g. `data/corpus/v1`):
 
@@ -26,6 +27,7 @@ from typing import Any
 
 from hcai.config import Design, Generator
 from hcai.llm import CachedClient, LLMClient, LLMRequest
+from hcai.variants import WORK_ELIGIBILITY, TemplateError, render_variant
 
 MANIFEST = "manifest.json"
 LANGUAGE = "en"  # base CVs are written in English; other languages are rendered from the structured CV
@@ -55,11 +57,13 @@ ROLE_BRIEFS: dict[str, str] = {
     "accountant": "Accountant (Contabilista) at a firm in Portugal",
 }
 
-# Same for every identity: right to work and language proficiency never vary (spec, user story 8).
+# A slot template (see `hcai.variants`): the name and nationality are filled in per identity, and
+# `$work_eligibility` holds the right-to-work and Portuguese-proficiency lines, identical for every identity.
 HEADER = (
     "# $name\n\n"
     "Based in Portugal · Nationality: $nationality\n"
-    "Legally authorised to work in Portugal. Languages: Portuguese (native-level, C2), English (C1)."
+    "$work_eligibility\n"
+    "Other languages: English (C1)"
 )
 
 # Evidence for a requirement met by the fixed header (languages, right to work). The header is re-rendered per
@@ -154,7 +158,7 @@ class BaseCV:
         return self.content["mandatory_evidence"]
 
     def template(self) -> str:
-        """The CV as markdown with `$name` / `$nationality` placeholders (`string.Template` syntax)."""
+        """The CV as a slot template for `hcai.variants` (`$name`, `$nationality`, `$work_eligibility`)."""
         return _render(self.content, escape=True)
 
 
@@ -287,7 +291,7 @@ def _generate_base_cv(
         "Identity-free: no name, contact details, photo, age or birth date, gender, pronouns, nationality or "
         "languages. A fixed header with the name, nationality, right to work in Portugal and languages "
         "(Portuguese native-level C2, English C1) is added for you:\n"
-        f"{HEADER}\n\n"
+        f"{HEADER.replace('$work_eligibility', chr(10).join(WORK_ELIGIBILITY[LANGUAGE]))}\n\n"
         "In 'mandatory_evidence' give, for EVERY mandatory requirement by its number, a short verbatim quote from "
         f"the CV body (not the header) that shows it is met; for a requirement met only by the header (languages, "
         f"right to work) give the evidence \"{HEADER_EVIDENCE}\". In 'desirable_met' list the numbers of the "
@@ -301,6 +305,7 @@ def _generate_base_cv(
             raise _Invalid("'desirable_met' must hold desirable requirement numbers")
         if borderline and not parsed["borderline_note"].strip():
             raise _Invalid("a borderline CV needs a 'borderline_note'")
+        _check_renders(parsed)
         return BaseCV(id=f"{ad.role}/{quality}/cv{n:02d}", role=ad.role, quality=quality, borderline=borderline,
                       content=parsed)
 
@@ -333,6 +338,14 @@ def _check_evidence(parsed: dict, ad: JobAd) -> None:
     uncovered = [i for i in range(1, len(ad.mandatory) + 1) if i not in covered]
     if uncovered:
         raise _Invalid(f"no evidence for mandatory requirements {uncovered}: every base CV must meet them all")
+
+
+def _check_renders(parsed: dict) -> None:
+    """The base CV is a valid slot template: e.g. no pronoun or gendered word outside a slot."""
+    try:
+        render_variant(_render(parsed, escape=True), name="X", nationality="X", gender="female", language=LANGUAGE)
+    except TemplateError as e:
+        raise _Invalid(f"the CV breaks the identity-free template rules: {e}") from e
 
 
 def _normalise(text: str) -> str:

@@ -9,13 +9,13 @@ from dataclasses import asdict, dataclass, fields, replace
 from itertools import zip_longest
 from pathlib import Path
 from random import Random
-from string import Template
 from typing import Any
 
-from hcai.config import Design, Identity
+from hcai.config import Design
 from hcai.llm import CachedClient, LLMClient, MeteredClient
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
+from hcai.variants import Variant, build_variants
 
 
 @dataclass(frozen=True)
@@ -50,31 +50,10 @@ class ResultRow:
 
 
 @dataclass(frozen=True)
-class Variant:
-    """One rendered CV: a base CV with one identity and name."""
-
-    base_cv: str
-    quality: str
-    identity: Identity
-    name: str
-    text: str
-
-
-@dataclass(frozen=True)
 class Pool:
     id: str
     kind: str  # "equal" or "mixed"
     members: list[Variant]
-
-
-def render_cv(template: str, identity: Identity, name: str) -> str:
-    return Template(template).substitute(name=name, nationality=identity.nationality)
-
-
-def _base_cvs(design: Design, role: str, quality: str, language: str) -> list[tuple[str, str]]:
-    folder = design.corpus_dir / role / quality
-    files = sorted(folder.glob(f"*.{language}.md"))[: design.base_cvs_per_role]
-    return [(f"{role}/{quality}/{f.name.removesuffix(f'.{language}.md')}", f.read_text()) for f in files]
 
 
 def stable_seed(*parts: object) -> int:
@@ -96,7 +75,7 @@ def build_pools(design: Design, role: str, language: str, variants: list[Variant
         for bases in per_quality:
             rng.shuffle(bases)
         drawn = [b for group in zip_longest(*per_quality) for b in group if b is not None][: design.pools.mixed_size]
-        identities = list(design.identities)
+        identities = [i.id for i in design.identities]
         rng.shuffle(identities)
         members = [
             next(v for v in by_base[b] if v.identity == identities[i % len(identities)]) for i, b in enumerate(drawn)
@@ -197,6 +176,17 @@ def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> 
 
 
 def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list[ResultRow], list[ResultRow]]:
+    """Run the crew on every variant of the design: Screener and Evaluator per CV, then the Ranker per pool,
+    plus the stability sample's repeats.
+
+    All variants are rendered and pass the demographic-only diff check, and all job ads are read, before
+    any LLM call: a bad template, variant, identity or missing file raises without spending anything.
+    """
+    variants = build_variants(design)
+    job_ads = {  # read up front, so a missing job ad also fails before any LLM call
+        (role, language): (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
+        for role in design.roles for language in design.languages
+    }
     cached = CachedClient(client, cache_dir)
     # Each repeat is the identical request, cached in its own namespace: paid once, replayed on reruns.
     repeat_clients = tuple(CachedClient(client, Path(cache_dir) / "repeats" / f"r{k}")
@@ -205,23 +195,18 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
     repeats: list[ResultRow] = []
     for role in design.roles:
         for language in design.languages:
-            job_ad = (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
-            variants = [
-                Variant(base_id, quality, identity, identity.names[0], render_cv(template, identity, identity.names[0]))
-                for quality in design.quality_levels
-                for base_id, template in _base_cvs(design, role, quality, language)
-                for identity in design.identities
-            ]
-            pools = build_pools(design, role, language, variants)
+            job_ad = job_ads[(role, language)]
+            group = [v for v in variants if v.role == role and v.language == language]
+            pools = build_pools(design, role, language, group)
             for condition in design.conditions:
                 for model in design.models:
                     ctx = _Context(cached, design, job_ad, language, condition, model)
-                    passed: dict[tuple[str, str], bool | None] = {}
-                    for v in variants:
+                    passed: dict[str, bool | None] = {}
+                    for v in group:
                         screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
                         rows += [screener_row, evaluator_row]
-                        passed[(v.base_cv, v.identity.id)] = screener_row.screen_pass
-                        if ctx.sampled(v.base_cv, v.identity.id, v.name):
+                        passed[v.id] = screener_row.screen_pass
+                        if ctx.sampled(v.id):
                             for k, again in enumerate(repeat_clients, start=1):
                                 repeats += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
                     for pool in pools:
@@ -255,8 +240,8 @@ class _Context:
         return Retry(retries=self.design.run.retries, backoff=self.design.run.retry_backoff)
 
     def key(self, v: Variant, agent: str) -> dict[str, Any]:
-        return dict(base_cv=v.base_cv, identity=v.identity.id, gender=v.identity.gender, origin=v.identity.origin,
-                    name=v.name, language=self.language, condition=self.condition, model=self.model, agent=agent)
+        return dict(base_cv=v.base_cv, identity=v.identity, gender=v.gender, origin=v.origin,
+                    name=v.name, language=v.language, condition=self.condition, model=self.model, agent=agent)
 
 
 def _usage(out: AgentOutput) -> dict[str, Any]:
@@ -289,10 +274,10 @@ def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRo
     return screener_row, evaluator_row
 
 
-def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | None]) -> list[ResultRow]:
+def _rank_pool(ctx: _Context, pool: Pool, passed: dict[str, bool | None]) -> list[ResultRow]:
     """Rank the pool's screened-in CVs in a shuffled, recorded order; screened-out CVs get 'rejected' rows."""
     pool_cols: dict[str, Any] = dict(pool=pool.id, pool_kind=pool.kind)
-    eligible = [v for v in pool.members if passed[(v.base_cv, v.identity.id)] is True]
+    eligible = [v for v in pool.members if passed[v.id] is True]
     seed = stable_seed(ctx.design.seed, pool.id, ctx.language, ctx.condition, ctx.model)
     order = list(eligible)
     Random(seed).shuffle(order)
@@ -313,7 +298,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | N
     for v in pool.members:
         if v in eligible:
             continue
-        rejected = passed[(v.base_cv, v.identity.id)] is False
+        rejected = passed[v.id] is False
         rows.append(ResultRow(
             **ctx.key(v, "ranker"), score=None, rationale="", **_NO_CALL,
             status="rejected" if rejected else "missing", error="" if rejected else "no screening decision",
