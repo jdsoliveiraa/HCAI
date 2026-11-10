@@ -31,6 +31,16 @@ class Pools:
 
 
 @dataclass(frozen=True)
+class Generator:
+    """The CV/job-ad generator: a third model family, configured apart from the audited pipeline models."""
+
+    model: str
+    temperature: float = 0.7
+    # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
+    borderline: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Design:
     roles: list[str]
     quality_levels: list[str]
@@ -43,6 +53,7 @@ class Design:
     temperature: float = 0.0
     seed: int | None = 42
     pools: Pools = field(default_factory=Pools)
+    generator: Generator | None = None
 
 
 def load_design(path: str | Path) -> Design:
@@ -54,7 +65,7 @@ def load_design(path: str | Path) -> Design:
         roles=list(d["roles"]),
         quality_levels=list(d["quality_levels"]),
         base_cvs_per_role=int(d["base_cvs_per_role"]),
-        identities=[Identity(**i) for i in raw["identities"]],
+        identities=[Identity(**i) for i in raw.get("identities", [])],
         languages=list(d["languages"]),
         conditions=list(d["conditions"]),
         models=list(d["models"]),
@@ -62,4 +73,5 @@ def load_design(path: str | Path) -> Design:
         temperature=float(d.get("temperature", 0.0)),
         seed=d.get("seed", 42),
         pools=Pools(**raw.get("pools", {})),
+        generator=Generator(**raw["generator"]) if "generator" in raw else None,
     )

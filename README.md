@@ -34,6 +34,20 @@ Options: `--out DIR` (default `results/`) and `--cache DIR` (default `.cache/llm
 - **Cache:** every LLM call is cached on disk, keyed by the hash of the full request (model, messages, temperature, seed, schema). A rerun with the same config makes no calls and costs nothing. Unparseable structured outputs are not cached, so a rerun retries them. Delete `.cache/llm` to force fresh calls.
 - **Corpus layout:** base CVs are `data/corpus/<role>/<quality>/<id>.<lang>.md` templates with `$name` and `$nationality` placeholders; job ads are `data/corpus/<role>/job_ad.<lang>.md`.
 
+## Generating the corpus
+
+`configs/core.toml` is the core design: 3 roles (software engineer, nurse, accountant) × 3 quality levels (strong, average, weak) × `base_cvs_per_role` base CVs per role and quality level. Its `[generator]` section sets the generator model (a third model family; generation refuses a model that is also one of the audited pipeline `models`), its temperature, and how many borderline base CVs to write per role and quality level.
+
+```sh
+uv run hcai corpus configs/core.toml              # real generation through OpenRouter
+uv run hcai corpus configs/core.toml --fake-llm   # smoke test: fake generator, writes data/corpus/v1-fake
+```
+
+- **Job ads:** one per role, with explicit mandatory and desirable requirements.
+- **Base CVs:** written from fixed per-quality templates (levers: years above the minimum, desirable requirements met, quantified achievements, certifications) and identity-free: the name and nationality are `$name` / `$nationality` placeholders in a fixed header that also states the right to work in Portugal and the language proficiency. Each CV must quote, for every mandatory requirement, evidence from its own body (or cite `header` for a requirement only the fixed header meets, such as fluent Portuguese); the check is that the quote exists, not that it satisfies the minimum, so the planned hand review still matters. Answers that fail it are regenerated (up to 3 attempts, then generation fails and nothing is written).
+- **Borderline CVs** meet every mandatory requirement but only just; the last N CVs of a role × quality level are borderline, per `[generator] borderline`, and carry a note saying which requirement is borderline.
+- **Frozen and versioned:** the corpus is written to `corpus_dir` (e.g. `data/corpus/v1`) with a `manifest.json` holding each CV's stable id (`<role>/<quality>/cvNN`), its ground-truth quality level and borderline tag. Running again refuses to overwrite it; pass `--force`, or point `corpus_dir` to a new version. Each CV is also stored as structured JSON next to its `.en.md` template.
+
 ## Tests
 
 ```sh
