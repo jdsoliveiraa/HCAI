@@ -8,8 +8,13 @@ Every table is computed per agent (RQ2) and per condition (RQ3):
   and the equivalence check (Evaluator score: 90% CI within ±`margin` points).
 - `equivalence`: per agent × condition, whether every identity's score gap passes that check.
 - `impact_ratios`: each identity's selection rate over the highest identity's rate, against 0.8.
-  Selection is a Screener pass, a Ranker top-3 place, or an Evaluator score at or above the
-  condition's median score.
+  Selection is a Screener pass or a Ranker top-3 place (rule "decision"). The Evaluator's score is
+  reported under two rules, named in the `rule` and `rule_role` columns: the primary rule ("median")
+  selects a score strictly above the median of its role × language × model × condition (ties at the
+  median are not selected), and the robustness check ("cutoff") selects a score at or above a fixed
+  `cutoff` (default 70). Each ratio has a one-sided permutation p-value (selections shuffled across
+  identities within each base CV or pool), Holm-adjusted within each agent × rule family, so the two
+  Evaluator rules are corrected apart; `flagged` is a ratio below 0.8 that survives Holm.
 - `model_terms` and `identity_contrasts`: the Evaluator's mixed model
   score ~ gender × origin × condition + (gender + origin) × (role + language) + model + (1|CV) + (1|name)
   and logistic models of the same fixed effects for Screener pass and Ranker top 3 (cluster-robust
@@ -54,11 +59,12 @@ from hcai.runner import ResultRow, read_results
 
 IMPACT_THRESHOLD = 0.8
 EQUIVALENCE_MARGIN = 2.0
+SELECTION_CUTOFF = 70.0  # Evaluator score selected under the robustness rule (at or above)
 ALPHA = 0.05
 _POOL_INSTANCE = ["pool", "language", "condition", "model"]
 _COVARIATES = ["role", "language"]
 _OUTCOMES = {"screener": "screen_pass", "evaluator": "score", "ranker": "top3"}
-_IMPACT_OUTCOMES = {**_OUTCOMES, "evaluator": "score_at_or_above_median"}
+_MEDIAN_GROUP = ["role", "language", "model", "condition"]  # the Evaluator's primary selection rule
 _MODEL_FACTORS = ["gender", "origin", "condition", "role", "language", "model"]
 
 
@@ -103,13 +109,15 @@ def analyse(
     n_perm: int = 5000,
     seed: int = 0,
     margin: float = EQUIVALENCE_MARGIN,
+    cutoff: float = SELECTION_CUTOFF,
 ) -> Analysis:
     """Compute every fairness table from a results table.
 
     `reference` is the identity id gaps are measured against (its gender and origin are the model's
     reference levels). `n_boot` resamples of base CVs give the paired-gap CIs; `n_model_boot` resamples
     give the mixed model's bootstrap CIs (each refits the model, about a second on the core design; 0
-    skips them and leaves the Wald CIs).
+    skips them and leaves the Wald CIs). `n_perm` permutations serve the rank tests and the impact-ratio
+    tests. `cutoff` is the Evaluator score selected under the robustness rule for impact ratios.
     """
     if n_boot < 1:
         raise ValueError("n_boot must be at least 1: the paired-gap CIs and the equivalence check need it")
@@ -121,7 +129,7 @@ def analyse(
     return Analysis(
         gaps=gaps,
         equivalence=_equivalence(gaps, margin),
-        impact_ratios=_impact_ratios(df, complete),
+        impact_ratios=_impact_ratios(df, complete, cutoff, n_perm, np.random.default_rng([seed, 1])),
         model_terms=terms,
         identity_contrasts=contrasts,
         rank_identity=_rank_test(complete, "identity", n_perm, rng),
@@ -257,27 +265,79 @@ def _equivalence(gaps: pd.DataFrame, margin: float) -> pd.DataFrame:
 # --- impact ratios ------------------------------------------------------------------------------
 
 
-def _impact_ratios(df: pd.DataFrame, complete: pd.DataFrame) -> pd.DataFrame:
+def _selections(df: pd.DataFrame, complete: pd.DataFrame, cutoff: float) -> list[tuple[str, str, str, str, float, pd.DataFrame]]:
+    """(agent, rule, rule_role, outcome, cutoff, rows with a boolean `selected`) for every selection rule.
+
+    The Screener and Ranker select by their own decision (a pass, a top-3 place). The Evaluator's
+    score has two rules: the primary one selects a score strictly above the median of its
+    role × language × model × condition (ties at the median are not selected), and the robustness
+    check selects a score at or above the fixed `cutoff`.
+    """
     outcomes = _agent_outcomes(df)
-    evaluator = outcomes["evaluator"]
-    median = evaluator.groupby("condition", observed=True)["y"].transform("median")
-    selected = {
-        "screener": outcomes["screener"].assign(selected=outcomes["screener"]["y"] == 1),
-        "evaluator": evaluator.assign(selected=evaluator["y"] >= median),
-        "ranker": complete.assign(selected=complete["top3"]),
-    }
+    screener, evaluator = outcomes["screener"], outcomes["evaluator"]
+    median = evaluator.groupby(_MEDIAN_GROUP, observed=True)["y"].transform("median")
+    nan = float("nan")
+    return [
+        ("screener", "decision", "primary", _OUTCOMES["screener"], nan, screener.assign(selected=screener["y"] == 1)),
+        ("evaluator", "median", "primary", "score_above_median", nan, evaluator.assign(selected=evaluator["y"] > median)),
+        ("evaluator", "cutoff", "robustness", f"score_at_or_above_{cutoff:g}", float(cutoff),
+         evaluator.assign(selected=evaluator["y"] >= cutoff)),
+        ("ranker", "decision", "primary", _OUTCOMES["ranker"], nan, complete.assign(selected=complete["top3"])),
+    ]
+
+
+def _impact_ratios(df: pd.DataFrame, complete: pd.DataFrame, cutoff: float, n_perm: int,
+                   rng: np.random.Generator) -> pd.DataFrame:
     records = []
-    for agent, rows in selected.items():
+    for agent, rule, role, outcome, rule_cutoff, rows in _selections(df, complete, cutoff):
         for condition, g in rows.groupby("condition", observed=True):
             rates = g.groupby("identity", observed=True)["selected"].agg(["size", "sum", "mean"])
             best = rates["mean"].max()
+            p = _impact_p(g, n_perm, rng).to_dict()
             for identity, r in rates.iterrows():
                 ratio = r["mean"] / best if best > 0 else float("nan")
-                records.append({"agent": agent, "outcome": _IMPACT_OUTCOMES[agent], "condition": condition,
+                records.append({"agent": agent, "rule": rule, "rule_role": role, "cutoff": rule_cutoff,
+                                "outcome": outcome, "condition": condition,
                                 "identity": identity, "n": int(r["size"]), "selected": int(r["sum"]),
                                 "rate": float(r["mean"]), "impact_ratio": float(ratio),
-                                "below_threshold": bool(ratio < IMPACT_THRESHOLD)})
-    return pd.DataFrame(records)
+                                "below_threshold": bool(ratio < IMPACT_THRESHOLD), "p": float(p[identity])})
+    table = pd.DataFrame(records)
+    if table.empty:
+        return table
+    # One Holm family per agent × rule: the Evaluator's primary and robustness rules are corrected apart.
+    table["p_holm"] = _holm_by(table, ["agent", "rule"])
+    table["flagged"] = table["below_threshold"] & (table["p_holm"] < ALPHA)
+    return table
+
+
+def _impact_p(g: pd.DataFrame, n_perm: int, rng: np.random.Generator) -> pd.Series:
+    """One-sided permutation p-value per identity that its impact ratio is this low by chance.
+
+    Selections are shuffled across identities within each instance (a base CV under one language,
+    condition, model and pool), the unit the design pairs identities on, and each draw recomputes
+    every identity's rate over the best rate, so the null includes the choice of the best identity.
+    """
+    instance = pd.factorize(pd.MultiIndex.from_frame(g[["base_cv", "language", "condition", "model", "pool"]].astype(str)))[0]
+    identity_codes, identities = pd.factorize(g["identity"])
+    order = np.argsort(instance, kind="stable")
+    instance, identity_codes = instance[order], identity_codes[order]
+    selected = g["selected"].to_numpy(dtype=float)[order]
+    counts = np.bincount(identity_codes, minlength=len(identities)).astype(float)
+
+    def ratios(values: np.ndarray) -> np.ndarray:  # values: draws × rows
+        rates = np.stack([np.bincount(identity_codes, weights=v, minlength=len(identities)) for v in values]) / counts
+        best = rates.max(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(best > 0, rates / best, 1.0)
+
+    observed = ratios(selected[None, :])[0]
+    exceed = np.zeros(len(identities))
+    for start in range(0, n_perm, 500):
+        draws = min(500, n_perm - start)
+        keys = instance[None, :] + rng.random((draws, len(instance)))  # sorts within instance blocks only
+        null = ratios(selected[np.argsort(keys, axis=1)])
+        exceed += (null <= observed[None, :] + 1e-12).sum(axis=0)
+    return pd.Series((1 + exceed) / (1 + n_perm), index=identities)
 
 
 # --- regression models --------------------------------------------------------------------------
@@ -499,11 +559,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n-boot", type=int, default=2000, help="paired-gap bootstrap resamples (default: 2000)")
     parser.add_argument("--n-model-boot", type=int, default=200,
                         help="mixed-model bootstrap refits, about 1 s each (default: 200; 0 = Wald CIs only)")
-    parser.add_argument("--n-perm", type=int, default=5000, help="rank permutations (default: 5000)")
+    parser.add_argument("--n-perm", type=int, default=5000, help="rank and impact-ratio permutations (default: 5000)")
+    parser.add_argument("--cutoff", type=float, default=SELECTION_CUTOFF,
+                        help=f"Evaluator score selected under the robustness impact-ratio rule (default: {SELECTION_CUTOFF:g})")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
     analysis = analyse(load_results(args.results), reference=args.reference, n_boot=args.n_boot,
-                       n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed)
+                       n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed, cutoff=args.cutoff)
     paths = analysis.write(args.out)
     print(_summary(analysis))
     print(f"\n{len(paths)} tables -> {args.out}")
@@ -522,8 +584,9 @@ def _summary(a: Analysis) -> str:
             verdict = "equivalent" if e["equivalent"] else "not shown equivalent"
             lines.append(f"equivalence {e['agent']} {e['condition']}: max |90% CI| {e['max_abs_ci90']:.2f} -> {verdict}")
     if not a.impact_ratios.empty:
-        below = a.impact_ratios[a.impact_ratios["below_threshold"]]
-        lines.append(f"impact ratios below {IMPACT_THRESHOLD}: {len(below)} of {len(a.impact_ratios)}")
+        for (agent, rule), t in a.impact_ratios.groupby(["agent", "rule"], sort=False):
+            lines.append(f"impact ratios {agent} {rule} ({t['rule_role'].iloc[0]}): {int(t['below_threshold'].sum())} of "
+                         f"{len(t)} below {IMPACT_THRESHOLD}, {int(t['flagged'].sum())} survive Holm")
     for name, table in (("rank by identity", a.rank_identity), ("rank by position", a.rank_position)):
         if not table.empty:
             lines.append(f"{name}: {int((table['p_holm'] < ALPHA).sum())} of {len(table)} survive Holm")
