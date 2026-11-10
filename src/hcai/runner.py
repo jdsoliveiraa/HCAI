@@ -145,21 +145,66 @@ def _write_table(records: list[dict[str, Any]], path: Path) -> None:
         writer.writerows(records)
 
 
-def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[str, float]:
-    """Scale the pilot's cost up to the full design: Screener and Evaluator by CV variants, Ranker by ranked CVs.
+def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[str, Any]:
+    """Scale the pilot's cost up to the full design, per agent and condition.
+
+    Per condition, the Screener, Evaluator, Blinder and judge scale by CV variants and the Ranker by ranked
+    CVs. A full-design condition the pilot left out borrows the pilot's mean per-CV cost of that agent
+    under the conditions where it does the same work: the Blinder under a blinding condition (C1, C3), the
+    judge and the rubric Evaluator under a rubric one (C2, C3), the plain Evaluator under C0 or C1, the
+    Screener and Ranker under any. An agent with no such condition in the pilot is listed in `unestimated`
+    ("blinder C1") and left out of `estimated_full_cost`, which is then a lower bound.
 
     Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV. The
-    stability sample is added as its expected share (`repeat_fraction x repeats`) of the scaled cost, not
-    scaled from the pilot's own few, randomly drawn repeats.
+    stability sample is added as its expected share (`repeat_fraction x repeats`) of the scaled cost of the
+    agents it repeats (Screener, Evaluator, Ranker), not scaled from the pilot's own few, randomly drawn repeats.
     """
     cv_scale = full.size / pilot.size if pilot.size else 0.0
     ranker_scale = full.ranked_slots / pilot.ranked_slots if pilot.ranked_slots else 0.0
-    crew = sum(r.cost for r in rows if r.agent != "ranker")
-    ranker = sum(r.cost for r in rows if r.agent == "ranker")
-    scaled = crew * cv_scale + ranker * ranker_scale
+
+    def units(design: Design, agent: str) -> float:  # per condition
+        total = design.ranked_slots if agent == "ranker" else design.size
+        return total / len(design.conditions)
+
+    cost: dict[tuple[str, str], float] = {}
+    for r in rows:
+        cost[(r.agent, r.condition)] = cost.get((r.agent, r.condition), 0.0) + r.cost
+    by_agent: dict[str, float] = {}
+    unestimated: list[str] = []
+    for agent in _ESTIMATED_AGENTS:
+        for condition in full.conditions:
+            if not _runs_agent(agent, condition):
+                continue
+            like = [condition] if condition in pilot.conditions else [
+                c for c in pilot.conditions if _runs_agent(agent, c) and _same_work(agent, c, condition)]
+            pilot_units = units(pilot, agent)
+            if not like or not pilot_units:
+                unestimated.append(f"{agent} {condition}")
+                continue
+            per_unit = sum(cost.get((agent, c), 0.0) for c in like) / len(like) / pilot_units
+            by_agent[agent] = by_agent.get(agent, 0.0) + per_unit * units(full, agent)
     repeat_share = full.run.repeat_fraction * full.run.repeats
+    estimate = sum(c * (1 + repeat_share if a in _REPEATED_AGENTS else 1) for a, c in by_agent.items())
     return dict(cv_scale=round(cv_scale, 4), ranker_scale=round(ranker_scale, 4),
-                estimated_full_cost=round(scaled * (1 + repeat_share), 4))
+                estimated_full_cost=round(estimate, 4), by_agent={a: round(c, 4) for a, c in by_agent.items()},
+                unestimated=sorted(unestimated))
+
+
+_ESTIMATED_AGENTS = ("screener", "evaluator", "ranker", "blinder", "judge")
+_REPEATED_AGENTS = frozenset({"screener", "evaluator", "ranker"})  # what the stability sample re-runs
+
+
+def _runs_agent(agent: str, condition: str) -> bool:
+    if agent == "blinder":
+        return condition in BLINDING_CONDITIONS
+    if agent == "judge":
+        return uses_rubric(condition)
+    return True
+
+
+def _same_work(agent: str, a: str, b: str) -> bool:
+    """Whether `agent` does the same work, at about the same cost per CV, under conditions `a` and `b`."""
+    return agent != "evaluator" or uses_rubric(a) == uses_rubric(b)
 
 
 def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredClient) -> dict[str, Any]:

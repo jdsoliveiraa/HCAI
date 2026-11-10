@@ -44,6 +44,9 @@ def run_command(
         p = totals["pilot"]
         summary += (f"\npilot: the full design has {p['cv_scale']:g}x these CVs and {p['ranker_scale']:g}x the "
                     f"Ranker load; estimated full-run cost ${p['estimated_full_cost']:.2f} (before caching)")
+        if p["unestimated"]:
+            summary += (f"; a lower bound: the pilot ran no condition like {', '.join(p['unestimated'])}, "
+                        "so their cost is not included")
     for condition, by_model in totals.get("oversight", {}).items():
         for model, c in by_model.items():
             summary += (f"\noversight {condition} {model}: {c['escalated']} of {c['decisions']} Evaluator decisions "
