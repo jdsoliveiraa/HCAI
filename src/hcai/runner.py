@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 from dataclasses import asdict, dataclass, fields
 from itertools import zip_longest
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 from hcai.config import Design, Identity
 from hcai.llm import CachedClient, LLMClient
-from hcai.pipeline import AgentOutput, rank, screen_and_evaluate
+from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class ResultRow:
     rank: int | None = None  # Ranker rows: 1 = best
     top3: bool | None = None  # Ranker rows: on the shortlist
     order_seed: int | None = None  # Ranker rows: seed of the pool's input-order shuffle
+    attempts: int = 0  # LLM calls behind this row, retries included (on the row that carries the tokens)
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
 
 
@@ -101,6 +103,52 @@ def build_pools(design: Design, role: str, language: str, variants: list[Variant
     return pools
 
 
+@dataclass(frozen=True)
+class Run:
+    rows: list[ResultRow]
+    totals: dict[str, Any]
+
+
+def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path) -> Run:
+    """Run the design and write `results.csv` and `run_summary.json` (token and cost totals) to `out_dir`."""
+    out_dir = Path(out_dir)
+    rows = run_experiment(design, client, cache_dir)
+    totals = run_totals(rows)
+    if design.pilot_scale is not None:
+        totals["pilot"] = dict(full_design_scale=round(design.pilot_scale, 4),
+                               estimated_full_cost=round(totals["cost_total"] * design.pilot_scale, 4))
+    write_results(rows, out_dir / "results.csv")
+    (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
+    return Run(rows=rows, totals=totals)
+
+
+def run_totals(rows: list[ResultRow]) -> dict[str, Any]:
+    """Token, call and cost totals of a run, overall and per model and agent.
+
+    `cost_total` is what the results cost to produce (cache hits count their original cost), `cost_spent`
+    what this run paid (cache hits are free). `calls` are LLM calls made this run, retries included.
+    """
+
+    def tally(subset: list[ResultRow]) -> dict[str, Any]:
+        return dict(
+            calls=sum(r.attempts for r in subset if not r.cached),
+            cache_hits=sum(r.attempts for r in subset if r.cached),
+            prompt_tokens=sum(r.prompt_tokens for r in subset),
+            completion_tokens=sum(r.completion_tokens for r in subset),
+            cost_total=round(sum(r.cost for r in subset), 6),
+            cost_spent=round(sum(r.cost for r in subset if not r.cached), 6),
+        )
+
+    status: dict[str, int] = {}
+    for r in rows:
+        status[r.status] = status.get(r.status, 0) + 1
+    return dict(
+        rows=len(rows), status=status, **tally(rows),
+        by_model={m: tally([r for r in rows if r.model == m]) for m in dict.fromkeys(r.model for r in rows)},
+        by_agent={a: tally([r for r in rows if r.agent == a]) for a in dict.fromkeys(r.agent for r in rows)},
+    )
+
+
 def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> list[ResultRow]:
     cached = CachedClient(client, cache_dir)
     rows: list[ResultRow] = []
@@ -136,6 +184,10 @@ class _Context:
     condition: str
     model: str
 
+    @property
+    def retry(self) -> Retry:
+        return Retry(retries=self.design.run.retries, backoff=self.design.run.retry_backoff)
+
     def key(self, v: Variant, agent: str) -> dict[str, Any]:
         return dict(base_cv=v.base_cv, identity=v.identity.id, gender=v.identity.gender, origin=v.identity.origin,
                     name=v.name, language=self.language, condition=self.condition, model=self.model, agent=agent)
@@ -143,16 +195,16 @@ class _Context:
 
 def _usage(out: AgentOutput) -> dict[str, Any]:
     return dict(prompt_tokens=out.usage.prompt_tokens, completion_tokens=out.usage.completion_tokens,
-                cost=out.usage.cost, cached=out.cached)
+                cost=out.usage.cost, cached=out.cached, attempts=out.attempts)
 
 
-_NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False)
+_NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False, attempts=0)
 
 
 def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRow]:
     screening, evaluation = screen_and_evaluate(
         ctx.client, model=ctx.model, job_ad=ctx.job_ad, cv=v.text,
-        temperature=ctx.design.temperature, seed=ctx.design.seed,
+        temperature=ctx.design.temperature, seed=ctx.design.seed, retry=ctx.retry,
     )
     s = screening.parsed
     screener_row = ResultRow(
@@ -179,7 +231,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | N
     order = list(eligible)
     Random(seed).shuffle(order)
     out = rank(ctx.client, model=ctx.model, job_ad=ctx.job_ad, cvs=[v.text for v in order],
-               temperature=ctx.design.temperature, seed=ctx.design.seed) if order else None
+               temperature=ctx.design.temperature, seed=ctx.design.seed, retry=ctx.retry) if order else None
 
     rows: list[ResultRow] = []
     ranks = {label: r for r, label in enumerate(out.parsed["ranking"], start=1)} if out and out.parsed else {}
@@ -204,7 +256,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[tuple[str, str], bool | N
     return rows
 
 
-_INT_FIELDS = {"prompt_tokens", "completion_tokens"}
+_INT_FIELDS = {"prompt_tokens", "completion_tokens", "attempts"}
 _OPTIONAL_INT_FIELDS = {"score", "input_position", "rank", "order_seed"}
 _OPTIONAL_BOOL_FIELDS = {"screen_pass", "top3"}
 

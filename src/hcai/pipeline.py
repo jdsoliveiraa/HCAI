@@ -20,6 +20,8 @@ for _key, _value in {
     os.environ.setdefault(_key, _value)
 
 import json  # noqa: E402
+import time  # noqa: E402
+from collections.abc import Callable  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from typing import Any  # noqa: E402
 
@@ -58,40 +60,91 @@ def ranker_schema(n_candidates: int) -> dict[str, Any]:
 @dataclass(frozen=True)
 class AgentOutput:
     parsed: dict[str, Any] | None  # validated output; None when missing
-    usage: Usage
+    usage: Usage  # summed over every attempt
     cached: bool
     error: str = ""
+    attempts: int = 0  # LLM calls made for this agent, retries included
+
+
+Validator = Callable[[Any], str]  # parsed output -> error message, or "" when valid
+
+
+@dataclass(frozen=True)
+class Retry:
+    """Retry policy for an agent's LLM call.
+
+    A malformed answer (unparseable, or failing the agent's validation) is asked again with a note naming
+    the problem appended to the prompt; the note gives the retry its own cache key, so a rerun replays the
+    same attempts. A call that raises is repeated as is, after `backoff` seconds (doubled each time).
+    """
+
+    retries: int = 2
+    backoff: float = 0.0
+    sleep: Callable[[float], None] = time.sleep
 
 
 class ClientLLM(BaseLLM):
-    """CrewAI LLM adapter: sends CrewAI's messages through an `LLMClient` with a fixed response schema."""
+    """CrewAI LLM adapter: sends CrewAI's messages through an `LLMClient` with a fixed response schema.
+
+    Each `call` validates the answer and retries it under the `Retry` policy, so the crew only ever sees
+    the last attempt's text.
+    """
 
     _client: Any = PrivateAttr()
     _schema: dict[str, Any] = PrivateAttr()
     _temperature: float = PrivateAttr()
+    _validate: Validator = PrivateAttr()
+    _retry: Retry = PrivateAttr()
     _responses: list[LLMResponse] = PrivateAttr(default_factory=list)
+    _attempts: int = PrivateAttr(default=0)
+    _last_error: str = PrivateAttr(default="")
 
-    def __init__(self, client: LLMClient, *, model: str, temperature: float, seed: int | None, schema: dict[str, Any]):
+    def __init__(self, client: LLMClient, *, model: str, temperature: float, seed: int | None,
+                 schema: dict[str, Any], validate: Validator, retry: Retry):
         super().__init__(model=model, temperature=temperature, seed=seed)
         self._client = client
         self._schema = schema
         self._temperature = temperature
+        self._validate = validate
+        self._retry = retry
         self._responses = []
+        self._attempts = 0
+        self._last_error = ""
 
     def call(self, messages: Any, tools: Any = None, callbacks: Any = None, available_functions: Any = None,
              from_task: Any = None, from_agent: Any = None, response_model: Any = None, **kwargs: Any) -> str:
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
-        request = LLMRequest(
-            model=self.model,
-            messages=[{"role": str(m["role"]), "content": str(m["content"])} for m in messages],
-            temperature=self._temperature,
-            seed=self.seed,
-            response_schema=self._schema,
-        )
-        response = self._client.complete(request)
-        self._responses.append(response)
-        return response.text
+        base = [{"role": str(m["role"]), "content": str(m["content"])} for m in messages]
+        note = ""
+        failures = 0
+        for attempt in range(1, self._retry.retries + 2):
+            request = self._request(base, note)
+            self._attempts += 1
+            try:
+                response = self._client.complete(request)
+            except Exception as e:  # noqa: BLE001 - provider/network failure: retried, then the crew fails
+                self._last_error = f"call failed: {type(e).__name__}: {e}"
+                if attempt > self._retry.retries:
+                    raise
+                if self._retry.backoff:
+                    self._retry.sleep(self._retry.backoff * 2 ** failures)
+                failures += 1
+                continue
+            self._responses.append(response)
+            self._last_error = self._validate(response.parsed)
+            if not self._last_error:
+                break
+            note = (f"\n\n(Attempt {attempt + 1}. The previous answer was rejected: {self._last_error}. "
+                    "Respond only with JSON matching the required schema.)")
+        return self._responses[-1].text if self._responses else ""
+
+    def _request(self, base: list[dict[str, str]], note: str) -> LLMRequest:
+        messages = [dict(m) for m in base]
+        if note:
+            messages[-1]["content"] += note
+        return LLMRequest(model=self.model, messages=messages, temperature=self._temperature, seed=self.seed,
+                          response_schema=self._schema)
 
     def supports_function_calling(self) -> bool:
         return False
@@ -104,10 +157,10 @@ class ClientLLM(BaseLLM):
     @property
     def called(self) -> bool:
         """Whether the crew has called this agent's LLM."""
-        return bool(self._responses)
+        return self._attempts > 0
 
-    def output(self, validate: Any, error: str = "") -> AgentOutput:
-        """This agent's result: `validate(parsed)` returns an error message, or "" when the output is valid."""
+    def output(self, error: str = "") -> AgentOutput:
+        """This agent's result: the last answer if it is valid, else `parsed=None` and the error."""
         usage = Usage(
             prompt_tokens=sum(r.usage.prompt_tokens for r in self._responses),
             completion_tokens=sum(r.usage.completion_tokens for r in self._responses),
@@ -116,12 +169,12 @@ class ClientLLM(BaseLLM):
         cached = bool(self._responses) and all(r.cached for r in self._responses)
         last = self._responses[-1] if self._responses else None
         if not error:
-            error = "no response" if last is None else validate(last.parsed)
+            error = "no response" if not self._attempts else self._last_error
         if error:
             snippet = f": {last.text[:200]!r}" if last is not None else ""
-            return AgentOutput(parsed=None, usage=usage, cached=cached, error=error + snippet)
+            return AgentOutput(parsed=None, usage=usage, cached=cached, error=error + snippet, attempts=self._attempts)
         assert last is not None
-        return AgentOutput(parsed=last.parsed, usage=usage, cached=cached)
+        return AgentOutput(parsed=last.parsed, usage=usage, cached=cached, attempts=self._attempts)
 
 
 def _agent(role: str, goal: str, backstory: str, llm: ClientLLM) -> Agent:
@@ -153,10 +206,12 @@ def _passed(output: TaskOutput) -> bool:
 
 
 def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, temperature: float,
-                        seed: int | None) -> tuple[AgentOutput, AgentOutput | None]:
+                        seed: int | None, retry: Retry = Retry()) -> tuple[AgentOutput, AgentOutput | None]:
     """Run the Screener, then the Evaluator only on a CV the Screener passed (`None` otherwise)."""
-    screener_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=SCREENER_SCHEMA)
-    evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=EVALUATOR_SCHEMA)
+    screener_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=SCREENER_SCHEMA,
+                             validate=_check_screening, retry=retry)
+    evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=EVALUATOR_SCHEMA,
+                              validate=_check_evaluation, retry=retry)
     screener = _agent(
         "Screener", "Decide whether each candidate meets every mandatory requirement of the job ad.",
         "You screen CVs for a recruitment team. You check only the mandatory requirements.", screener_llm,
@@ -189,19 +244,27 @@ def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, 
         crew.kickoff()
     except Exception as e:  # noqa: BLE001 - any crew failure is recorded as missing data, not a crash
         failed = f"crew failed: {type(e).__name__}: {e}"
-        screening = screener_llm.output(_check_screening, error="" if screener_llm.called else failed)
-        return screening, (evaluator_llm.output(_check_evaluation, error=failed) if evaluator_llm.called else None)
-    screening = screener_llm.output(_check_screening)
+        screening = screener_llm.output(error="" if screener_llm.called else failed)
+        return screening, (evaluator_llm.output(error=failed) if evaluator_llm.called else None)
+    screening = screener_llm.output()
     if not evaluator_llm.called:
         return screening, None
-    return screening, evaluator_llm.output(_check_evaluation)
+    return screening, evaluator_llm.output()
 
 
 def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperature: float,
-         seed: int | None) -> AgentOutput:
+         seed: int | None, retry: Retry = Retry()) -> AgentOutput:
     """Rank the CVs, shown in the given order as Candidate 1..n. `parsed["ranking"]` lists numbers, best first."""
     n = len(cvs)
-    llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=ranker_schema(n))
+    def check_ranking(p: Any) -> str:
+        if not isinstance(p, dict) or not isinstance(p.get("ranking"), list) or not isinstance(p.get("rationale"), str):
+            return "unparseable Ranker output"
+        if sorted(p["ranking"]) != list(range(1, n + 1)):
+            return f"ranking is not a permutation of 1..{n}: {p['ranking']}"
+        return ""
+
+    llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=ranker_schema(n),
+                    validate=check_ranking, retry=retry)
     ranker = _agent(
         "Ranker", "Order a pool of screened-in candidates from best to worst fit and shortlist the top 3.",
         "You build shortlists for a recruitment team.", llm,
@@ -217,15 +280,8 @@ def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperat
         agent=ranker,
     )
 
-    def check_ranking(p: Any) -> str:
-        if not isinstance(p, dict) or not isinstance(p.get("ranking"), list) or not isinstance(p.get("rationale"), str):
-            return "unparseable Ranker output"
-        if sorted(p["ranking"]) != list(range(1, n + 1)):
-            return f"ranking is not a permutation of 1..{n}: {p['ranking']}"
-        return ""
-
     try:
         Crew(agents=[ranker], tasks=[task], process=Process.sequential, verbose=False).kickoff()
-    except Exception as e:  # noqa: BLE001
-        return llm.output(check_ranking, error=f"crew failed: {type(e).__name__}: {e}")
-    return llm.output(check_ranking)
+    except Exception as e:  # noqa: BLE001 - recorded as missing data, not a crash
+        return llm.output(error=f"crew failed: {type(e).__name__}: {e}")
+    return llm.output()

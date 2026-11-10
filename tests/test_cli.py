@@ -72,3 +72,15 @@ def test_rerun_summary_reports_no_new_spend(tmp_path):
 
     assert "spent $1.2500 this run" in first  # 5 calls: 2 Screener + 2 Evaluator + 1 Ranker
     assert "spent $0.0000 this run" in second
+
+
+def test_pilot_flag_runs_the_slice_into_its_own_folder(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["run", str(SKELETON), "--pilot", "--fake-llm"])
+
+    assert exit_code == 0
+    assert (tmp_path / "results" / "pilot" / "results.csv").exists()
+    assert (tmp_path / "results" / "pilot" / "run_summary.json").exists()
+    assert not (tmp_path / "results" / "results.csv").exists()
+    assert "estimated full-run cost" in capsys.readouterr().out

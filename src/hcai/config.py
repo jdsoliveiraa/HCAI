@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 
@@ -41,6 +41,38 @@ class Generator:
 
 
 @dataclass(frozen=True)
+class RunSettings:
+    """How the runner calls the LLMs (the `[run]` config section); none of this changes the design."""
+
+    # A malformed or failed agent call is retried this many times, then its row is recorded as missing.
+    retries: int = 2
+    # Seconds to wait before retrying a call that raised (e.g. an HTTP error), doubled on each retry.
+    retry_backoff: float = 0.0
+    # Stability sample: this fraction of the CVs and Ranker pools is re-run `repeats` times.
+    repeat_fraction: float = 0.0
+    repeats: int = 1
+
+
+@dataclass(frozen=True)
+class PilotSlice:
+    """The pilot slice (the `[pilot]` config section): how many of each factor's levels a pilot keeps.
+
+    Each count keeps the first N levels as listed in the design; `None` keeps them all. The default is the
+    first role and one base CV per quality level, under every identity, language, condition and model, so
+    the pilot exercises every model and condition and its cost can be scaled up to the full run.
+    """
+
+    roles: int | None = 1
+    quality_levels: int | None = None
+    base_cvs_per_role: int | None = 1
+    identities: int | None = None
+    languages: int | None = None
+    conditions: int | None = None
+    models: int | None = None
+    mixed_quality: int | None = 1
+
+
+@dataclass(frozen=True)
 class Design:
     roles: list[str]
     quality_levels: list[str]
@@ -54,6 +86,39 @@ class Design:
     seed: int | None = 42
     pools: Pools = field(default_factory=Pools)
     generator: Generator | None = None
+    run: RunSettings = field(default_factory=RunSettings)
+    pilot: PilotSlice = field(default_factory=PilotSlice)
+    # Set on a pilot design only: how many times larger the full design is (in CV x condition x model units).
+    pilot_scale: float | None = None
+
+    @property
+    def size(self) -> int:
+        """CV x identity x language x condition x model units: what the number of LLM calls scales with."""
+        return (len(self.roles) * len(self.quality_levels) * self.base_cvs_per_role * len(self.identities)
+                * len(self.languages) * len(self.conditions) * len(self.models))
+
+
+def pilot_design(design: Design) -> Design:
+    """The design restricted to its `[pilot]` slice; the config itself is left as it is."""
+    p = design.pilot
+
+    def first[T](levels: list[T], n: int | None) -> list[T]:
+        return list(levels if n is None else levels[:n])
+
+    pilot = replace(
+        design,
+        roles=first(design.roles, p.roles),
+        quality_levels=first(design.quality_levels, p.quality_levels),
+        base_cvs_per_role=design.base_cvs_per_role if p.base_cvs_per_role is None
+        else min(design.base_cvs_per_role, p.base_cvs_per_role),
+        identities=first(design.identities, p.identities),
+        languages=first(design.languages, p.languages),
+        conditions=first(design.conditions, p.conditions),
+        models=first(design.models, p.models),
+        pools=design.pools if p.mixed_quality is None
+        else replace(design.pools, mixed_quality=min(design.pools.mixed_quality, p.mixed_quality)),
+    )
+    return replace(pilot, pilot_scale=design.size / pilot.size if pilot.size else None)
 
 
 def load_design(path: str | Path) -> Design:
@@ -74,4 +139,6 @@ def load_design(path: str | Path) -> Design:
         seed=d.get("seed", 42),
         pools=Pools(**raw.get("pools", {})),
         generator=Generator(**raw["generator"]) if "generator" in raw else None,
+        run=RunSettings(**raw.get("run", {})),
+        pilot=PilotSlice(**raw.get("pilot", {})),
     )
