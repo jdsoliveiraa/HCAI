@@ -609,6 +609,9 @@ def _summary(a: Analysis) -> str:
     for _, q in a.ranking_quality[a.ranking_quality["model"] == "all"].iterrows():
         lines.append(f"ranking quality {q['metric']} {q['condition']}: {q['estimate']:.3f} "
                      f"[{q['ci95_low']:.3f}, {q['ci95_high']:.3f}], vs {q['reference']} {q['delta']:+.3f}")
+    if not a.ranking_quality.empty and "pairwise_accuracy" not in set(a.ranking_quality["metric"]):
+        lines.append("ranking quality: no mixed-quality pools in the results, so no pairwise accuracy "
+                     "(set [pools] mixed_quality in the config)")
     for _, o in a.oversight[a.oversight["model"] == "all"].iterrows():
         lines.append(f"oversight {o['condition']}: judge flagged {o['flagged']} of {o['judged']} "
                      f"({o['flag_rate']:.0%}), {o['escalated']} of {o['decisions']} decisions escalated")

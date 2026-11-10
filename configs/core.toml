@@ -36,6 +36,14 @@ borderline = { average = 1, weak = 1 }
 cutoff = "median"
 margin = 5
 
+# Ranker pools. Equal-quality: one pool per base CV holding all 8 identities (the fairness tests).
+# Mixed-quality: per role x language, pools of `mixed_size` distinct base CVs spread over the quality levels,
+# each with one identity: the Ranker's pairwise accuracy (RQ3) is measured on these.
+[pools]
+equal_quality = true
+mixed_quality = 2
+mixed_size = 8
+
 # Runner: retries and the stability sample (none of this changes the design).
 [run]
 # A malformed or failed agent call is retried this many times, then its rows are recorded as missing.

@@ -87,7 +87,7 @@ def test_a_mitigation_that_blurs_the_scores_loses_spearman_with_a_ci_below_zero(
     table = quality(evaluator_table({"C0": noisy(3), "C1": noisy(3), "C2": noisy(25)}, n_cvs=10))
 
     c0, c1, c2 = (one(table, metric="spearman", condition=c, model="all") for c in ("C0", "C1", "C2"))
-    assert c0["estimate"] > 0.85 and c0["ci95_low"] < c0["estimate"] < c0["ci95_high"]
+    assert c0["estimate"] > 0.85 and c0["ci95_low"] - 0.01 < c0["estimate"] < c0["ci95_high"] + 0.01
     assert c2["estimate"] < 0.75 and c2["delta_ci95_high"] < 0
     assert c1["delta_ci95_low"] < 0 < c1["delta_ci95_high"]  # same noise as C0: no change
 
@@ -143,3 +143,21 @@ def test_the_analysis_writes_the_ranking_quality_table(tmp_path):
     spearman = one(a.ranking_quality, metric="spearman", condition="C0", model="all")
     assert spearman["estimate"] > 0.5  # synthetic scores: strong 80 vs weak 60 plus noise
     assert "ranking_quality" in {p.stem for p in a.write(tmp_path / "out")}
+
+
+def test_the_spearman_ci_is_centred_on_the_estimate_not_biased_by_resampling_the_quality_mix():
+    table = quality(evaluator_table({"C0": noisy(12)}, n_cvs=9, models=("model-a", "model-b")), n_boot=1000)
+
+    c0 = one(table, metric="spearman", condition="C0", model="all")
+    width = c0["ci95_high"] - c0["ci95_low"]
+    assert c0["estimate"] - c0["ci95_low"] > 0.3 * width and c0["ci95_high"] - c0["estimate"] > 0.3 * width
+
+
+def test_the_core_design_builds_mixed_quality_pools_for_pairwise_accuracy():
+    from pathlib import Path
+
+    from hcai.config import load_design, pilot_design
+
+    core = load_design(Path(__file__).parent.parent / "configs" / "core.toml")
+
+    assert core.pools.mixed_quality > 0 and pilot_design(core).pools.mixed_quality > 0

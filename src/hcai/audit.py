@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import sys
 from collections.abc import Sequence
@@ -137,7 +138,11 @@ def export_audit(results: pd.DataFrame, design: Design, out_dir: str | Path, n: 
                              "export with the config that produced the results")
         cv = v.text
         if r["condition"] in BLINDING_CONDITIONS:
-            cv = redact(blinded_text[(*cell, r["condition"], r["model"])], variant_cues(design, v))[0]
+            raw = blinded_text.get((*cell, r["condition"], r["model"]))
+            if raw is None:
+                raise ValueError(f"no Blinder row for {' '.join(map(str, cell))} under {r['condition']} {r['model']}; "
+                                 "export from the full results table (results.csv)")
+            cv = redact(raw, variant_cues(design, v))[0]
         flag = bool(r["judge_flag"])
         items.append({"item_id": item_id, "cv": cv, "criteria": _criteria_text(str(r["evidence"])),
                       "label": "", "comment": ""})
@@ -202,12 +207,12 @@ def read_key(path: str | Path) -> pd.DataFrame:
 def read_labels(path: str | Path, item_ids: Sequence[str]) -> pd.Series:
     """A rater's labels by item id, checked against the audit's `item_ids`; raises `AuditLabelError` listing
     every problem (unknown, duplicated or unlabelled ids, labels other than faithful/unfaithful)."""
-    with Path(path).open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        missing_columns = {"item_id", "label"} - set(reader.fieldnames or [])
-        if missing_columns:
-            raise AuditLabelError(f"{path}: no {', '.join(sorted(missing_columns))} column")
-        rows = [(str(r["item_id"] or "").strip(), str(r["label"] or "").strip().lower()) for r in reader]
+    reader = csv.DictReader(io.StringIO(_read_sheet_text(Path(path))), dialect=_sniff(path))
+    missing_columns = {"item_id", "label"} - set(reader.fieldnames or [])
+    if missing_columns:
+        raise AuditLabelError(f"{path}: no {', '.join(sorted(missing_columns))} column")
+    rows = [(str(r["item_id"] or "").strip(), str(r["label"] or "").strip().lower()) for r in reader
+            if any(str(v or "").strip() for v in r.values())]  # a spreadsheet may leave blank rows at the end
     expected = set(item_ids)
     problems = []
     seen: dict[str, str] = {}
@@ -225,6 +230,26 @@ def read_labels(path: str | Path, item_ids: Sequence[str]) -> pd.Series:
     if problems:
         raise AuditLabelError(f"{path}: " + "; ".join(problems))
     return pd.Series(seen, name=Path(path).stem).reindex(list(item_ids))
+
+
+def _read_sheet_text(path: Path) -> str:
+    """A label sheet's text: UTF-8 (with or without a byte-order mark), else Windows-1252, the encoding
+    Excel's plain "CSV (Comma delimited)" saves in."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def _sniff(path: str | Path) -> type[csv.Dialect]:
+    """Comma- or semicolon-separated (Excel in a Portuguese locale saves CSV with semicolons)."""
+    header = _read_sheet_text(Path(path)).split("\n", 1)[0]
+
+    class Sheet(csv.excel):
+        delimiter = ";" if header.count(";") > header.count(",") else ","
+
+    return Sheet
 
 
 # --- agreement -----------------------------------------------------------------------------------
@@ -257,6 +282,8 @@ def agreement(key: pd.DataFrame, raters: dict[str, pd.Series], n_boot: int = 200
 
     `raters` maps a rater's name to their labels by item id (`read_labels`); 95% CIs resample items.
     """
+    if JUDGE in raters:
+        raise ValueError(f"{JUDGE!r} is the judge's name; give the rater another one")
     labels = {JUDGE: key.set_index("item_id")["judge_label"], **raters}
     ids = list(key["item_id"])
     rng = np.random.default_rng(seed)
@@ -307,6 +334,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     key = read_key(args.key)
+    names = [p.stem for p in args.labels]
+    clash = sorted({n for n in names if names.count(n) > 1 or n == JUDGE})
+    if clash:
+        print(f"audit: raters are named by their file's stem; rename {', '.join(clash)} (duplicated, or the "
+              f"reserved name {JUDGE!r})", file=sys.stderr)
+        return 1
     try:
         raters = {p.stem: read_labels(p, list(key["item_id"])) for p in args.labels}
     except AuditLabelError as e:

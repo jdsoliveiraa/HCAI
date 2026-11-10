@@ -313,3 +313,36 @@ def test_the_oversight_table_of_a_run_matches_its_run_summary(audited, tmp_path)
         for model, counts in by_model.items():
             row = one(table, condition=condition, model=model)
             assert {k: int(row[k]) for k in counts} == counts
+
+
+def test_a_sheet_saved_by_excel_in_windows_1252_with_semicolons_and_blank_rows_is_read(tmp_path):
+    path = tmp_path / "rater_pt.csv"
+    text = ("item_id;cv;criteria;label;comment\r\nJ001;Formação: João;x;Faithful;\r\nJ002;c;x;unfaithful;não\r\n"
+            "J003;c;x;faithful;\r\n;;;;\r\n")
+    path.write_bytes(text.encode("cp1252"))
+
+    labels = read_labels(path, IDS)
+
+    assert labels.to_dict() == {"J001": "faithful", "J002": "unfaithful", "J003": "faithful"}
+
+
+def test_raters_with_the_same_file_name_or_the_judges_name_are_refused(tmp_path, capsys):
+    key = tmp_path / "audit_key.csv"
+    pd.DataFrame({"item_id": IDS, "judge_label": ["faithful"] * 3}).to_csv(key, index=False)
+    labels = {i: "faithful" for i in IDS}
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = write_labels(tmp_path / "a" / "labels.csv", labels)
+    b = write_labels(tmp_path / "b" / "labels.csv", labels)
+    judge = write_labels(tmp_path / "judge.csv", labels)
+
+    assert main(["agreement", str(key), str(a), str(b), "--out", str(tmp_path)]) == 1
+    assert main(["agreement", str(key), str(judge), str(a), "--out", str(tmp_path)]) == 1
+    assert "rename" in capsys.readouterr().err
+
+
+def test_exporting_a_c3_item_without_its_blinder_row_is_a_clear_error(audited, tmp_path):
+    design, results, _ = audited
+
+    with pytest.raises(ValueError, match="no Blinder row"):
+        export_audit(results[results["agent"] != "blinder"], design, tmp_path / "audit", n=8)

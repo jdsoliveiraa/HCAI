@@ -52,7 +52,10 @@ def ranking_quality(results: pd.DataFrame, *, quality_order: Sequence[str] = QUA
     reference = "C0" if "C0" in conditions else conditions[0]
     rng = np.random.default_rng(seed)
     tables = [
-        _metric("spearman", "evaluator", _evaluator_obs(df), ["base_cv"], _spearman, reference, n_boot, rng, None),
+        # Base CVs are resampled within their quality level, keeping the design's fixed level proportions
+        # (Spearman against a tied level depends on them: an unstratified resample biases the CI low).
+        _metric("spearman", "evaluator", _evaluator_obs(df), ["base_cv"], _spearman, reference, n_boot, rng, None,
+                strata="x"),
         _metric("pairwise_accuracy", "ranker", _pair_obs(df), ["pool", "language"], _pair_share, reference,
                 n_boot, rng, tolerance),
     ]
@@ -101,7 +104,7 @@ def _pair_share(obs: np.ndarray) -> float:
 
 
 def _metric(metric: str, agent: str, obs: pd.DataFrame, cluster: list[str], stat: Stat, reference: str,
-            n_boot: int, rng: np.random.Generator, tolerance: float | None) -> list[dict]:
+            n_boot: int, rng: np.random.Generator, tolerance: float | None, strata: str | None = None) -> list[dict]:
     if obs.empty:
         return []
     records = []
@@ -109,23 +112,28 @@ def _metric(metric: str, agent: str, obs: pd.DataFrame, cluster: list[str], stat
     for model in models:
         d = obs if model == ALL_MODELS else obs[obs["model"] == model]
         records += _by_condition(d, cluster, stat, reference, n_boot, rng, tolerance,
-                                 dict(metric=metric, agent=agent, model=model))
+                                 dict(metric=metric, agent=agent, model=model), strata)
     return records
 
 
 def _by_condition(d: pd.DataFrame, cluster: list[str], stat: Stat, reference: str, n_boot: int,
-                  rng: np.random.Generator, tolerance: float | None, meta: dict) -> list[dict]:
+                  rng: np.random.Generator, tolerance: float | None, meta: dict, strata: str | None) -> list[dict]:
     codes, _ = pd.factorize(pd.MultiIndex.from_frame(d[cluster].astype(str)))
     conditions = sorted(d["condition"].unique())
     cond = d["condition"].to_numpy()
     values = d[["x", "y", "n"]].to_numpy(dtype=float)
     members = [np.flatnonzero(codes == c) for c in range(codes.max() + 1)]
+    # Clusters grouped by stratum (one stratum unless `strata` names a column constant within each cluster).
+    stratum_of = d[strata].to_numpy() if strata else np.zeros(len(d))
+    groups = [np.array([k for k in range(len(members)) if stratum_of[members[k][0]] == s])
+              for s in pd.unique(stratum_of)]
     estimate = {c: stat(values[cond == c]) for c in conditions}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         draws = {c: np.full(n_boot, np.nan) for c in conditions}
         for b in range(n_boot):
-            idx = np.concatenate([members[k] for k in rng.integers(0, len(members), size=len(members))])
+            drawn = np.concatenate([g[rng.integers(0, len(g), size=len(g))] for g in groups])
+            idx = np.concatenate([members[k] for k in drawn])
             for c in conditions:
                 draws[c][b] = stat(values[idx][cond[idx] == c])
         records = []
