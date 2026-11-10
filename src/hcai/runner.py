@@ -29,7 +29,7 @@ class ResultRow:
     language: str
     condition: str
     model: str
-    agent: str  # "screener", "evaluator" or "ranker"
+    agent: str  # "screener", "evaluator", "ranker", or "blinder" (C1; its rationale is the blinded CV)
     score: int | None
     rationale: str
     prompt_tokens: int
@@ -308,7 +308,7 @@ def _blind_group(ctx: _Context, group: list[Variant]) -> tuple[list[ResultRow], 
     for v in group:
         out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
         rows.append(ResultRow(
-            **ctx.key(v, "blinder"), score=None, rationale=text or "", **_usage(out),
+            **ctx.key(v, "blinder"), score=None, rationale=out.parsed["blinded_cv"] if out.parsed else "", **_usage(out),
             status="ok" if text is not None else "missing", error=out.error,
         ))
         if text is None:

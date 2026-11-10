@@ -107,7 +107,8 @@ def test_cues_the_blinder_leaves_in_are_redacted_before_the_crew_sees_them(gende
     assert "Right to work in Portugal: yes" in text
     assert "SQL, Python, 3 years of experience." in text
     blinder = [r for r in rows if r.agent == "blinder"]
-    assert all(r.status == "ok" and "[redacted]" in r.rationale for r in blinder)
+    # The Blinder rows keep its own answer: here the CV it echoed, name included.
+    assert all(r.status == "ok" and r.name in r.rationale for r in blinder)
 
 
 def test_a_name_from_the_name_bank_written_by_the_blinder_is_redacted(gendered_design, tmp_path):
@@ -245,3 +246,64 @@ def test_fake_llm_run_of_a_c1_config_reports_proxy_leaks(tmp_path, capsys):
     assert exit_code == 0
     assert "Proxy leaks" in out
     assert (tmp_path / "out" / "proxy_leaks.csv").exists()
+
+
+def test_gender_markers_the_blinder_wrote_are_redacted_whatever_their_case(gendered_design, tmp_path):
+    client = FakeLLMClient(crew(blinded="Referee: Mrs Lopes. The award was hers. SHE led HER team.\nSQL, Python."))
+
+    run_experiment(gendered_design, client, cache_dir=tmp_path / "cache")
+
+    [text] = screener_texts(client)
+    for cue in ["Mrs", "hers", "SHE", "HER"]:
+        assert not re.search(rf"(?<!\w){cue}(?!\w)", text), cue
+    assert "SQL, Python." in text
+
+
+def test_a_lowercase_word_that_spells_a_first_name_is_left_alone(gendered_design, tmp_path):
+    client = FakeLLMClient(crew(blinded="Writes clara documentation; reports to Ana.\nSQL, Python."))
+
+    run_experiment(replace(gendered_design, identities=[
+        replace(gendered_design.identities[1], names=["Ana Clara Souza"])]), client, cache_dir=tmp_path / "cache")
+
+    [text] = screener_texts(client)
+    assert "Writes clara documentation; reports to [redacted]." in text
+
+
+PT_SLOTTED_CV = """# $name
+
+Lisboa, Portugal · Nacionalidade: $nationality
+$work_eligibility
+
+## Perfil
+Trabalhou como {{o engenheiro responsável|a engenheira responsável}} pela equipa de dados.
+"""
+
+
+def test_inflected_nationalities_and_words_of_a_phrase_slot_are_redacted(pt_design, corpus_dir, tmp_path):
+    (corpus_dir / "data_analyst" / "high" / "cv1.pt.md").write_text(PT_SLOTTED_CV)
+    blinded = "Engenheira de dados, de origem brasileira; colega de um engenheiro português.\nSQL."
+    client = FakeLLMClient(crew(blinded))
+
+    run_experiment(pt_design, client, cache_dir=tmp_path / "cache")
+
+    [text] = screener_texts(client)
+    for cue in ["Engenheira", "engenheiro", "brasileira", "português"]:
+        assert not re.search(rf"(?<!\w){cue}(?!\w)", text, re.I), cue
+    assert "de dados" in text and "SQL." in text
+
+
+def test_placeholders_the_blinder_wrote_itself_are_not_counted_as_leaks(pt_design, tmp_path):
+    from hcai.blinding import proxy_leaks
+
+    blinded = "# [redacted]\nNacionalidade: [redacted]\nLicenciatura em Estatística, NOVA IMS, 2020"
+    rows = run_experiment(pt_design, FakeLLMClient(crew(blinded)), cache_dir=tmp_path / "cache")
+
+    assert all(leak.redacted == 0 for leak in proxy_leaks(pt_design, rows))
+
+
+def test_the_blinder_row_keeps_the_blinders_own_answer(gendered_design, tmp_path):
+    answer = "Candidate: Andriy Koval\nSQL, Python."
+
+    rows = run_experiment(gendered_design, FakeLLMClient(crew(answer)), cache_dir=tmp_path / "cache")
+
+    assert {r.rationale for r in rows if r.agent == "blinder"} == {answer}

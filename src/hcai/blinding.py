@@ -91,23 +91,37 @@ def fake_blinding(request: LLMRequest) -> dict[str, str]:
 class Cues:
     """What the crew may not see of a CV variant under C1.
 
-    `tokens` are the demographic tokens: every name in the design's identities (full names and their parts),
-    every identity's nationality in the variant's language, and both forms of every gendered pair of the
-    template (and, in EN, every pronoun pair). The set is the same for every identity of a base CV, so
-    redaction treats them all alike. `shared_lines` are the template lines that render identically for every
-    identity (e.g. "Portuguese: native-level proficiency (C2)"): a token on such a line, kept verbatim, says
-    nothing about the identity and is left in.
+    `tokens` are the demographic tokens, the same for every identity of a base CV and language so that
+    redaction treats them all alike:
+    - `names`: every name of the design's identities, in full and by part; matched in their own case or in
+      all caps, so "clara" (an ordinary word) is not a cue but "Clara" and "CLARA" are;
+    - every identity's nationality in the variant's language, with its PT-PT masculine form (Brasileira,
+      Brasileiro; Portuguesa, Português), in any case;
+    - gendered words, in any case: both forms of every gendered pair of the template and each word in which
+      a phrase slot's forms differ ({{o engenheiro|a engenheira}} gives engenheiro, engenheira), plus in EN
+      the pronouns and titles (he ... herself, Mr, Ms, Mrs). All-caps MS, MR and HIS are taken as acronyms.
+    `shared_lines` are the template lines that render identically for every identity (e.g. "Portuguese:
+    native-level proficiency (C2)"): a token on such a line, kept verbatim, says nothing about the identity.
     """
 
-    tokens: tuple[str, ...]
-    gendered: frozenset[str]  # the tokens that are gendered words (all-caps acronyms such as "MS" are exempt)
+    tokens: tuple[str, ...]  # longest first, so a full name is redacted before its parts
+    names: frozenset[str]
     shared_lines: frozenset[str]
+
+
+_ACRONYMS = {"MS", "MR", "HIS"}  # "MS Excel", a hospital "HIS": not pronouns or titles
 
 
 def variant_cues(design: Design, v: Variant) -> Cues:
     template = (design.corpus_dir / f"{v.base_cv}.{v.language}.md").read_text()
-    pairs = gendered_pairs(template) + (PRONOUN_PAIRS if v.language == "en" else [])
-    gendered = {form for pair in pairs for form in pair if form.strip()}
+    gendered: set[str] = set()
+    for masc, fem in gendered_pairs(template) + (PRONOUN_PAIRS if v.language == "en" else []):
+        gendered.update(form for form in (masc, fem) if form.strip())
+        m_words, f_words = masc.split(), fem.split()
+        if len(m_words) > 1 and len(m_words) == len(f_words):
+            gendered.update(w for a, b in zip(m_words, f_words) if a != b for w in (a, b) if len(w) > 2)
+    if v.language == "en":
+        gendered |= SLOT_ONLY_WORDS["en"]
     names: set[str] = set()
     nationalities: set[str] = set()
     for identity in design.identities:
@@ -115,11 +129,21 @@ def variant_cues(design: Design, v: Variant) -> Cues:
             names.add(name)
             names.update(part for part in name.split() if len(part) > 1)
         try:
-            nationalities.add(identity.nationality_in(v.language))
+            nationalities.update(_nationality_forms(identity.nationality_in(v.language), v.language))
         except ValueError:
             pass
     tokens = sorted(names | nationalities | gendered, key=lambda t: (-len(t), t))
-    return Cues(tokens=tuple(tokens), gendered=frozenset(gendered), shared_lines=_shared_lines(template, v.language))
+    return Cues(tokens=tuple(tokens), names=frozenset(names), shared_lines=_shared_lines(template, v.language))
+
+
+def _nationality_forms(nationality: str, language: str) -> set[str]:
+    """The nationality and, in PT-PT (where it is the feminine form), its masculine form."""
+    forms = {nationality}
+    if language == "pt" and nationality.endswith("esa"):
+        forms.add(nationality[:-3] + "ês")  # Portuguesa -> Português
+    elif language == "pt" and nationality.endswith("a"):
+        forms.add(nationality[:-1] + "o")  # Brasileira -> Brasileiro, Cabo-verdiana -> Cabo-verdiano
+    return forms
 
 
 def _shared_lines(template: str, language: str) -> frozenset[str]:
@@ -140,46 +164,49 @@ def _normalise(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
 
-def _pattern(token: str) -> re.Pattern[str]:
-    return re.compile(r"(?<!\w)" + r"\s+".join(re.escape(part) for part in token.split()) + r"(?!\w)", re.IGNORECASE)
+def _pattern(token: str, case_sensitive: bool = False) -> re.Pattern[str]:
+    def body(t: str) -> str:
+        return r"\s+".join(re.escape(part) for part in t.split())
 
-
-def _is_cue(match: re.Match[str], token: str, cues: Cues) -> bool:
-    found = match.group(0)
-    return not (token in cues.gendered and len(found) > 1 and found.isupper())  # "MS Excel" is not a pronoun
+    alternatives = f"{body(token)}|{body(token.upper())}" if case_sensitive else body(token)
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", 0 if case_sensitive else re.IGNORECASE)
 
 
 def _unshared(text: str, cues: Cues) -> list[str]:
     return [line for line in text.splitlines() if _normalise(line) not in cues.shared_lines]
 
 
-def leaked_tokens(text: str, cues: Cues) -> list[str]:
-    """The demographic tokens found in `text`, outside lines shared by every identity."""
-    lines = _unshared(text, cues)
-    return [t for t in cues.tokens if any(_is_cue(m, t, cues) for line in lines for m in _pattern(t).finditer(line))]
+def redact(text: str, cues: Cues) -> tuple[str, int]:
+    """`text` with every demographic token outside the shared lines replaced by `[redacted]`, and how many
+    tokens were replaced (a `[redacted]` the text already had is not counted)."""
+    count = 0
 
+    def replace_cue(m: re.Match[str]) -> str:
+        nonlocal count
+        if m.group(0) in _ACRONYMS:
+            return m.group(0)
+        count += 1
+        return REDACTED
 
-def redact(text: str, cues: Cues) -> str:
-    """`text` with every demographic token outside the shared lines replaced by `[redacted]`."""
     out: list[str] = []
     for line in text.splitlines():
         if _normalise(line) not in cues.shared_lines:
-            for token in cues.tokens:  # longest first, so a full name goes before its parts
-                line = _pattern(token).sub(lambda m: REDACTED if _is_cue(m, token, cues) else m.group(0), line)
+            for token in cues.tokens:
+                line = _pattern(token, case_sensitive=token in cues.names).sub(replace_cue, line)
         out.append(line)
-    return "\n".join(out)
+    return "\n".join(out), count
 
 
 def blind_variant(client: LLMClient, design: Design, v: Variant, *, model: str,
                   retry: Retry = Retry()) -> tuple[AgentOutput, str | None]:
     """Blind one CV variant: the Blinder's output and the text the crew will see (None if blinding failed).
 
-    The crew's text is the Blinder's answer with any demographic token it left in redacted.
+    The crew's text is the Blinder's answer (`parsed["blinded_cv"]`) with any demographic token left in redacted.
     """
     out = blind(client, model=model, cv=v.text, temperature=design.temperature, seed=design.seed, retry=retry)
     if out.parsed is None:
         return out, None
-    return out, redact(out.parsed["blinded_cv"], variant_cues(design, v))
+    return out, redact(out.parsed["blinded_cv"], variant_cues(design, v))[0]
 
 
 # --- proxy-leak report -------------------------------------------------------------------------------------
@@ -196,9 +223,11 @@ class ProxyLeak:
 
     - `redacted`: demographic tokens the Blinder left in, redacted before the crew saw the CV.
     - `own_gender_words` / `other_gender_words`: gendered words (the PT-PT gendered job titles, adjectives
-      and participles of `hcai.variants.SLOT_ONLY_WORDS`, or EN pronouns) of the candidate's / the other
-      gender left in the crew's text, outside lines shared by every identity. A lower bound: the word list
-      is not exhaustive.
+      and participles of `hcai.variants.SLOT_ONLY_WORDS`) of the candidate's / the other gender left in the
+      crew's text, outside lines shared by every identity: words the template did not slot, e.g. agreement
+      the Blinder wrote itself. A lower bound, as the word list is not exhaustive. In EN the list holds only
+      pronouns and titles, which are all redacted, so EN counts are 0 by construction; there `redacted`
+      measures what the Blinder missed.
     - origin-linked fields of the original CV and how many survive verbatim: the universities (institutions
       under the education heading), the other languages, and the location in the header.
     """
@@ -231,12 +260,13 @@ def proxy_leaks(design: Design, rows: list[ResultRow]) -> list[ProxyLeak]:
     out: list[ProxyLeak] = []
     for r in blinded:
         v = originals[(r.base_cv, r.identity, r.language)]
-        text, cues = r.rationale, variant_cues(design, v)
+        cues = variant_cues(design, v)
+        text, redacted = redact(r.rationale, cues)  # the Blinder's answer -> what the crew saw
         own, other = _gendered_words(text, cues, v)
         universities, languages, location = _origin_fields(v)
         out.append(ProxyLeak(
             base_cv=r.base_cv, identity=r.identity, gender=r.gender, origin=r.origin, name=r.name,
-            language=r.language, condition=r.condition, model=r.model, redacted=text.count(REDACTED),
+            language=r.language, condition=r.condition, model=r.model, redacted=redacted,
             own_gender_words=len(own), other_gender_words=len(other), gendered_words="; ".join(own + other),
             universities=len(universities), universities_kept=sum(_kept(u, text) for u in universities),
             languages=len(languages), languages_kept=sum(_kept(lang, text) for lang in languages),
@@ -250,7 +280,7 @@ def _gendered_words(text: str, cues: Cues, v: Variant) -> tuple[list[str], list[
     other: list[str] = []
     for line in _unshared(text, cues):
         for word in re.findall(r"\w+", line):
-            if word.lower() not in SLOT_ONLY_WORDS[v.language] or (len(word) > 1 and word.isupper()):
+            if word.lower() not in SLOT_ONLY_WORDS[v.language] or word in _ACRONYMS:
                 continue
             # Every PT-PT feminine form in the list ends in -a and no masculine one does.
             feminine = word.lower() in _FEMININE_EN if v.language == "en" else word.lower().endswith("a")
