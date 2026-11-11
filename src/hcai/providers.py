@@ -1,0 +1,137 @@
+"""LLM providers: which OpenAI-compatible endpoint serves each model, their keys, and the `.env` file.
+
+Two providers are built in: `opencode-go` (the default: the OpenCode Go subscription) and `openrouter` (the
+pay-per-token fallback). A config can override either one's `base_url` or `key_env`, or add another, under
+`[providers.<name>]`; `[model_providers]` names the provider of each model (unlisted models use the default),
+so switching a model to OpenRouter is one line. Keys are read from the environment, which `load_dotenv`
+fills from a gitignored `.env` file; they are only ever sent in the Authorization header.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+import httpx
+
+from hcai.llm import LLMClient, LLMRequest, LLMResponse, OpenAICompatibleClient, RateLimitGuard
+
+BILLING = ("metered", "subscription")
+
+
+@dataclass(frozen=True)
+class Provider:
+    name: str
+    base_url: str
+    key_env: str  # the environment variable holding the API key
+    # "metered": each call has a price the provider reports; "subscription": a flat fee, no per-call price
+    billing: str = "metered"
+    usage_include: bool = False  # ask for the price in the usage block (OpenRouter's `usage: {include: true}`)
+
+    def __post_init__(self) -> None:
+        if self.billing not in BILLING:
+            raise ValueError(f"provider {self.name}: billing must be one of {BILLING}, not {self.billing!r}")
+        if not self.base_url.startswith(("https://", "http://")):
+            raise ValueError(f"provider {self.name}: base_url must be an http(s) URL, not {self.base_url!r}")
+
+
+DEFAULT_PROVIDER = "opencode-go"
+BUILTIN_PROVIDERS: dict[str, Provider] = {
+    "opencode-go": Provider("opencode-go", "https://opencode.ai/zen/go/v1", "OPENCODE_API_KEY", billing="subscription"),
+    "openrouter": Provider("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", billing="metered",
+                           usage_include=True),
+}
+
+
+class MissingKey(RuntimeError):
+    """An API key the command needs is not set (names the variables, never a value)."""
+
+
+def load_dotenv(path: str | Path = ".env", environ: os._Environ[str] | dict[str, str] | None = None) -> list[str]:
+    """Set the variables of a `.env` file that are not already in the environment; returns their names.
+
+    Lines are `NAME=value` or `export NAME=value`; blank lines and `#` comments are skipped, and a value may
+    be quoted with ' or ". A missing file is not an error; a variable set to an empty string counts as
+    unset. Values are never printed.
+    """
+    env = os.environ if environ is None else environ
+    path = Path(path)
+    if not path.is_file():
+        return []
+    loaded = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, sep, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if not sep or not name.isidentifier():
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        elif " #" in value:  # an inline comment after an unquoted value
+            value = value.split(" #", 1)[0].rstrip()
+        if not env.get(name):  # unset or empty: an empty export would otherwise hide the file's key
+            env[name] = value
+            loaded.append(name)
+    return loaded
+
+
+class ProviderRouter:
+    """Sends each request to the client of its model's provider; clients are made on first use."""
+
+    def __init__(self, provider_of: Callable[[str], Provider], make: Callable[[Provider], LLMClient]):
+        self._provider_of = provider_of
+        self._make = make
+        self._clients: dict[str, LLMClient] = {}
+
+    def client_for(self, model: str) -> LLMClient:
+        provider = self._provider_of(model)
+        if provider.name not in self._clients:
+            self._clients[provider.name] = self._make(provider)
+        return self._clients[provider.name]
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        return self.client_for(request.model).complete(request)
+
+
+def check_keys(providers: Iterable[Provider], environ: Mapping[str, str] | None = None) -> None:
+    """Raise `MissingKey` naming every provider whose key variable is unset or empty."""
+    env = os.environ if environ is None else environ
+    missing = sorted({f"{p.key_env} (provider {p.name})" for p in providers if not env.get(p.key_env)})
+    if missing:
+        raise MissingKey("API key not set: " + ", ".join(missing)
+                         + "; export it or put it in a .env file (see .env.example)")
+
+
+def http_client(provider: Provider, environ: Mapping[str, str] | None = None,
+                http: httpx.Client | None = None) -> OpenAICompatibleClient:
+    """The raw HTTP client of `provider`, with its key from the environment."""
+    env = os.environ if environ is None else environ
+    check_keys([provider], env)
+    return OpenAICompatibleClient(provider.base_url, env[provider.key_env], name=provider.name,
+                                  usage_include=provider.usage_include, http=http)
+
+
+def provider_client(
+    provider_of: Callable[[str], Provider], models: Iterable[str], *, environ: Mapping[str, str] | None = None,
+    http: httpx.Client | None = None, backoff: float = 30.0, max_backoff: float = 900.0,
+    max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
+) -> ProviderRouter:
+    """A client for `models`, each routed to its provider behind a `RateLimitGuard`.
+
+    The keys of every provider `models` need are checked up front, so a missing key fails before any call.
+    """
+    env = os.environ if environ is None else environ
+    check_keys({provider_of(m) for m in models}, env)
+
+    def make(provider: Provider) -> LLMClient:
+        return RateLimitGuard(http_client(provider, env, http), backoff=backoff, max_backoff=max_backoff,
+                              max_wait=max_wait, sleep=sleep, name=provider.name)
+
+    return ProviderRouter(provider_of, make)

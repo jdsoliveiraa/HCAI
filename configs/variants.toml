@@ -14,3 +14,8 @@ seed = 42
 corpus_dir = "../data/corpus"
 # Identities are every gender x origin of the bank. Relative to this file.
 name_bank = "../data/names/name_bank.toml"
+
+# Which provider serves each model: "opencode-go" (default for unlisted models) or "openrouter" (fallback).
+# Switching a model is one line. The placeholder id is an OpenRouter id until the pilot pins the models.
+[model_providers]
+"openai/gpt-4o-mini" = "openrouter"

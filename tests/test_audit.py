@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -301,6 +302,17 @@ def test_the_oversight_table_counts_flags_and_escalations_and_what_the_judge_cos
     pooled = one(table, model="all")
     assert (pooled["decisions"], pooled["flagged"], pooled["escalated"]) == (7, 2, 5)
     assert pooled["flag_rate"] == pytest.approx(2 / 5) and pooled["judge_cost"] == pytest.approx(0.06)
+
+
+def test_the_judge_cost_is_unknown_not_zero_when_the_provider_gives_no_price():
+    common = dict(identity="pt_m", gender="male", origin="portuguese", name="n", language="en", condition="C2",
+                  model="model-a", base_cv="nurse/strong/cv01")
+    rows = [_row(**common, agent="evaluator", score=60, judge_flag=False, escalated=False),
+            _row(**common, agent="judge", judge_flag=False, cost=None, attempts=1, judge_model="judge-model")]
+
+    a = one(oversight_table(results_frame(rows)), model="model-a")
+
+    assert math.isnan(a["judge_cost"]) and math.isnan(a["judge_cost_per_decision"]) and a["judge_calls"] == 1
 
 
 def test_the_oversight_table_of_a_run_matches_its_run_summary(audited, tmp_path):

@@ -61,7 +61,8 @@ def oversight_table(results: pd.DataFrame) -> pd.DataFrame:
     `decisions` are the Evaluator decisions (every CV not screened out); `flag_rate` is `flagged` over the
     decisions the judge gave a verdict on (`judged`); `escalation_rate` is `escalated` over `decisions`.
     `judge_missing`, `near_cutoff` and `evaluator_missing` count the escalation reasons (a decision can have
-    several). `judge_calls` and `judge_cost` are the judge's calls (retries included) and their cost.
+    several). `judge_calls` and `judge_cost` are the judge's calls (retries included) and their cost
+    (NaN when the provider gave no price for some of them).
     """
     evaluator = results[(results["agent"] == "evaluator") & results["escalated"].notna()]
     judge_rows = results[results["agent"] == JUDGE]
@@ -74,7 +75,9 @@ def oversight_table(results: pd.DataFrame) -> pd.DataFrame:
             reasons = ev["escalation_reason"].fillna("")
             decisions, judged = len(ev), int(ev["judge_flag"].notna().sum())
             flagged, escalated = int((ev["judge_flag"] == True).sum()), int((ev["escalated"] == True).sum())  # noqa: E712
-            cost = float(jr["cost"].sum())
+            # unknown (NaN), not 0, when the provider gave no price for a judge call (a subscription)
+            unpriced = bool((jr["cost"].isna() & (jr["attempts"] > 0)).any())
+            cost = float("nan") if unpriced else float(jr["cost"].sum())
             records.append({
                 "condition": condition, "model": model, "decisions": decisions, "judged": judged,
                 "flagged": flagged, "flag_rate": flagged / judged if judged else float("nan"),

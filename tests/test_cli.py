@@ -48,7 +48,7 @@ def test_fake_llm_does_not_poison_the_default_cache_used_by_real_runs(tmp_path, 
     monkeypatch.chdir(tmp_path)
     a, b = (i.names[0] for i in load_design(SKELETON).identities)
     real = FakeLLMClient(scores_by_name({a: 90, b: 90}))
-    monkeypatch.setattr("hcai.cli.OpenRouterClient", lambda: real)
+    monkeypatch.setattr("hcai.cli.make_client", lambda design, models: real)
 
     main(["run", str(SKELETON), "--fake-llm"])
     main(["run", str(SKELETON)])

@@ -8,8 +8,39 @@ Requires [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-export OPENROUTER_API_KEY=sk-or-...   # only needed for real runs
+cp .env.example .env   # then fill in the keys (only needed for real runs; .env is gitignored)
 ```
+
+### Providers: OpenCode Go (default) and OpenRouter (fallback)
+
+Each model is served by a **provider**, an OpenAI-compatible endpoint with its own API key:
+
+| provider | base URL | key variable | billing |
+|---|---|---|---|
+| `opencode-go` (default) | `https://opencode.ai/zen/go/v1` | `OPENCODE_API_KEY` | subscription: no price per call |
+| `openrouter` (fallback) | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | metered: price per call |
+
+Keys come from the environment or from a `.env` file in the working directory. A variable already set in the environment wins over the file. Keys are only sent in the Authorization header and are never logged or written into results or the cache. Only the keys of the providers a command uses are needed, and a missing key fails before any call.
+
+A config's `[model_providers]` table names each model's provider (pipeline models, generator and judge). A model left out uses `opencode-go`. **To switch a model to OpenRouter, add or change its one line:**
+
+```toml
+[model_providers]
+"kimi-k2" = "opencode-go"
+"openai/gpt-4o-mini" = "openrouter"
+```
+
+Model ids are each provider's own (see `hcai models`). So a switch may also need the id changed in `[design] models`, and a new id counts as a new model in the results. A `[providers.<name>]` table overrides a built-in provider's `base_url`, `key_env` or `billing`, or adds a new one. The placeholder ids in `configs/` are OpenRouter ids until the pilot (#11 Part B) pins OpenCode Go ones. See `docs/adr/0005-providers-rate-limits-stop-and-resume.md`.
+
+```sh
+uv run hcai models configs/core.toml                       # list the models of each provider the config uses
+uv run hcai models configs/core.toml --provider opencode-go
+uv run hcai check configs/core.toml --out results/check.json   # probe every configured model
+```
+
+`hcai check` lists each provider's models and flags configured ids it does not offer. It then probes each configured model with 3 × `--repeats` + 2 tiny uncached requests (`--model` limits it to some models). It reports whether the model answers on the OpenAI-style chat endpoint and with a JSON-schema response format (as the agents need), whether identical requests at temperature 0 with the seed give identical answers, whether temperature is honoured (answers vary at temperature 1), and whether the seed is honoured (the same seed at temperature 1 gives the same answer; `?` when the answers never vary). It exits with code 2 if a model fails the endpoint probe.
+
+**Rate and usage limits.** OpenCode Go's limit is a usage budget over a rolling window (about $12 per 5 h). When a provider answers with a rate or usage limit (HTTP 429), the call waits: `Retry-After` if given, else `[run] rate_limit_backoff` seconds (default 30), doubling up to `rate_limit_max_backoff` (900). It then repeats the identical call. These waits are not retries and never make a row `missing`. If a call would wait more than `rate_limit_max_wait` seconds in all (default 21600, 6 h), or the provider has no credits left (HTTP 402), the run **stops cleanly**: it writes `progress.json` to the output directory (the reason and the calls made), writes no results table, and exits with code 3. Every completed call is in the cache, so **rerunning the same command resumes** with no repeated calls.
 
 ## Running the skeleton
 
@@ -24,7 +55,7 @@ The crew is a sequential [CrewAI](https://docs.crewai.com/) pipeline of three ag
 CrewAI calls the LLM through the project's own client (`hcai.pipeline.ClientLLM`), so every call is cached and the fake client works in tests. CrewAI telemetry and tracing are switched off. See `docs/adr/0001-ranker-sees-screened-in-cv-texts-only.md` for what the Ranker sees.
 
 ```sh
-uv run hcai run configs/skeleton.toml                # real run through OpenRouter
+uv run hcai run configs/skeleton.toml                # real run (each model through its provider)
 uv run hcai run configs/skeleton.toml --fake-llm     # smoke test: fake LLM, fixed score, no API key needed
 ```
 
@@ -32,8 +63,8 @@ Options: `--out DIR` (default `results/`, or `results/pilot/` with `--pilot`), `
 
 - **Pilot:** `uv run hcai run configs/core.toml --pilot` runs only the config's `[pilot]` slice (by default the first role and one base CV per quality level, under every identity, language, condition and model) without editing the design (a slice of N identities is spread over origins and genders), and prints an estimate of the full run's cost scaled from the slice, per agent and condition (Screener, Evaluator, Blinder and judge by CV variants, Ranker by CVs ranked; rough, as it assumes the same screen-in rate). A condition the slice leaves out (`[pilot] conditions = N`) borrows the cost of a like one: the Blinder from C1/C3, the judge and rubric Evaluator from C2/C3, the plain Evaluator from C0/C1, the Screener and Ranker from any. An agent with no like condition in the pilot is listed under `unestimated` in `run_summary.json` and the printed estimate is marked as a lower bound. The stability share is added to the Screener, Evaluator and Ranker only, the agents it repeats. Pilot calls share the cache, so the full run reuses its Screener, Evaluator and equal-quality Ranker calls; mixed-quality pools are drawn from fewer base CVs in the pilot, so the full run pays for those again.
 - **Retries and missing data:** each agent call is validated (parseable JSON, score in 0–100, ranking a permutation). A malformed answer is asked again with a note naming the problem appended to the prompt (a new request, so it has its own cache key); a call that raises (HTTP error, timeout) is repeated after `retry_backoff` seconds (default 2), doubling. After `[run] retries` retries the agent's rows get status `missing` and the error; the `attempts` column counts the calls behind each row.
-- **Cost and tokens:** `results/run_summary.json` holds the run's totals: `attempts`, prompt and completion tokens and `cost_total` (what the outputs took to produce, retries and stability sample included; cache hits count their original cost) and `calls`, `cache_hits` and `cost_spent` (what this run sent to OpenRouter and paid, measured below the cache), overall, per model and per agent, plus the stability sample on its own.
-- **Determinism and stability:** every call uses the design's `temperature` (0) and `seed` (sent to OpenRouter, honoured where the provider supports it). With `[run] repeat_fraction > 0`, that share of CV variants and Ranker pools per condition and model (drawn by seed) is re-run `repeats` times with the identical request, cached in `.cache/llm/repeats/r<k>` so reruns stay free. The re-runs go to `repeats.csv` (`repeat` = 1..k) and `stability.json` reports, per model × condition × language × agent, the share of repeats that match the original answer, and for scores and ranks the mean absolute difference and mean SD.
+- **Cost and tokens:** `results/run_summary.json` holds the run's totals: `attempts`, prompt and completion tokens and `cost_total` (what the outputs took to produce, retries and stability sample included; cache hits count their original cost) and `calls`, `cache_hits` and `cost_spent` (what this run sent to the providers and paid, measured below the cache), overall, per model and per agent, plus the stability sample on its own. Each model names its `provider` and `billing`. When a provider reports no price (OpenCode Go), the tokens are still counted, the row's `cost` in `results.csv` is blank (unknown), and the costs sum the known prices only: `unpriced_attempts` and `unpriced_calls` count the calls without a price, and the printed summary says the cost is unknown. A pilot's estimate then gives the full run's tokens (`estimated_full_tokens`), and `estimated_full_cost` is `null`.
+- **Determinism and stability:** every call uses the design's `temperature` (0) and `seed` (sent to the provider, honoured where the model supports it: check with `hcai check`). With `[run] repeat_fraction > 0`, that share of CV variants and Ranker pools per condition and model (drawn by seed) is re-run `repeats` times with the identical request, cached in `.cache/llm/repeats/r<k>` so reruns stay free. The re-runs go to `repeats.csv` (`repeat` = 1..k) and `stability.json` reports, per model × condition × language × agent, the share of repeats that match the original answer, and for scores and ranks the mean absolute difference and mean SD.
 
 - **Results table:** `results/results.csv`, one row per base CV × identity × language × condition × model × agent (`screener`, `evaluator`, `ranker`, plus `blinder` under C1/C3 and `judge` under C2/C3; Ranker rows also per pool), with the outcome (`screen_pass`, `score`, or `rank`/`top3`), rationale, token counts, cost, a `cached` flag, the number of `attempts` and an `ok`/`missing`/`rejected` status. Rejected CVs are not scored or ranked. Ranker rows add `pool`, `pool_kind`, `input_position` (1-based position in the Ranker prompt) and `order_seed`; a Ranker call's tokens and cost sit on its `input_position == 1` row. Under C2/C3, Evaluator rows add `evidence`, `judge_flag`, `judge_verdicts`, `escalated` and `escalation_reason`, and judge rows add `judge_verdicts`, `judge_flag` and `judge_model` (see *Conditions C2 and C3* below). The printed summary shows what this run actually spent (cache hits cost nothing).
 - **Cache:** every LLM call is cached on disk, keyed by the hash of the full request (model, messages, temperature, seed, schema). A rerun with the same config makes no calls, costs nothing and replays the same answers, malformed ones included; raise `[run] retries` to ask those again (see `docs/adr/0002-cache-malformed-answers-retry-with-a-note.md`). Delete `.cache/llm` to force fresh calls.
@@ -58,7 +89,7 @@ uv run hcai run configs/variants.toml --fake-llm         # run the same 16 varia
 `configs/core.toml` is the core design: 3 roles (software engineer, nurse, accountant) × 3 quality levels (strong, average, weak) × `base_cvs_per_role` base CVs per role and quality level. Its `[generator]` section sets the generator model (a third model family; generation refuses a model that is also one of the audited pipeline `models`), its temperature, and how many borderline base CVs to write per role and quality level.
 
 ```sh
-uv run hcai corpus configs/core.toml              # real generation through OpenRouter
+uv run hcai corpus configs/core.toml              # real generation (the generator's provider)
 uv run hcai corpus configs/core.toml --fake-llm   # smoke test: fake generator, writes data/corpus/v1-fake
 ```
 

@@ -5,15 +5,17 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from datetime import UTC, datetime
 from dataclasses import asdict, dataclass, field, fields, replace
 from itertools import zip_longest
 from pathlib import Path
 from random import Random
+from collections.abc import Callable
 from typing import Any
 
 from hcai.blinding import BLINDING_CONDITIONS, blind_variant, proxy_leak_summary, proxy_leaks
 from hcai.config import Design
-from hcai.llm import CachedClient, LLMClient, MeteredClient
+from hcai.llm import CachedClient, LLMClient, MeteredClient, ProviderExhausted
 from hcai.oversight import escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
@@ -37,7 +39,9 @@ class ResultRow:
     rationale: str
     prompt_tokens: int
     completion_tokens: int
-    cost: float  # cost of the original call, also when this run served it from the cache
+    # cost of the original call, also when this run served it from the cache; None (blank in the CSV) when the
+    # provider reported no price (a subscription): the tokens are still counted
+    cost: float | None
     cached: bool
     status: str  # "ok", "missing", or "rejected" (screened out upstream: not scored or ranked)
     error: str
@@ -118,8 +122,14 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     """
     out_dir = Path(out_dir)
     meter = MeteredClient(client)
-    rows, repeats = _run(design, meter, cache_dir)
-    totals = run_totals(rows, repeats, meter)
+    progress = out_dir / "progress.json"
+    try:
+        rows, repeats = _run(design, meter, cache_dir)
+    except ProviderExhausted as e:
+        _record_stop(progress, e, meter, cache_dir)
+        raise
+    progress.unlink(missing_ok=True)
+    totals = run_totals(rows, repeats, meter, design)
     if design.pilot_of is not None:
         totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
     report = stability_report(rows, repeats)
@@ -136,6 +146,20 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
         _write_table([asdict(x) for x in leaks], out_dir / "proxy_leaks.csv")
         (out_dir / "proxy_leaks.json").write_text(json.dumps(leak_summary, indent=2) + "\n")
     return Run(rows=rows, repeats=repeats, totals=totals, stability=report, proxy_leaks=leak_summary)
+
+
+def _record_stop(path: Path, error: ProviderExhausted, meter: MeteredClient, cache_dir: str | Path) -> None:
+    """Write `progress.json` for a run the provider stopped: what it did before stopping and how to resume.
+
+    No results table is written for a stopped run; every call it completed is in the cache, so rerunning the
+    same command replays them for free and carries on from the first call not yet made.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(
+        status="stopped", reason=str(error), stopped_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        calls_this_run=dict(meter.calls), cache_dir=str(cache_dir),
+        resume="rerun the same command: completed calls are replayed from the cache, none is repeated",
+    ), indent=2) + "\n")
 
 
 def _write_table(records: list[dict[str, Any]], path: Path) -> None:
@@ -155,6 +179,10 @@ def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[
     Screener and Ranker under any. An agent with no such condition in the pilot is listed in `unestimated`
     ("blinder C1") and left out of `estimated_full_cost`, which is then a lower bound.
 
+    The prompt and completion tokens are scaled the same way (`estimated_full_tokens`): what a subscription's
+    usage budget is spent on. When the provider gave no price for some pilot calls, `estimated_full_cost` is
+    None (unknown).
+
     Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV. The
     stability sample is added as its expected share (`repeat_fraction x repeats`) of the scaled cost of the
     agents it repeats (Screener, Evaluator, Ranker), not scaled from the pilot's own few, randomly drawn repeats.
@@ -166,28 +194,40 @@ def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[
         total = design.ranked_slots if agent == "ranker" else design.size
         return total / len(design.conditions)
 
-    cost: dict[tuple[str, str], float] = {}
-    for r in rows:
-        cost[(r.agent, r.condition)] = cost.get((r.agent, r.condition), 0.0) + r.cost
-    by_agent: dict[str, float] = {}
-    unestimated: list[str] = []
-    for agent in _ESTIMATED_AGENTS:
-        for condition in full.conditions:
-            if not _runs_agent(agent, condition):
-                continue
-            like = [condition] if condition in pilot.conditions else [
-                c for c in pilot.conditions if _runs_agent(agent, c) and _same_work(agent, c, condition)]
-            pilot_units = units(pilot, agent)
-            if not like or not pilot_units:
-                unestimated.append(f"{agent} {condition}")
-                continue
-            per_unit = sum(cost.get((agent, c), 0.0) for c in like) / len(like) / pilot_units
-            by_agent[agent] = by_agent.get(agent, 0.0) + per_unit * units(full, agent)
+    def scale(value: Callable[[ResultRow], float]) -> tuple[dict[str, float], list[str]]:
+        totals: dict[tuple[str, str], float] = {}
+        for r in rows:
+            totals[(r.agent, r.condition)] = totals.get((r.agent, r.condition), 0.0) + value(r)
+        by_agent: dict[str, float] = {}
+        unestimated: list[str] = []
+        for agent in _ESTIMATED_AGENTS:
+            for condition in full.conditions:
+                if not _runs_agent(agent, condition):
+                    continue
+                like = [condition] if condition in pilot.conditions else [
+                    c for c in pilot.conditions if _runs_agent(agent, c) and _same_work(agent, c, condition)]
+                pilot_units = units(pilot, agent)
+                if not like or not pilot_units:
+                    unestimated.append(f"{agent} {condition}")
+                    continue
+                per_unit = sum(totals.get((agent, c), 0.0) for c in like) / len(like) / pilot_units
+                by_agent[agent] = by_agent.get(agent, 0.0) + per_unit * units(full, agent)
+        return by_agent, unestimated
+
     repeat_share = full.run.repeat_fraction * full.run.repeats
-    estimate = sum(c * (1 + repeat_share if a in _REPEATED_AGENTS else 1) for a, c in by_agent.items())
+
+    def total(by_agent: dict[str, float]) -> float:
+        return sum(c * (1 + repeat_share if a in _REPEATED_AGENTS else 1) for a, c in by_agent.items())
+
+    by_agent, unestimated = scale(lambda r: r.cost or 0.0)
+    tokens = {kind: round(total(scale(lambda r, k=kind: float(getattr(r, f"{k}_tokens")))[0]))
+              for kind in ("prompt", "completion")}
+    unpriced = any(r.cost is None for r in rows)
     return dict(cv_scale=round(cv_scale, 4), ranker_scale=round(ranker_scale, 4),
-                estimated_full_cost=round(estimate, 4), by_agent={a: round(c, 4) for a, c in by_agent.items()},
-                unestimated=sorted(unestimated))
+                # None when the pilot's provider reported no price for some calls (a subscription)
+                estimated_full_cost=None if unpriced else round(total(by_agent), 4),
+                by_agent={} if unpriced else {a: round(c, 4) for a, c in by_agent.items()},
+                estimated_full_tokens=tokens, unestimated=sorted(unestimated))
 
 
 _ESTIMATED_AGENTS = ("screener", "evaluator", "ranker", "blinder", "judge")
@@ -207,13 +247,17 @@ def _same_work(agent: str, a: str, b: str) -> bool:
     return agent != "evaluator" or uses_rubric(a) == uses_rubric(b)
 
 
-def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredClient) -> dict[str, Any]:
+def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredClient,
+               design: Design | None = None) -> dict[str, Any]:
     """Token, call and cost totals of a run, overall and per model and agent, stability sample included.
 
     - `attempts`, `prompt_tokens`, `completion_tokens`, `cost_total`: what the outputs took to produce,
       retries included (cache hits count their original tokens and cost).
     - `calls`, `cost_spent`: what this run sent to the provider and paid (measured below the cache);
       `cache_hits` = attempts - calls.
+    - Costs sum the known prices only: `unpriced_attempts` and `unpriced_calls` count the calls the provider
+      gave no price for (their cost is unknown, e.g. on a subscription; their tokens are counted). With the
+      design, each model also names its `provider` and `billing` ("metered" or "subscription").
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
     - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (every CV not
@@ -227,13 +271,15 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
             attempts=sum(r.attempts for r in subset),
             prompt_tokens=sum(r.prompt_tokens for r in subset),
             completion_tokens=sum(r.completion_tokens for r in subset),
-            cost_total=round(sum(r.cost for r in subset), 6),
+            cost_total=round(sum(r.cost or 0.0 for r in subset), 6),
+            unpriced_attempts=sum(r.attempts for r in subset if r.cost is None),
         )
 
     def spent(models: list[str], subset: list[ResultRow]) -> dict[str, Any]:
         calls = sum(meter.calls.get(m, 0) for m in models)
         return dict(calls=calls, cache_hits=sum(r.attempts for r in subset) - calls,
-                    cost_spent=round(sum(meter.cost.get(m, 0.0) for m in models), 6))
+                    cost_spent=round(sum(meter.cost.get(m, 0.0) for m in models), 6),
+                    unpriced_calls=sum(meter.unpriced.get(m, 0) for m in models))
 
     status: dict[str, int] = {}
     for r in rows:
@@ -244,6 +290,9 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
     for m in models:
         subset = [r for r in every if _billed_model(r) == m]
         by_model[m] = {**tally(subset), **spent([m], subset)}
+        if design is not None:
+            provider = design.provider_for(m)
+            by_model[m].update(provider=provider.name, billing=provider.billing)
     totals = dict(
         rows=len(rows), status=status, **tally(every), **spent(models, every), by_model=by_model,
         by_agent={a: tally([r for r in every if r.agent == a]) for a in dict.fromkeys(r.agent for r in every)},
@@ -541,6 +590,6 @@ def _parse_row(raw: dict[str, str]) -> ResultRow:
         values[k] = raw[k] == "True" if raw.get(k) else None
     for k in _INT_FIELDS:
         values[k] = int(raw.get(k) or 0)  # `attempts` and `repeat` are absent from tables written before #6
-    values["cost"] = float(raw["cost"])
+    values["cost"] = float(raw["cost"]) if raw.get("cost") else None  # blank: the provider gave no price
     values["cached"] = raw["cached"] == "True"
     return ResultRow(**values)

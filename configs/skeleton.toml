@@ -46,9 +46,20 @@ retry_backoff = 2.0
 # cached apart from the results) and compared with the original answers in stability.json.
 repeat_fraction = 0.0  # e.g. 0.05 in a real run
 repeats = 1
+# A rate- or usage-limit answer (HTTP 429) is waited out: Retry-After, else rate_limit_backoff seconds doubling up to
+# rate_limit_max_backoff. A call still limited after rate_limit_max_wait seconds stops the run cleanly
+# (progress.json); rerun the same command to resume from the cache. OpenCode Go's budget is a rolling 5 h window.
+rate_limit_backoff = 30
+rate_limit_max_backoff = 900
+rate_limit_max_wait = 21600
 
 # Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
 [pilot]
 roles = 1
 base_cvs_per_role = 1
 mixed_quality = 1
+
+# Which provider serves each model: "opencode-go" (default for unlisted models) or "openrouter" (fallback).
+# Switching a model is one line. The placeholder id is an OpenRouter id until the pilot pins the models.
+[model_providers]
+"openai/gpt-4o-mini" = "openrouter"
