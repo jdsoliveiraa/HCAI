@@ -206,7 +206,7 @@ def test_every_table_is_written_tidy_per_agent_and_condition(tmp_path, capsys):
 
     tables = {p.stem: pd.read_csv(p) for p in (tmp_path / "out").glob("*.csv")}
     assert set(tables) == {"gaps", "equivalence", "impact_ratios", "model_terms", "identity_contrasts",
-                           "rank_identity", "rank_position"}
+                           "rank_identity", "rank_position", "ranking_quality", "oversight"}
     conditions = {"C0", "C1", "C2"}
     for name in ("gaps", "impact_ratios", "identity_contrasts"):
         t = tables[name]
@@ -224,8 +224,10 @@ def test_every_table_is_written_tidy_per_agent_and_condition(tmp_path, capsys):
         ("evaluator", "median", "primary"), ("evaluator", "cutoff", "robustness")}
     assert set(impact.loc[impact["rule"] == "cutoff", "cutoff"]) == {65.0}
     assert set(impact.loc[impact["rule"] == "cutoff", "outcome"]) == {"score_at_or_above_65"}
+    assert set(tables["ranking_quality"]["condition"]) == conditions
+    assert list(tables["oversight"].columns)[:2] == ["condition", "model"]  # no rubric rows: the header only
     out = capsys.readouterr().out
-    assert "paired gaps" in out
+    assert "paired gaps" in out and "ranking quality spearman C1" in out
     assert "evaluator median (primary)" in out and "evaluator cutoff (robustness)" in out
 
 

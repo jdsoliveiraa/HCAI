@@ -186,7 +186,8 @@ def test_pilot_summary_extrapolates_the_cost_of_the_full_run(wide_design, tmp_pa
     run = execute(pilot_design(wide_design), PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
 
     assert run.totals["cost_total"] == 2.5  # per model: 2 Screener + 2 Evaluator + 1 Ranker
-    assert run.totals["pilot"] == {"cv_scale": 4.0, "ranker_scale": 4.0, "estimated_full_cost": 10.0}
+    assert run.totals["pilot"] == {"cv_scale": 4.0, "ranker_scale": 4.0, "estimated_full_cost": 10.0,
+                                   "by_agent": {"screener": 4.0, "evaluator": 4.0, "ranker": 2.0}, "unestimated": []}
 
 
 def test_pilot_estimate_scales_the_ranker_by_the_cvs_it_ranks(wide_design, tmp_path):
@@ -440,3 +441,69 @@ def test_a_pilot_slice_of_identities_spreads_over_origins_and_genders(n):
 
 def test_a_pilot_keeping_every_identity_keeps_their_order(wide_design):
     assert pilot_design(wide_design).identities == wide_design.identities
+
+
+BULLET_ADS = {"data_analyst": "# Data Analyst\n\n## Mandatory\n- SQL\n- Python\n",
+              "nurse": "# Nurse\n\n## Mandatory\n- Licence\n"}
+
+
+@pytest.fixture
+def three_conditions(wide_design, corpus_dir):
+    """wide_design under C0, C1 and C2 (job ads with bullet criteria, a third-family judge)."""
+    from hcai.config import Oversight
+
+    for role, ad in BULLET_ADS.items():
+        (corpus_dir / role / "job_ad.en.md").write_text(ad)
+    return replace(wide_design, conditions=["C0", "C1", "C2"], oversight=Oversight(judge_model="judge-model"))
+
+
+def test_pilot_estimate_scales_each_agent_by_the_conditions_it_runs_under(three_conditions, tmp_path):
+    from hcai.cli import _fake_response
+
+    run = execute(pilot_design(three_conditions), PricedClient(_fake_response), out_dir=tmp_path / "out",
+                  cache_dir=tmp_path / "c")
+
+    # Pilot per condition: 4 CV variants (2 identities x 2 models) and 2 Ranker calls, at $0.25 a call.
+    # Each agent scales by its own conditions (x4 variants): the Blinder runs under C1 only, the judge under C2 only.
+    p = run.totals["pilot"]
+    assert p["by_agent"] == {"screener": 12.0, "evaluator": 12.0, "ranker": 6.0, "blinder": 4.0, "judge": 4.0}
+    assert p["estimated_full_cost"] == 38.0 and p["unestimated"] == []
+
+
+def test_a_pilot_that_drops_a_condition_borrows_a_like_condition_or_says_what_it_cannot_estimate(three_conditions, tmp_path):
+    from hcai.cli import _fake_response
+    from hcai.config import PilotSlice
+
+    design = replace(three_conditions, pilot=PilotSlice(conditions=2))  # the pilot runs C0 and C1, not C2
+
+    run = execute(pilot_design(design), PricedClient(_fake_response), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    p = run.totals["pilot"]
+    # C2's Screener and Ranker cost like C0's and C1's; the Blinder is scaled by C1 alone, not by 3/2 conditions.
+    assert p["by_agent"] == {"screener": 12.0, "evaluator": 8.0, "ranker": 6.0, "blinder": 4.0}
+    # No rubric condition in the pilot: the rubric Evaluator and the judge under C2 have nothing to scale from.
+    assert p["unestimated"] == ["evaluator C2", "judge C2"]
+    assert p["estimated_full_cost"] == 30.0
+
+
+def test_a_pilot_without_blinding_cannot_estimate_the_blinder(three_conditions, tmp_path):
+    from hcai.cli import _fake_response
+    from hcai.config import PilotSlice
+
+    design = replace(three_conditions, pilot=PilotSlice(conditions=1))
+
+    run = execute(pilot_design(design), PricedClient(_fake_response), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    assert run.totals["pilot"]["unestimated"] == ["blinder C1", "evaluator C2", "judge C2"]
+    assert run.totals["pilot"]["by_agent"] == {"screener": 12.0, "evaluator": 8.0, "ranker": 6.0}
+
+
+def test_the_stability_share_is_added_only_to_the_agents_the_sample_repeats(three_conditions, tmp_path):
+    from hcai.cli import _fake_response
+
+    design = replace(three_conditions, run=RunSettings(repeat_fraction=0.5, repeats=2))
+
+    run = execute(pilot_design(design), PricedClient(_fake_response), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
+
+    # Screener, Evaluator and Ranker are repeated (x (1 + 0.5 x 2)); the Blinder and the judge are not.
+    assert run.totals["pilot"]["estimated_full_cost"] == (12 + 12 + 6) * 2 + 4 + 4

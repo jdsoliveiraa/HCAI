@@ -116,3 +116,20 @@ def test_fake_llm_runs_condition_c2_and_reports_escalations(tmp_path, monkeypatc
     assert "oversight C2" in capsys.readouterr().out
     queue = read_results(tmp_path / "out" / "review_queue.csv")
     assert len(queue) == 2 and all(r.condition == "C2" and r.escalated for r in queue)  # fake scores sit at 50
+
+
+def test_a_pilot_that_drops_a_condition_says_its_estimate_is_a_lower_bound(tmp_path, monkeypatch, capsys):
+    config = tmp_path / "c1.toml"
+    corpus = SKELETON.parent.parent / "data" / "corpus"
+    config.write_text(
+        SKELETON.read_text()
+        .replace('conditions = ["C0"]', 'conditions = ["C0", "C1"]')
+        .replace('corpus_dir = "../data/corpus"', f'corpus_dir = "{corpus}"')
+        .replace("mixed_quality = 1", "mixed_quality = 1\nconditions = 1")
+    )
+
+    exit_code = main(["run", str(config), "--pilot", "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache"),
+                      "--fake-llm"])
+
+    assert exit_code == 0
+    assert "a lower bound: the pilot ran no condition like blinder C1" in capsys.readouterr().out
