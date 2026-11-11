@@ -54,9 +54,32 @@ retry_backoff = 2.0
 # cached apart from the results) and compared with the original answers in stability.json.
 repeat_fraction = 0.05
 repeats = 1
+# A rate- or usage-limit answer (HTTP 429) is waited out: Retry-After, else rate_limit_backoff seconds doubling up to
+# rate_limit_max_backoff. A call still limited after rate_limit_max_wait seconds stops the run cleanly
+# (progress.json); rerun the same command to resume from the cache. OpenCode Go's budget is a rolling 5 h window.
+rate_limit_backoff = 30
+rate_limit_max_backoff = 900
+rate_limit_max_wait = 21600
 
 # Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
 [pilot]
 roles = 1
 base_cvs_per_role = 1
 mixed_quality = 1
+
+# Which provider serves each model (pipeline models, generator, judge): "opencode-go" (the OpenCode Go
+# subscription, the default for any model not listed) or "openrouter" (pay per token, the fallback).
+# Switching a model is this one line; ids are the provider's own, so a switch may also need the id changed.
+# The placeholder ids above are OpenRouter ids until the pilot pins OpenCode Go ones.
+[model_providers]
+"openai/gpt-4o-mini" = "openrouter"
+"meta-llama/llama-3.3-70b-instruct" = "openrouter"
+"google/gemini-2.5-flash" = "openrouter"
+
+# Built-in providers (override base_url, key_env or billing here, or add another with base_url and key_env):
+# [providers.opencode-go]
+# base_url = "https://opencode.ai/zen/go/v1"
+# key_env = "OPENCODE_API_KEY"
+# [providers.openrouter]
+# base_url = "https://openrouter.ai/api/v1"
+# key_env = "OPENROUTER_API_KEY"

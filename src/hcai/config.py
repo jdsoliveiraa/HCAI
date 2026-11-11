@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from hcai.names import GENDERS, NameBank, load_name_bank
+from hcai.providers import BUILTIN_PROVIDERS, DEFAULT_PROVIDER, Provider
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,13 @@ class RunSettings:
     # Stability sample: this fraction of the CVs and Ranker pools is re-run `repeats` times.
     repeat_fraction: float = 0.0
     repeats: int = 1
+    # A rate- or usage-limit answer (HTTP 429) is waited out: the provider's Retry-After, else this many
+    # seconds doubling up to `rate_limit_max_backoff`. A call that would wait more than `rate_limit_max_wait`
+    # seconds in all stops the run cleanly (rerun to resume from the cache). OpenCode Go's budget is over a
+    # rolling 5 h window, so the default waits up to 6 h.
+    rate_limit_backoff: float = 30.0
+    rate_limit_max_backoff: float = 900.0
+    rate_limit_max_wait: float = 6 * 3600.0
 
 
 @dataclass(frozen=True)
@@ -125,6 +133,21 @@ class Design:
     pilot: PilotSlice = field(default_factory=PilotSlice)
     oversight: Oversight = field(default_factory=Oversight)
     pilot_of: Design | None = None  # set on a pilot design only: the full design it is a slice of
+    # LLM providers by name (the built-in `opencode-go` and `openrouter`, plus `[providers.<name>]`), and the
+    # provider of each model (`[model_providers]`); a model not listed there uses `opencode-go`.
+    providers: dict[str, Provider] = field(default_factory=lambda: dict(BUILTIN_PROVIDERS))
+    model_providers: dict[str, str] = field(default_factory=dict)
+
+    def provider_for(self, model: str) -> Provider:
+        """The provider that serves `model`: its `[model_providers]` entry, else `opencode-go`."""
+        return self.providers[self.model_providers.get(model, DEFAULT_PROVIDER)]
+
+    @property
+    def all_models(self) -> list[str]:
+        """Every model the config names: the pipeline models, the generator and the judge."""
+        extra = [self.generator.model] if self.generator else []
+        extra += [self.judge_model] if self.judge_model else []
+        return list(dict.fromkeys(self.models + extra))
 
     @property
     def judge_model(self) -> str | None:
@@ -205,7 +228,7 @@ def load_design(path: str | Path) -> Design:
     d = raw["design"]
     if "name_bank" in d and "identities" in raw:
         raise ValueError(f"{path}: set either [design] name_bank or [[identities]], not both")
-    return Design(
+    design = Design(
         roles=list(d["roles"]),
         quality_levels=list(d["quality_levels"]),
         base_cvs_per_role=int(d["base_cvs_per_role"]),
@@ -224,7 +247,39 @@ def load_design(path: str | Path) -> Design:
         run=RunSettings(**raw.get("run", {})),
         pilot=PilotSlice(**raw.get("pilot", {})),
         oversight=Oversight(**raw.get("oversight", {})),
+        providers=_providers(raw.get("providers", {}), path),
+        model_providers={str(k): str(v) for k, v in raw.get("model_providers", {}).items()},
     )
+    _check_model_providers(design, path)
+    return design
+
+
+def _providers(raw: dict, path: Path) -> dict[str, Provider]:
+    """The built-in providers with the config's `[providers.<name>]` overrides and additions."""
+    providers = dict(BUILTIN_PROVIDERS)
+    for name, settings in raw.items():
+        if not isinstance(settings, dict):
+            raise ValueError(f"{path}: [providers.{name}] must be a table (base_url, key_env, billing)")
+        if name in providers:
+            providers[name] = replace(providers[name], **settings)
+        else:
+            missing = {"base_url", "key_env"} - set(settings)
+            if missing:
+                raise ValueError(f"{path}: new provider [providers.{name}] needs {sorted(missing)}")
+            providers[name] = Provider(name=name, **settings)
+    return providers
+
+
+def _check_model_providers(design: Design, path: Path) -> None:
+    for model, provider in design.model_providers.items():
+        if provider not in design.providers:
+            raise ValueError(f"{path}: [model_providers] {model!r} = {provider!r}: unknown provider "
+                             f"(known: {', '.join(sorted(design.providers))})")
+        if model not in design.all_models:
+            raise ValueError(f"{path}: [model_providers] lists {model!r}, which is not a model of the config "
+                             f"(pipeline models, generator or judge)")
+
+
 
 
 def identities_from_name_bank(bank: NameBank) -> list[Identity]:

@@ -186,8 +186,12 @@ def test_pilot_summary_extrapolates_the_cost_of_the_full_run(wide_design, tmp_pa
     run = execute(pilot_design(wide_design), PricedClient(GOOD), out_dir=tmp_path / "out", cache_dir=tmp_path / "c")
 
     assert run.totals["cost_total"] == 2.5  # per model: 2 Screener + 2 Evaluator + 1 Ranker
-    assert run.totals["pilot"] == {"cv_scale": 4.0, "ranker_scale": 4.0, "estimated_full_cost": 10.0,
-                                   "by_agent": {"screener": 4.0, "evaluator": 4.0, "ranker": 2.0}, "unestimated": []}
+    pilot = dict(run.totals["pilot"])
+    tokens = pilot.pop("estimated_full_tokens")
+    assert pilot == {"cv_scale": 4.0, "ranker_scale": 4.0, "estimated_full_cost": 10.0,
+                     "by_agent": {"screener": 4.0, "evaluator": 4.0, "ranker": 2.0}, "unestimated": []}
+    pilot_tokens = sum(r.prompt_tokens for r in run.rows)
+    assert tokens["prompt"] == 4 * pilot_tokens  # every agent scales by 4 here, no stability sample
 
 
 def test_pilot_estimate_scales_the_ranker_by_the_cvs_it_ranks(wide_design, tmp_path):

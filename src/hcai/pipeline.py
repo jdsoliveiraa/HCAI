@@ -30,7 +30,7 @@ from crewai.tasks.conditional_task import ConditionalTask  # noqa: E402
 from crewai.tasks.task_output import TaskOutput  # noqa: E402
 from pydantic import PrivateAttr  # noqa: E402
 
-from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage  # noqa: E402
+from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage, add_costs  # noqa: E402
 
 SCREENER_SCHEMA = {
     "type": "object",
@@ -202,7 +202,7 @@ class ClientLLM(BaseLLM):
         usage = Usage(
             prompt_tokens=sum(r.usage.prompt_tokens for r in self._responses),
             completion_tokens=sum(r.usage.completion_tokens for r in self._responses),
-            cost=sum(r.usage.cost for r in self._responses),
+            cost=add_costs([r.usage.cost for r in self._responses]),
         )
         cached = bool(self._responses) and all(r.cached for r in self._responses)
         last = self._responses[-1] if self._responses else None
