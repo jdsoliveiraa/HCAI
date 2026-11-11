@@ -215,6 +215,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except ProviderExhausted as e:
+        if args.command in ("check", "models"):  # probes and listings are never cached
+            print(f"stopped: {e}. Try again once the provider's limit has reset.", file=sys.stderr)
+            return 3
         out = getattr(args, "out", None) or Path("results/pilot" if getattr(args, "pilot", False) else "results")
         where = f"; progress in {out / 'progress.json'}" if args.command == "run" else ""
         print(f"stopped: {e}{where}. Every completed call is cached: rerun the same command to resume.",
@@ -226,7 +229,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "models":
         try:
             print(models_command(args.config, provider=args.provider))
-        except (ValueError, FileNotFoundError) as e:
+        except Exception as e:  # noqa: BLE001 - config errors and provider/HTTP errors (already redacted)
             print(f"models: {e}", file=sys.stderr)
             return 1
         return 0

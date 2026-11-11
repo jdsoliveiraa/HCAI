@@ -54,7 +54,8 @@ def load_dotenv(path: str | Path = ".env", environ: os._Environ[str] | dict[str,
     """Set the variables of a `.env` file that are not already in the environment; returns their names.
 
     Lines are `NAME=value` or `export NAME=value`; blank lines and `#` comments are skipped, and a value may
-    be quoted with ' or ". A missing file is not an error. Values are never printed.
+    be quoted with ' or ". A missing file is not an error; a variable set to an empty string counts as
+    unset. Values are never printed.
     """
     env = os.environ if environ is None else environ
     path = Path(path)
@@ -75,7 +76,7 @@ def load_dotenv(path: str | Path = ".env", environ: os._Environ[str] | dict[str,
             value = value[1:-1]
         elif " #" in value:  # an inline comment after an unquoted value
             value = value.split(" #", 1)[0].rstrip()
-        if name not in env:
+        if not env.get(name):  # unset or empty: an empty export would otherwise hide the file's key
             env[name] = value
             loaded.append(name)
     return loaded

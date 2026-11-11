@@ -134,6 +134,7 @@ class OpenAICompatibleClient:
 
     def __init__(self, base_url: str, api_key: str, *, name: str = "", usage_include: bool = False,
                  http: httpx.Client | None = None, timeout: float = 120.0):
+        api_key = api_key.strip()  # a stray space or newline would make httpx echo the key in its error
         if not api_key:
             raise RuntimeError(f"no API key for provider {name or base_url}")
         self.name = name or base_url
@@ -146,13 +147,23 @@ class OpenAICompatibleClient:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.name!r}, {self.base_url!r})"
 
-    def _redact(self, text: str) -> str:
-        return text.replace(self._key, "***")
+    def _redact(self, text: str, limit: int = 500) -> str:
+        """`text` with the key masked, then cut to `limit` characters (in that order, so no part of it survives)."""
+        return text.replace(self._key, "***")[:limit]
+
+    def _send(self, method: str, url: str, **kw: Any) -> httpx.Response:
+        """One HTTP request; a transport failure is re-raised as `ProviderError` with its message redacted."""
+        try:
+            return self._http.request(method, url, headers=self._headers, **kw)
+        except Exception as e:  # noqa: BLE001 - httpx/h11 messages can quote the Authorization header
+            raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}") from None
 
     def _check(self, resp: httpx.Response) -> Any:
         """The JSON body of a successful answer; raises `RateLimited`, `ProviderExhausted` or `ProviderError`."""
-        text = self._redact(resp.text[:500])
+        text = self._redact(resp.text)
         lowered = text.lower()
+        if resp.status_code == 401:
+            raise ProviderExhausted(f"{self.name}: HTTP 401 (the API key was refused): {text}")
         if resp.status_code == 402:
             raise ProviderExhausted(f"{self.name}: HTTP 402 (no credits or usage left): {text}")
         if resp.status_code == 429 or (resp.status_code >= 400 and any(w in lowered for w in _LIMIT_WORDS)):
@@ -165,7 +176,7 @@ class OpenAICompatibleClient:
             raise ProviderError(f"{self.name}: answer is not JSON: {text}") from e
         error = data.get("error") if isinstance(data, dict) else None
         if error:  # some providers report an upstream failure with HTTP 200
-            message = self._redact(json.dumps(error, ensure_ascii=False)[:500])
+            message = self._redact(json.dumps(error, ensure_ascii=False))
             code = error.get("code") if isinstance(error, dict) else None
             if code == 402:
                 raise ProviderExhausted(f"{self.name}: {message}")
@@ -189,11 +200,11 @@ class OpenAICompatibleClient:
                 "type": "json_schema",
                 "json_schema": {"name": "output", "strict": True, "schema": request.response_schema},
             }
-        data = self._check(self._http.post(f"{self.base_url}/chat/completions", json=body, headers=self._headers))
+        data = self._check(self._send("POST", f"{self.base_url}/chat/completions", json=body))
         try:
             text = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
-            raise ProviderError(f"{self.name}: no message in the answer: {self._redact(str(data)[:300])}") from e
+            raise ProviderError(f"{self.name}: no message in the answer: {self._redact(str(data), 300)}") from e
         u = data.get("usage") or {}
         cost = u.get("cost")
         usage = Usage(
@@ -205,7 +216,7 @@ class OpenAICompatibleClient:
 
     def list_models(self) -> list[str]:
         """The model ids the provider offers (`GET <base_url>/models`)."""
-        data = self._check(self._http.get(f"{self.base_url}/models", headers=self._headers))
+        data = self._check(self._send("GET", f"{self.base_url}/models"))
         return sorted(str(m["id"]) for m in data.get("data", []) if isinstance(m, dict) and "id" in m)
 
 
@@ -228,15 +239,17 @@ def _stderr(message: str) -> None:
 class RateLimitGuard:
     """Wraps a provider client: waits out `RateLimited` answers, then repeats the identical call.
 
-    It waits the provider's `Retry-After` if given, else `backoff` seconds doubling up to `max_backoff`.
+    It waits the provider's `Retry-After` if given (at least `min_wait` seconds, so a `Retry-After: 0` cannot
+    spin), else `backoff` seconds doubling up to `max_backoff`.
     When one call would wait more than `max_wait` seconds in all (or the provider asks for longer), it
     raises `ProviderExhausted`: the run stops cleanly and a rerun resumes from the cache.
     """
 
     def __init__(self, inner: LLMClient, *, backoff: float = 30.0, max_backoff: float = 900.0,
                  max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
-                 log: Callable[[str], None] = _stderr, name: str = ""):
+                 log: Callable[[str], None] = _stderr, name: str = "", min_wait: float = 5.0):
         self.inner = inner
+        self.min_wait = min_wait
         self.backoff = backoff
         self.max_backoff = max_backoff
         self.max_wait = max_wait
@@ -251,7 +264,7 @@ class RateLimitGuard:
             try:
                 return self.inner.complete(request)
             except RateLimited as e:
-                delay = e.retry_after if e.retry_after is not None else min(
+                delay = max(self.min_wait, e.retry_after) if e.retry_after is not None else min(
                     self.backoff * 2 ** failures, self.max_backoff)
                 if waited + delay > self.max_wait:
                     raise ProviderExhausted(

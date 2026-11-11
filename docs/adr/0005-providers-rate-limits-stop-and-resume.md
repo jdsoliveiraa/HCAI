@@ -17,4 +17,4 @@ The pilot and full run should cost nothing beyond the researcher's OpenCode Go s
 
 ## Consequences
 
-A run that outlasts the subscription window either waits, unattended, or stops and resumes later with nothing repeated. A crew interrupted midway replays its earlier agents' calls from the cache. Responses served by different providers under the same model id share cache entries. To compare providers, use a separate `--cache`.
+A run that outlasts the subscription window either waits, unattended, or stops and resumes later with nothing repeated. A crew interrupted midway replays its earlier agents' calls from the cache. `hcai corpus` stops the same way, but writes no `progress.json`, as nothing is frozen until the end. Its unparseable generations are deliberately not cached (ADR 0002), so a resumed generation asks those again. `hcai check` probes are never cached. A refused key (HTTP 401) also stops the run, instead of filling the results with missing rows. Responses served by different providers under the same model id share cache entries. To compare providers, use a separate `--cache`.

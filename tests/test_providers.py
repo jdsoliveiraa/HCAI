@@ -87,6 +87,7 @@ def test_a_provider_can_be_overridden_or_added(tmp_path):
     ('\n[model_providers]\n"openai/gpt4o-mini" = "openrouter"\n', "not a model of the config"),
     ('\n[providers.mine]\nbase_url = "https://x.example/v1"\n', "key_env"),
     ('\n[providers.openrouter]\nbilling = "free"\n', "billing"),
+    ('\n[providers.openrouter]\nbase_ulr = "https://x.example/v1"\n', "unknown keys"),
 ])
 def test_config_mistakes_in_providers_are_refused(tmp_path, extra, message):
     with pytest.raises(ValueError, match=message):
@@ -112,7 +113,7 @@ def test_dotenv_sets_missing_variables_only(tmp_path):
         "# keys\nexport OPENCODE_API_KEY='sk-oc'\nOPENROUTER_API_KEY=sk-or # inline comment\n\nnot a line\n"
         'QUOTED="a b"\nALREADY=from-file\n'
     )
-    env = {"ALREADY": "from-env"}
+    env = {"ALREADY": "from-env", "OPENCODE_API_KEY": ""}  # an empty export does not hide the file's key
 
     loaded = load_dotenv(env_file, env)
 
@@ -146,6 +147,7 @@ def test_run_without_keys_exits_with_the_missing_variable(tmp_path, monkeypatch,
 
 
 def test_main_reads_keys_from_a_dotenv_in_the_working_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr("hcai.cli.load_dotenv", load_dotenv)  # the real one (conftest stubs it out)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
     (tmp_path / ".env").write_text(f"OPENCODE_API_KEY={SECRET}\n")
@@ -431,3 +433,57 @@ def test_the_key_never_reaches_results_cache_or_output(tmp_path, capsys):
         assert SECRET.encode() not in p.read_bytes(), p
     captured = capsys.readouterr()
     assert SECRET not in captured.out + captured.err
+
+
+# --- review fixes -------------------------------------------------------------------------------------------
+
+
+def test_a_transport_error_that_quotes_the_header_is_redacted():
+    def handler(request):
+        raise httpx.LocalProtocolError(f"Illegal header value b'Bearer {SECRET}'")
+
+    client = OpenAICompatibleClient("https://p.example/v1", SECRET, http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with pytest.raises(ProviderError) as info:
+        client.complete(REQ)
+    assert SECRET not in str(info.value) and "***" in str(info.value)
+
+
+def test_the_key_is_stripped_of_stray_whitespace():
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers["Authorization"])
+        return chat_answer("ok")
+
+    OpenAICompatibleClient("https://p.example/v1", f" {SECRET}\n",
+                           http=httpx.Client(transport=httpx.MockTransport(handler))).complete(REQ)
+
+    assert seen == [f"Bearer {SECRET}"]
+
+
+def test_an_echoed_key_across_the_cut_off_is_fully_redacted():
+    body = "x" * 480 + f" key {SECRET} tail"
+    client = OpenAICompatibleClient("https://p.example/v1", SECRET, http=httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(500, text=body))))
+
+    with pytest.raises(ProviderError) as info:
+        client.complete(REQ)
+    assert SECRET[:8] not in str(info.value)
+
+
+def test_retry_after_zero_still_waits_so_the_maximum_wait_stops_the_run():
+    handler, _ = limited_then_ok(10_000, headers={"Retry-After": "0"})
+    client, sleeps = guarded(handler, max_wait=20, min_wait=5)
+
+    with pytest.raises(ProviderExhausted):
+        client.complete(REQ)
+    assert sleeps == [5, 5, 5, 5]
+
+
+def test_a_refused_key_stops_the_run():
+    client = OpenAICompatibleClient("https://p.example/v1", "k", http=httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(401, json={"error": "invalid api key"}))))
+
+    with pytest.raises(ProviderExhausted, match="401"):
+        client.complete(REQ)

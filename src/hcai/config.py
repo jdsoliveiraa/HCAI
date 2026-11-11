@@ -260,6 +260,9 @@ def _providers(raw: dict, path: Path) -> dict[str, Provider]:
     for name, settings in raw.items():
         if not isinstance(settings, dict):
             raise ValueError(f"{path}: [providers.{name}] must be a table (base_url, key_env, billing)")
+        unknown = set(settings) - {"base_url", "key_env", "billing", "usage_include"}
+        if unknown:
+            raise ValueError(f"{path}: [providers.{name}] has unknown keys {sorted(unknown)}")
         if name in providers:
             providers[name] = replace(providers[name], **settings)
         else:

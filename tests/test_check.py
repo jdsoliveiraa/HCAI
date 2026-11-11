@@ -8,7 +8,7 @@ import pytest
 
 from hcai.check import format_probes, probe_model
 from hcai.cli import check_command, main
-from hcai.llm import FakeLLMClient, LLMRequest
+from hcai.llm import FakeLLMClient, LLMRequest, ProviderError
 
 SKELETON = Path(__file__).parent.parent / "configs" / "skeleton.toml"
 
@@ -93,3 +93,14 @@ def test_check_cli_writes_json_and_does_not_touch_the_cache(tmp_path, monkeypatc
 def test_repeats_below_two_are_refused():
     with pytest.raises(ValueError):
         probe_model(model(), "m", repeats=1)
+
+
+def test_a_provider_that_refuses_the_response_format_is_a_no():
+    def respond(request):
+        if request.response_schema is not None:
+            raise ProviderError("HTTP 400: response_format is not supported")
+        return "same"
+
+    r = probe_model(FakeLLMClient(respond), "m")
+
+    assert r.json_schema_ok is False and "response_format" in r.error

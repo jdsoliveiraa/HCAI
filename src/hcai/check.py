@@ -74,7 +74,11 @@ def probe_model(client: LLMClient, model: str, *, provider: str = "", listed: bo
             return None
 
     def json_ok() -> bool:
-        parsed = ask(JSON_PROMPT, 0.0, seed, JSON_SCHEMA).parsed
+        try:
+            parsed = ask(JSON_PROMPT, 0.0, seed, JSON_SCHEMA).parsed
+        except Exception as e:  # noqa: BLE001 - a provider refusing response_format (often HTTP 400) is a "no"
+            errors.append(f"json_schema: {type(e).__name__}: {e}")
+            return False
         return isinstance(parsed, dict) and isinstance(parsed.get("word"), str)
 
     def texts(temperature: float, seeds: list[int]) -> list[str]:

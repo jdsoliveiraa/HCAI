@@ -22,6 +22,14 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_keys(monkeypatch):
+    """Keep the developer's keys and .env out of tests: a forgotten mock then fails with MissingKey."""
+    for name in ("OPENCODE_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("hcai.cli.load_dotenv", lambda *a, **k: [])
+
+
+@pytest.fixture(autouse=True)
 def crewai_storage(monkeypatch, tmp_path):
     """CrewAI keeps a local store of its last kickoff under the user data dir; keep tests out of it."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
