@@ -525,7 +525,7 @@ def test_the_session_header_stays_out_of_the_cache_key_and_the_cache(tmp_path):
     def handler(request):
         return chat_answer("ok")
 
-    key_before = REQ.cache_key()
+    key_before = REQ.cache_key()  # the request alone: the cached file's name and content are the real check
     plain = OpenAICompatibleClient("https://p.example/v1", "k", http=httpx.Client(transport=httpx.MockTransport(handler)))
     with_session = OpenAICompatibleClient("https://p.example/v1", "k", headers={"x-opencode-session": SESSION_ID},
                                           http=httpx.Client(transport=httpx.MockTransport(handler)))
@@ -564,3 +564,47 @@ def test_config_headers_are_sent_but_cannot_override_the_key_or_user_agent(tmp_p
 
     with pytest.raises(ValueError, match="Authorization"):
         load_design(config(tmp_path, '\n[providers.opencode-go.headers]\nAuthorization = "Bearer x"\n'))
+
+
+def test_an_echoed_key_is_masked_even_when_a_header_value_is_part_of_it():
+    key = "sk-fake1abc-header-value-xyz"
+    client = OpenAICompatibleClient("https://p.example/v1", key, headers={"x-extra": "1", "x-long": "header-value"},
+                                    http=httpx.Client(transport=httpx.MockTransport(
+                                        lambda r: httpx.Response(400, text=f"bad key {key} 1"))))
+
+    with pytest.raises(ProviderError) as info:
+        client.complete(REQ)
+    assert "fake" not in str(info.value) and "xyz" not in str(info.value) and "***" in str(info.value)
+    assert str(info.value).endswith(" 1")  # a value too short to be a secret is not masked everywhere
+
+
+def test_the_client_never_lets_extra_headers_replace_the_key_or_user_agent():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return chat_answer("ok")
+
+    OpenAICompatibleClient("https://p.example/v1", "k", headers={"authorization": "Bearer x", "user-agent": "y"},
+                           http=httpx.Client(transport=httpx.MockTransport(handler))).complete(REQ)
+
+    assert seen[0].headers.get_list("authorization") == ["Bearer k"]
+    assert seen[0].headers.get_list("user-agent") == [USER_AGENT]
+
+
+@pytest.mark.parametrize("extra", [
+    '\n[providers.opencode-go]\nsession_header = 1\n',
+    '\n[providers.opencode-go]\nsession_header = ""\n',
+    '\n[providers.opencode-go]\nheaders = "x"\n',
+    '\n[providers.opencode-go.headers]\nx-extra = 1\n',
+    '\n[providers.opencode-go.headers]\n"bad header" = "1"\n',
+    '\n[providers.opencode-go.headers]\nX-OpenCode-Session = "a"\n',
+])
+def test_bad_provider_headers_fail_at_load(tmp_path, extra):
+    with pytest.raises(ValueError):
+        load_design(config(tmp_path, extra))
+
+
+def test_header_values_stay_out_of_the_provider_repr():
+    provider = replace(BUILTIN_PROVIDERS["opencode-go"], headers=(("x-api-token", SECRET),))
+    assert SECRET not in repr(provider)

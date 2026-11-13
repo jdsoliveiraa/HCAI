@@ -159,7 +159,8 @@ class OpenAICompatibleClient:
         self._http = http or httpx.Client(timeout=timeout)
         self._key = api_key
         extra = {k: v for k, v in (headers or {}).items() if k.lower() not in ("authorization", "user-agent")}
-        self._masked = [v for v in extra.values() if v]  # masked in error text along with the key
+        # masked in error text after the key, longest first; values too short to be secrets are left alone
+        self._masked = sorted((v for v in extra.values() if len(v) >= 8), key=len, reverse=True)
         self._headers = {"User-Agent": USER_AGENT, **extra, "Authorization": f"Bearer {api_key}"}
 
     def __repr__(self) -> str:
@@ -167,9 +168,10 @@ class OpenAICompatibleClient:
 
     def _redact(self, text: str, limit: int = 500) -> str:
         """`text` with the key masked, then cut to `limit` characters (in that order, so no part of it survives)."""
+        text = text.replace(self._key, "***")  # the key first, so no header value can split it
         for value in self._masked:
             text = text.replace(value, "<header>")
-        return text.replace(self._key, "***")[:limit]
+        return text[:limit]
 
     def _send(self, method: str, url: str, **kw: Any) -> httpx.Response:
         """One HTTP request; a transport failure is re-raised as `ProviderError` with its message redacted."""
