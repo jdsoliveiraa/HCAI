@@ -21,6 +21,17 @@ from typing import Any, Protocol
 import httpx
 
 
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("hcai")
+    except Exception:  # noqa: BLE001 - not installed (e.g. run from a source tree)
+        return "0+unknown"
+
+
+USER_AGENT = f"hcai/{_package_version()}"
+
+
 @dataclass(frozen=True)
 class LLMRequest:
     model: str
@@ -130,10 +141,15 @@ class OpenAICompatibleClient:
     The key is sent only in the Authorization header: it is never part of a request, response or error text
     (an error body that echoes it is redacted). `usage_include` asks for the price in the usage block
     (OpenRouter); a provider that reports none gives `Usage.cost = None`.
+
+    Every call also sends `User-Agent: hcai/<version>` and the `headers` given (e.g. OpenCode Go's
+    `x-opencode-session`). They are transport details: never part of the `LLMRequest`, so never in the cache
+    key, the cache or the results, and their values are masked in error text like the key.
     """
 
     def __init__(self, base_url: str, api_key: str, *, name: str = "", usage_include: bool = False,
-                 http: httpx.Client | None = None, timeout: float = 120.0):
+                 http: httpx.Client | None = None, timeout: float = 120.0,
+                 headers: dict[str, str] | None = None):
         api_key = api_key.strip()  # a stray space or newline would make httpx echo the key in its error
         if not api_key:
             raise RuntimeError(f"no API key for provider {name or base_url}")
@@ -142,13 +158,17 @@ class OpenAICompatibleClient:
         self.usage_include = usage_include
         self._http = http or httpx.Client(timeout=timeout)
         self._key = api_key
-        self._headers = {"Authorization": f"Bearer {api_key}"}
+        extra = {k: v for k, v in (headers or {}).items() if k.lower() not in ("authorization", "user-agent")}
+        self._masked = [v for v in extra.values() if v]  # masked in error text along with the key
+        self._headers = {"User-Agent": USER_AGENT, **extra, "Authorization": f"Bearer {api_key}"}
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.name!r}, {self.base_url!r})"
 
     def _redact(self, text: str, limit: int = 500) -> str:
         """`text` with the key masked, then cut to `limit` characters (in that order, so no part of it survives)."""
+        for value in self._masked:
+            text = text.replace(value, "<header>")
         return text.replace(self._key, "***")[:limit]
 
     def _send(self, method: str, url: str, **kw: Any) -> httpx.Response:

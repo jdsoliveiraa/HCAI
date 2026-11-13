@@ -260,9 +260,14 @@ def _providers(raw: dict, path: Path) -> dict[str, Provider]:
     for name, settings in raw.items():
         if not isinstance(settings, dict):
             raise ValueError(f"{path}: [providers.{name}] must be a table (base_url, key_env, billing)")
-        unknown = set(settings) - {"base_url", "key_env", "billing", "usage_include"}
+        unknown = set(settings) - {"base_url", "key_env", "billing", "usage_include", "headers", "session_header"}
         if unknown:
             raise ValueError(f"{path}: [providers.{name}] has unknown keys {sorted(unknown)}")
+        if "headers" in settings:
+            headers = settings["headers"]
+            if not isinstance(headers, dict) or not all(isinstance(v, str) for v in headers.values()):
+                raise ValueError(f"{path}: [providers.{name}] headers must be a table of strings")
+            settings = {**settings, "headers": tuple((str(k), v) for k, v in headers.items())}
         if name in providers:
             providers[name] = replace(providers[name], **settings)
         else:

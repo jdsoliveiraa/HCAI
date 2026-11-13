@@ -5,12 +5,17 @@ pay-per-token fallback). A config can override either one's `base_url` or `key_e
 `[providers.<name>]`; `[model_providers]` names the provider of each model (unlisted models use the default),
 so switching a model to OpenRouter is one line. Keys are read from the environment, which `load_dotenv`
 fills from a gitignored `.env` file; they are only ever sent in the Authorization header.
+
+A provider may also send extra HTTP headers (`headers`) and a session header (`session_header`) whose value
+is `SESSION_ID`, one random id per process: OpenCode Go refuses calls without `x-opencode-session`. Neither
+is part of a request, so neither reaches the cache key, the cache or the results.
 """
 
 from __future__ import annotations
 
 import os
 import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,17 +35,35 @@ class Provider:
     # "metered": each call has a price the provider reports; "subscription": a flat fee, no per-call price
     billing: str = "metered"
     usage_include: bool = False  # ask for the price in the usage block (OpenRouter's `usage: {include: true}`)
+    headers: tuple[tuple[str, str], ...] = ()  # extra HTTP headers sent with every call (name, value)
+    session_header: str | None = None  # a header that carries `SESSION_ID` (OpenCode Go: x-opencode-session)
 
     def __post_init__(self) -> None:
         if self.billing not in BILLING:
             raise ValueError(f"provider {self.name}: billing must be one of {BILLING}, not {self.billing!r}")
         if not self.base_url.startswith(("https://", "http://")):
             raise ValueError(f"provider {self.name}: base_url must be an http(s) URL, not {self.base_url!r}")
+        names = [n for n, _ in self.headers] + ([self.session_header] if self.session_header else [])
+        if any(n.lower() in ("authorization", "user-agent") for n in names):
+            raise ValueError(f"provider {self.name}: headers cannot set Authorization or User-Agent")
+
+    def http_headers(self) -> dict[str, str]:
+        """The extra headers of every call: `headers`, plus `session_header: SESSION_ID` if it has one."""
+        out = dict(self.headers)
+        if self.session_header:
+            out[self.session_header] = SESSION_ID
+        return out
+
+
+# One stable session id per process (so per run), sent in a provider's `session_header`. Not a secret, but a
+# transport detail: it is never written to the cache, the results or the logs (and masked in error text).
+SESSION_ID = str(uuid.uuid4())
 
 
 DEFAULT_PROVIDER = "opencode-go"
 BUILTIN_PROVIDERS: dict[str, Provider] = {
-    "opencode-go": Provider("opencode-go", "https://opencode.ai/zen/go/v1", "OPENCODE_API_KEY", billing="subscription"),
+    "opencode-go": Provider("opencode-go", "https://opencode.ai/zen/go/v1", "OPENCODE_API_KEY", billing="subscription",
+                            session_header="x-opencode-session"),
     "openrouter": Provider("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", billing="metered",
                            usage_include=True),
 }
@@ -115,7 +138,8 @@ def http_client(provider: Provider, environ: Mapping[str, str] | None = None,
     env = os.environ if environ is None else environ
     check_keys([provider], env)
     return OpenAICompatibleClient(provider.base_url, env[provider.key_env], name=provider.name,
-                                  usage_include=provider.usage_include, http=http)
+                                  usage_include=provider.usage_include, http=http,
+                                  headers=provider.http_headers())
 
 
 def provider_client(
