@@ -542,7 +542,7 @@ def test_a_failing_translation_keeps_the_frozen_english_corpus_and_the_valid_tra
     assert [(f.document, f.language) for f in failed.value.failures] == [(FAILING, "pt")]
     assert "rigoroso" in failed.value.failures[0].reason
     assert FAILING in str(failed.value) and "kept" in str(failed.value)
-    assert len(translation_calls(client, FAILING)) == bilingual_design.generator.max_attempts == 4
+    assert len(translation_calls(client, FAILING)) == Generator(model="m").max_attempts == 4
     corpus = load_corpus(bilingual_design.corpus_dir)  # English is frozen though PT-PT failed
     assert corpus.languages == ["en"] and len(corpus.base_cvs) == 12
     assert not list(bilingual_design.corpus_dir.rglob("*.pt.md"))
@@ -701,14 +701,15 @@ def core_config(tmp_path: Path, **replacements: str) -> Path:
 
 
 def test_max_attempts_is_read_from_the_generator_config(bilingual_design, tmp_path):
-    assert load_design(core_config(tmp_path)).generator.max_attempts == 4
+    core = load_design(core_config(tmp_path)).generator
+    assert core is not None and core.max_attempts == 4
     assert Generator(model="m").max_attempts == 4
-    two = load_design(core_config(tmp_path, **{"max_attempts = 4": "max_attempts = 2"}))
-    assert two.generator.max_attempts == 2
+    two = load_design(core_config(tmp_path, **{"max_attempts = 4": "max_attempts = 2"})).generator
+    assert two is not None and two.max_attempts == 2
     with pytest.raises(ValueError, match="max_attempts"):
         load_design(core_config(tmp_path, **{"max_attempts = 4": "max_attempts = 0"}))
 
-    design = replace(bilingual_design, generator=replace(bilingual_design.generator, max_attempts=2))
+    design = replace(bilingual_design, generator=Generator(model="generator/model", max_attempts=2))
     client = FakeLLMClient(resumable_responder(pt_cv_response(summary=LEAKY)))
     with pytest.raises(GenerationFailed):
         generate_corpus(design, client, cache_dir=tmp_path / "cache")
