@@ -608,3 +608,24 @@ def test_bad_provider_headers_fail_at_load(tmp_path, extra):
 def test_header_values_stay_out_of_the_provider_repr():
     provider = replace(BUILTIN_PROVIDERS["opencode-go"], headers=(("x-api-token", SECRET),))
     assert SECRET not in repr(provider)
+
+
+def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_refusals(tmp_path, capsys):
+    body = {"error": {"type": "MissingSessionID", "message": "Request is missing x-opencode-session header"}}
+    state = {"n": 0}
+
+    def handler(request):
+        state["n"] += 1
+        return httpx.Response(400, json=body)
+
+    design = load_design(config(tmp_path))  # the model on opencode-go
+    out = tmp_path / "out"
+    run = execute(design, routed_client(handler, design=design), out_dir=out, cache_dir=tmp_path / "cache")
+
+    err = capsys.readouterr().err
+    assert err.count("MissingSessionID") == 1  # one warning per run, however many calls fail
+    assert "opencode-go" in err and "session header is missing or rejected" in err
+    assert state["n"] > 1 and all(r.status == "missing" for r in run.rows)  # retried, then missing: no stop
+    summary = json.loads((out / "run_summary.json").read_text())
+    assert summary["missing_session_errors"] == state["n"] == summary["calls"]
+    assert not list((tmp_path / "cache").glob("*.json"))  # refused calls are never cached

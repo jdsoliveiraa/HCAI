@@ -118,6 +118,12 @@ class ProviderError(Exception):
     """The provider answered with an error that is not a rate or usage limit."""
 
 
+class MissingSession(ProviderError):
+    """The provider refused the call for a missing or rejected session header (OpenCode Go's HTTP 400
+    `MissingSessionID`). Handled like any `ProviderError` (retried, then a missing row); the client warns once
+    per run and `MeteredClient` counts it, so the cause is not lost among the missing rows."""
+
+
 _LIMIT_WORDS = ("rate limit", "rate-limit", "usage limit", "too many requests", "quota")
 
 
@@ -149,7 +155,7 @@ class OpenAICompatibleClient:
 
     def __init__(self, base_url: str, api_key: str, *, name: str = "", usage_include: bool = False,
                  http: httpx.Client | None = None, timeout: float = 120.0,
-                 headers: dict[str, str] | None = None):
+                 headers: dict[str, str] | None = None, log: Callable[[str], None] | None = None):
         api_key = api_key.strip()  # a stray space or newline would make httpx echo the key in its error
         if not api_key:
             raise RuntimeError(f"no API key for provider {name or base_url}")
@@ -158,6 +164,8 @@ class OpenAICompatibleClient:
         self.usage_include = usage_include
         self._http = http or httpx.Client(timeout=timeout)
         self._key = api_key
+        self._log = log or _stderr
+        self._warned_session = False  # the MissingSessionID warning is printed once per client (one per run)
         extra = {k: v for k, v in (headers or {}).items() if k.lower() not in ("authorization", "user-agent")}
         # masked in error text after the key, longest first; values too short to be secrets are left alone
         self._masked = sorted((v for v in extra.values() if len(v) >= 8), key=len, reverse=True)
@@ -190,6 +198,13 @@ class OpenAICompatibleClient:
             raise ProviderExhausted(f"{self.name}: HTTP 402 (no credits or usage left): {text}")
         if resp.status_code == 429 or (resp.status_code >= 400 and any(w in lowered for w in _LIMIT_WORDS)):
             raise RateLimited(f"{self.name}: HTTP {resp.status_code}: {text}", _retry_after(resp.headers))
+        if resp.status_code == 400 and "missingsessionid" in lowered:
+            if not self._warned_session:
+                self._warned_session = True
+                self._log(f"WARNING: {self.name}: the session header is missing or rejected (HTTP 400 "
+                          f"MissingSessionID); these calls fail and their rows are recorded as missing. "
+                          f"This warning is shown once per run.")
+            raise MissingSession(f"{self.name}: HTTP {resp.status_code}: {text}")
         if resp.status_code >= 400:
             raise ProviderError(f"{self.name}: HTTP {resp.status_code}: {text}")
         try:
@@ -311,10 +326,15 @@ class MeteredClient:
         self.calls: dict[str, int] = {}
         self.cost: dict[str, float] = {}  # the known prices only
         self.unpriced: dict[str, int] = {}  # calls the provider gave no price for (cost unknown)
+        self.missing_session: dict[str, int] = {}  # calls refused for a missing session header (MissingSession)
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
-        response = self.inner.complete(request)
+        try:
+            response = self.inner.complete(request)
+        except MissingSession:
+            self.missing_session[request.model] = self.missing_session.get(request.model, 0) + 1
+            raise
         if response.usage.cost is None:
             self.unpriced[request.model] = self.unpriced.get(request.model, 0) + 1
         else:
