@@ -2,7 +2,8 @@
 
 `hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them
 (in English, translated into the design's other languages); `--translate` adds the design's other languages
-to an already frozen corpus without regenerating it.
+to an already frozen corpus without regenerating it. If documents stay invalid after `[generator] max_attempts`,
+the command names them and exits 1, keeping what succeeded; rerunning it resumes with only the failing ones.
 With condition C1 in the design it also prints what survived blinding (`hcai.blinding`).
 `hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
 `hcai models <config.toml>` lists the models of the config's providers; `hcai check <config.toml>` also probes

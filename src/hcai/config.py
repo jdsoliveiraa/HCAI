@@ -51,6 +51,13 @@ class Generator:
     temperature: float = 0.7
     # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
     borderline: dict[str, int] = field(default_factory=dict)
+    # New generator calls per document and run before it counts as failed (`[generator] max_attempts`).
+    # Answers already cached from earlier runs replay for free and do not use this budget (ADR 0006).
+    max_attempts: int = 4
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_attempts, int) or isinstance(self.max_attempts, bool) or self.max_attempts < 1:
+            raise ValueError(f"[generator] max_attempts must be a whole number >= 1, not {self.max_attempts!r}")
 
 
 @dataclass(frozen=True)

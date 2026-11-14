@@ -55,32 +55,32 @@ PRONOUN_PAIRS = [
 # candidate (e.g. their manager's title) is marked invariant as `{{X|X}}`. The PT-PT list is not
 # exhaustive: it catches the common job titles and adjectives, template authors still slot the rest.
 # PT-PT templates must also be free of common PT-BR terms (`hcai.ptpt`): no dialect cue in the body.
+# The PT-PT (masculine, feminine) pairs whose forms may only appear inside a slot.
+GENDERED_WORD_PAIRS: dict[str, list[tuple[str, str]]] = {
+    "pt": [
+        ("engenheiro", "engenheira"), ("enfermeiro", "enfermeira"), ("técnico", "técnica"),
+        ("diretor", "diretora"), ("coordenador", "coordenadora"), ("gestor", "gestora"),
+        ("programador", "programadora"), ("auditor", "auditora"), ("consultor", "consultora"),
+        ("supervisor", "supervisora"), ("colaborador", "colaboradora"),
+        ("licenciado", "licenciada"), ("mestrado", "mestrada"), ("doutorado", "doutorada"),
+        ("formado", "formada"), ("certificado", "certificada"), ("dedicado", "dedicada"),
+        ("motivado", "motivada"), ("organizado", "organizada"), ("proativo", "proativa"),
+        ("empenhado", "empenhada"), ("ele", "ela"), ("dele", "dela"),
+        ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
+        ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
+        ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
+        ("inscrito", "inscrita"), ("especializado", "especializada"),
+        ("habilitado", "habilitada"), ("promovido", "promovida"),
+        ("contratado", "contratada"), ("nomeado", "nomeada"), ("eleito", "eleita"),
+        ("distinguido", "distinguida"), ("premiado", "premiada"), ("focado", "focada"),
+        ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
+        ("revisor", "revisora"), ("tesoureiro", "tesoureira"), ("fundador", "fundadora"),
+        ("orientador", "orientadora"), ("candidato", "candidata"),
+    ],
+}
 SLOT_ONLY_WORDS = {
     "en": {"he", "she", "him", "her", "his", "hers", "himself", "herself", "mr", "ms", "mrs"},
-    "pt": {
-        form
-        for masc, fem in [
-            ("engenheiro", "engenheira"), ("enfermeiro", "enfermeira"), ("técnico", "técnica"),
-            ("diretor", "diretora"), ("coordenador", "coordenadora"), ("gestor", "gestora"),
-            ("programador", "programadora"), ("auditor", "auditora"), ("consultor", "consultora"),
-            ("supervisor", "supervisora"), ("colaborador", "colaboradora"),
-            ("licenciado", "licenciada"), ("mestrado", "mestrada"), ("doutorado", "doutorada"),
-            ("formado", "formada"), ("certificado", "certificada"), ("dedicado", "dedicada"),
-            ("motivado", "motivada"), ("organizado", "organizada"), ("proativo", "proativa"),
-            ("empenhado", "empenhada"), ("ele", "ela"), ("dele", "dela"),
-            ("estagiário", "estagiária"), ("voluntário", "voluntária"), ("bolseiro", "bolseira"),
-            ("investigador", "investigadora"), ("administrador", "administradora"), ("formador", "formadora"),
-            ("professor", "professora"), ("mestre", "mestra"), ("director", "directora"),
-            ("inscrito", "inscrita"), ("especializado", "especializada"),
-            ("habilitado", "habilitada"), ("promovido", "promovida"),
-            ("contratado", "contratada"), ("nomeado", "nomeada"), ("eleito", "eleita"),
-            ("distinguido", "distinguida"), ("premiado", "premiada"), ("focado", "focada"),
-            ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"),
-            ("revisor", "revisora"), ("tesoureiro", "tesoureira"), ("fundador", "fundadora"),
-            ("orientador", "orientadora"), ("candidato", "candidata"),
-        ]
-        for form in (masc, fem)
-    },
+    "pt": {form for pair in GENDERED_WORD_PAIRS["pt"] for form in pair},
 }
 
 # Articles and contractions are too short to mask or leak-check reliably ("a" and "o" occur everywhere):
@@ -140,6 +140,27 @@ def gendered_pairs(template: str) -> list[tuple[str, str]]:
     return list(dict.fromkeys(_ALTERNATION.findall(template)))
 
 
+def unslotted_gendered_words(text: str, language: str) -> list[str]:
+    """The slot-only gendered words of `text` written outside a `{{masc|fem}}` slot, as written, in order
+    (all-caps tokens such as "MS Excel" are acronyms and exempt)."""
+    return [
+        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", text))
+        if w.lower() in SLOT_ONLY_WORDS[language] and not (len(w) > 1 and w.isupper())
+    ]
+
+
+def gendered_forms(word: str, language: str) -> tuple[str, str] | None:
+    """The (masculine, feminine) forms of a slot-only `word` (either form), in its capitalisation, else None."""
+    for masc, fem in GENDERED_WORD_PAIRS.get(language, []):
+        if word.lower() in (masc, fem):
+            if word.isupper():
+                return masc.upper(), fem.upper()
+            if word[:1].isupper():
+                return masc.capitalize(), fem.capitalize()
+            return masc, fem
+    return None
+
+
 def render_variant(template: str, *, name: str, nationality: str, gender: str, language: str) -> str:
     """Fill a base-CV template's demographic slots for one identity in one language."""
     _validate_template(template, language)
@@ -163,10 +184,7 @@ def _validate_template(template: str, language: str) -> None:
             raise TemplateError(
                 f"gendered alternation {m.group(0)!r} is only an article; slot the whole phrase, e.g. {{{{o engenheiro|a engenheira}}}}"
             )
-    unslotted = sorted({
-        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", template))
-        if w.lower() in SLOT_ONLY_WORDS[language] and not (len(w) > 1 and w.isupper())
-    })
+    unslotted = sorted(set(unslotted_gendered_words(template, language)))
     if unslotted:
         raise TemplateError(
             f"gendered word(s) {unslotted} outside a {{{{masc|fem}}}} slot; write {{{{X|X}}}} if one does not refer to the candidate"
