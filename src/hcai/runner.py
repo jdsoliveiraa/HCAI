@@ -258,6 +258,8 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
     - Costs sum the known prices only: `unpriced_attempts` and `unpriced_calls` count the calls the provider
       gave no price for (their cost is unknown, e.g. on a subscription; their tokens are counted). With the
       design, each model also names its `provider` and `billing` ("metered" or "subscription").
+    - `missing_session_errors`: calls the provider refused for a missing or rejected session header (HTTP 400
+      MissingSessionID; a warning is printed the first time). Their rows are missing like any failed call.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
     - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (every CV not
@@ -279,7 +281,8 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
         calls = sum(meter.calls.get(m, 0) for m in models)
         return dict(calls=calls, cache_hits=sum(r.attempts for r in subset) - calls,
                     cost_spent=round(sum(meter.cost.get(m, 0.0) for m in models), 6),
-                    unpriced_calls=sum(meter.unpriced.get(m, 0) for m in models))
+                    unpriced_calls=sum(meter.unpriced.get(m, 0) for m in models),
+                    missing_session_errors=sum(meter.missing_session.get(m, 0) for m in models))
 
     status: dict[str, int] = {}
     for r in rows:

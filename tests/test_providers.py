@@ -4,6 +4,7 @@ Every HTTP call goes to an in-process `httpx.MockTransport`; nothing leaves the 
 """
 
 import json
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from conftest import scores_by_name
 from hcai.cli import main, models_command, run_command
 from hcai.config import load_design
 from hcai.llm import (
+    USER_AGENT,
+    CachedClient,
     FakeLLMClient,
     LLMRequest,
     OpenAICompatibleClient,
@@ -22,7 +25,7 @@ from hcai.llm import (
     RateLimited,
     RateLimitGuard,
 )
-from hcai.providers import BUILTIN_PROVIDERS, MissingKey, check_keys, load_dotenv, provider_client
+from hcai.providers import SESSION_ID, BUILTIN_PROVIDERS, MissingKey, check_keys, load_dotenv, provider_client
 from hcai.runner import execute, read_results
 
 SKELETON = Path(__file__).parent.parent / "configs" / "skeleton.toml"
@@ -487,3 +490,142 @@ def test_a_refused_key_stops_the_run():
 
     with pytest.raises(ProviderExhausted, match="401"):
         client.complete(REQ)
+
+
+# --- OpenCode Go session header and User-Agent ---------------------------------------------------------------
+
+
+def test_opencode_go_sends_one_stable_session_id_and_the_hcai_user_agent_and_openrouter_no_session(tmp_path):
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        return chat_answer("ok")
+
+    design = load_design(config(tmp_path, '\n[model_providers]\n"b" = "openrouter"\n', models_line='models = ["a", "b"]'))
+    client = provider_client(design.provider_for, design.models,
+                             environ={"OPENCODE_API_KEY": "sk-oc", "OPENROUTER_API_KEY": "sk-or"},
+                             http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    client.complete(replace(REQ, model="a"))
+    client.complete(replace(REQ, model="a", messages=[{"role": "user", "content": "again"}]))
+    client.complete(replace(REQ, model="b"))
+
+    opencode, again, openrouter = seen
+    session = opencode.headers["x-opencode-session"]
+    assert session == SESSION_ID and str(uuid.UUID(session)) == session
+    assert again.headers["x-opencode-session"] == session  # stable across the calls of a run
+    assert opencode.headers["User-Agent"] == USER_AGENT and USER_AGENT.startswith("hcai/")
+    assert "x-opencode-session" not in openrouter.headers
+    assert openrouter.headers["User-Agent"] == USER_AGENT
+    assert session not in opencode.content.decode()  # a header, never part of the body
+
+
+def test_the_session_header_stays_out_of_the_cache_key_and_the_cache(tmp_path):
+    def handler(request):
+        return chat_answer("ok")
+
+    key_before = REQ.cache_key()  # the request alone: the cached file's name and content are the real check
+    plain = OpenAICompatibleClient("https://p.example/v1", "k", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    with_session = OpenAICompatibleClient("https://p.example/v1", "k", headers={"x-opencode-session": SESSION_ID},
+                                          http=httpx.Client(transport=httpx.MockTransport(handler)))
+    cached = CachedClient(with_session, tmp_path / "cache")
+
+    cached.complete(REQ)
+
+    assert REQ.cache_key() == key_before
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == [f"{key_before}.json"]
+    assert SESSION_ID not in (tmp_path / "cache" / f"{key_before}.json").read_text()
+    assert plain.complete(REQ).text == with_session.complete(REQ).text  # same request, same answer
+
+
+def test_a_missing_session_answer_is_a_provider_error_not_a_silent_miss():
+    body = {"error": {"type": "MissingSessionID", "message": "Request is missing x-opencode-session header"}}
+    client = OpenAICompatibleClient("https://p.example/v1", "k", http=httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(400, json=body))))
+
+    with pytest.raises(ProviderError, match="MissingSessionID"):
+        client.complete(REQ)
+
+
+def test_the_session_id_is_masked_in_error_text():
+    client = OpenAICompatibleClient("https://p.example/v1", "k", headers={"x-opencode-session": SESSION_ID},
+                                    http=httpx.Client(transport=httpx.MockTransport(
+                                        lambda r: httpx.Response(400, text=f"bad session {SESSION_ID}"))))
+
+    with pytest.raises(ProviderError) as info:
+        client.complete(REQ)
+    assert SESSION_ID not in str(info.value)
+
+
+def test_config_headers_are_sent_but_cannot_override_the_key_or_user_agent(tmp_path):
+    design = load_design(config(tmp_path, '\n[providers.opencode-go.headers]\nx-extra = "1"\n'))
+    assert design.providers["opencode-go"].http_headers() == {"x-extra": "1", "x-opencode-session": SESSION_ID}
+
+    with pytest.raises(ValueError, match="Authorization"):
+        load_design(config(tmp_path, '\n[providers.opencode-go.headers]\nAuthorization = "Bearer x"\n'))
+
+
+def test_an_echoed_key_is_masked_even_when_a_header_value_is_part_of_it():
+    key = "sk-fake1abc-header-value-xyz"
+    client = OpenAICompatibleClient("https://p.example/v1", key, headers={"x-extra": "1", "x-long": "header-value"},
+                                    http=httpx.Client(transport=httpx.MockTransport(
+                                        lambda r: httpx.Response(400, text=f"bad key {key} 1"))))
+
+    with pytest.raises(ProviderError) as info:
+        client.complete(REQ)
+    assert "fake" not in str(info.value) and "xyz" not in str(info.value) and "***" in str(info.value)
+    assert str(info.value).endswith(" 1")  # a value too short to be a secret is not masked everywhere
+
+
+def test_the_client_never_lets_extra_headers_replace_the_key_or_user_agent():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return chat_answer("ok")
+
+    OpenAICompatibleClient("https://p.example/v1", "k", headers={"authorization": "Bearer x", "user-agent": "y"},
+                           http=httpx.Client(transport=httpx.MockTransport(handler))).complete(REQ)
+
+    assert seen[0].headers.get_list("authorization") == ["Bearer k"]
+    assert seen[0].headers.get_list("user-agent") == [USER_AGENT]
+
+
+@pytest.mark.parametrize("extra", [
+    '\n[providers.opencode-go]\nsession_header = 1\n',
+    '\n[providers.opencode-go]\nsession_header = ""\n',
+    '\n[providers.opencode-go]\nheaders = "x"\n',
+    '\n[providers.opencode-go.headers]\nx-extra = 1\n',
+    '\n[providers.opencode-go.headers]\n"bad header" = "1"\n',
+    '\n[providers.opencode-go.headers]\nX-OpenCode-Session = "a"\n',
+])
+def test_bad_provider_headers_fail_at_load(tmp_path, extra):
+    with pytest.raises(ValueError):
+        load_design(config(tmp_path, extra))
+
+
+def test_header_values_stay_out_of_the_provider_repr():
+    provider = replace(BUILTIN_PROVIDERS["opencode-go"], headers=(("x-api-token", SECRET),))
+    assert SECRET not in repr(provider)
+
+
+def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_refusals(tmp_path, capsys):
+    body = {"error": {"type": "MissingSessionID", "message": "Request is missing x-opencode-session header"}}
+    state = {"n": 0}
+
+    def handler(request):
+        state["n"] += 1
+        return httpx.Response(400, json=body)
+
+    design = load_design(config(tmp_path))  # the model on opencode-go
+    out = tmp_path / "out"
+    run = execute(design, routed_client(handler, design=design), out_dir=out, cache_dir=tmp_path / "cache")
+
+    err = capsys.readouterr().err
+    assert err.count("MissingSessionID") == 1  # one warning per run, however many calls fail
+    assert "opencode-go" in err and "session header is missing or rejected" in err
+    assert state["n"] > 1 and all(r.status == "missing" for r in run.rows)  # retried, then missing: no stop
+    summary = json.loads((out / "run_summary.json").read_text())
+    assert summary["missing_session_errors"] == state["n"] == summary["calls"]
+    assert not list((tmp_path / "cache").glob("*.json"))  # refused calls are never cached

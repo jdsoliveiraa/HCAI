@@ -20,7 +20,7 @@ Each model is served by a **provider**, an OpenAI-compatible endpoint with its o
 | `opencode-go` (default) | `https://opencode.ai/zen/go/v1` | `OPENCODE_API_KEY` | subscription: no price per call |
 | `openrouter` (fallback) | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | metered: price per call |
 
-Keys come from the environment or from a `.env` file in the working directory. A variable already set in the environment wins over the file. Keys are only sent in the Authorization header and are never logged or written into results or the cache. Only the keys of the providers a command uses are needed, and a missing key fails before any call.
+Keys come from the environment or from a `.env` file in the working directory. A variable already set in the environment wins over the file. Keys are only sent in the Authorization header and are never logged or written into results or the cache. Every call sends `User-Agent: hcai/<version>`. OpenCode Go also gets an `x-opencode-session` header with one random id per run (it refuses calls without one); like the key, it is not part of the cache key and is never written anywhere. If the provider still refuses calls for a missing or rejected session (HTTP 400 `MissingSessionID`), the rows are recorded as missing, one warning is printed per run, and `run_summary.json` counts them in `missing_session_errors`. A `[providers.<name>]` table can add more headers with a `headers` subtable. Only the keys of the providers a command uses are needed, and a missing key fails before any call.
 
 A config's `[model_providers]` table names each model's provider (pipeline models, generator and judge). A model left out uses `opencode-go`. **To switch a model to OpenRouter, add or change its one line:**
 
