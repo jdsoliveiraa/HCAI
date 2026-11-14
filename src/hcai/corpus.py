@@ -9,7 +9,16 @@ nationality are `$name` / `$nationality` slots in a fixed header, filled in late
 Job ads and base CVs are written in English; for every other design language (PT-PT) the same generator
 translates each one, keeping its content, structure, dates and quality level, with every word that agrees
 with the candidate's gender in a `{{masc|fem}}` slot. A translation must pass `hcai.variants`' slot rules,
-gendered-word guard and diff check, and use no common PT-BR term (`hcai.ptpt`); otherwise it is retried.
+gendered-word guard and diff check, and use no common PT-BR term (`hcai.ptpt`); otherwise it is retried, with
+feedback that names each leaked gendered word and its fix. A gendered word right after a slot that refers to
+the candidate ("{{Enfermeiro|Enfermeira}} dedicado") is slotted deterministically ("{{dedicado|dedicada}}"),
+kept only if the repaired translation passes every check.
+
+Retries and reruns (ADR 0006): each document gets `[generator] max_attempts` new generator calls per run.
+Answers cached by earlier runs replay first at no cost (a valid one ends the document with zero calls) and do
+not use that budget, so a rerun continues with fresh attempts where the last run stopped instead of replaying
+the same invalid answers. Every document is attempted even when another fails; the failures are reported
+together (`GenerationFailed.failures`).
 
 On-disk layout of a corpus version (`design.corpus_dir`, e.g. `data/corpus/v1`):
 
@@ -20,10 +29,18 @@ On-disk layout of a corpus version (`design.corpus_dir`, e.g. `data/corpus/v1`):
     <role>/<quality>/cvNN.json          the structured base CV as generated
     <role>/<quality>/cvNN.pt.md         the PT-PT template (same stable id and quality level)
     <role>/<quality>/cvNN.pt.json       the structured PT-PT translation
+    partial/<lang>/...                  translations of a language not yet complete (see below)
+
+The English corpus is frozen as soon as it is generated, before any translation. A language is added to the
+manifest (and its files written) only once every job ad and base CV of it is translated; until then each
+valid translation is kept under `partial/<lang>/` (`<role>/job_ad.json`, `<role>/<quality>/cvNN.json`), and
+rerunning `generate_corpus` (or `translate_corpus`) resumes it: kept translations are re-checked and reused,
+only the missing or failing documents are asked again.
 
 `translate_corpus` adds a language to an already frozen corpus without touching its English files.
 
-A corpus is frozen once written: generating into an existing corpus raises `CorpusFrozen` unless `force=True`.
+A corpus is frozen once written: generating into a complete existing corpus raises `CorpusFrozen` unless
+`force=True`.
 """
 
 from __future__ import annotations
@@ -40,10 +57,14 @@ from hcai.config import Design, Generator
 from hcai.llm import CachedClient, LLMClient, LLMRequest
 from hcai.ptpt import describe, ptbr_terms
 from hcai.variants import (
-    NATIONALITY_LABEL, WORK_ELIGIBILITY, TemplateError, Variant, check_variants, gendered_pairs, render_variant,
+    NATIONALITY_LABEL, WORK_ELIGIBILITY, TemplateError, Variant, check_variants, gendered_forms, gendered_pairs,
+    render_variant, unslotted_gendered_words,
 )
 
 MANIFEST = "manifest.json"
+PARTIAL = "partial"  # <corpus>/partial/<lang>/: the valid translations of a language not yet complete
+# A safety stop on how long a chain of attempts (cached replays plus new calls) can grow across reruns.
+MAX_CHAIN = 200
 LANGUAGE = "en"  # job ads and base CVs are written in English, then translated into the other design languages
 TRANSLATION_LANGUAGES = {"pt": "European Portuguese (PT-PT, as written in Portugal; never Brazilian Portuguese)"}
 # Translations should be faithful, not creative: the generator translates at temperature 0.
@@ -172,12 +193,35 @@ class CorpusFrozen(RuntimeError):
     """The corpus version already exists; regenerate only with force=True (or bump the version)."""
 
 
+@dataclass(frozen=True)
+class DocumentFailure:
+    document: str  # "<role>/job_ad" or a base CV id "<role>/<quality>/cvNN"
+    language: str
+    reason: str  # why the last answer was rejected
+
+
 class GenerationFailed(RuntimeError):
-    """The generator kept returning an invalid job ad or base CV."""
+    """The generator kept returning invalid job ads or base CVs; `failures` names each one and why.
+
+    `kept` says what was kept despite the failure (e.g. the frozen English corpus and the valid translations).
+    """
+
+    def __init__(self, failures: list[DocumentFailure], kept: str = ""):
+        self.failures = list(failures)
+        self.kept = kept
+        lines = [f"{len(self.failures)} document(s) still invalid after this run's attempts:"]
+        lines += [f"- {f.document} ({f.language}): {f.reason}" for f in self.failures]
+        if kept:
+            lines.append(kept)
+        super().__init__("\n".join(lines))
 
 
 class _Invalid(ValueError):
     pass
+
+
+class _Exhausted(Exception):
+    """One document is still invalid after its attempts; carries the last rejection reason."""
 
 
 @dataclass(frozen=True)
@@ -240,60 +284,84 @@ class Corpus:
 
 
 def generate_corpus(
-    design: Design, client: LLMClient, cache_dir: str | Path, *, force: bool = False, max_attempts: int = 3,
+    design: Design, client: LLMClient, cache_dir: str | Path, *, force: bool = False, max_attempts: int | None = None,
 ) -> Corpus:
     """Generate the job ads and base CVs of `design` with its generator model and freeze them at `corpus_dir`.
 
-    Every design language other than English is translated from the English documents (see `translate_corpus`).
-    Raises `CorpusFrozen` if a corpus already exists there (unless `force`), and `GenerationFailed` if a
-    document is still invalid after `max_attempts`; in both cases nothing on disk is changed.
+    The English corpus is frozen first; every other design language is then translated from it (see
+    `translate_corpus`). If a frozen corpus already exists there and lacks a design language, its translation
+    is resumed (the English files stay); if it has them all, `CorpusFrozen` is raised unless `force`.
+    `max_attempts` (default `[generator] max_attempts`) bounds the new calls per document and run.
+
+    Raises `GenerationFailed` naming every document still invalid: an English failure writes nothing; a
+    translation failure keeps the frozen English corpus and the valid translations, so a rerun asks only for
+    the failing ones.
     """
     generator = _generator(design)
     languages = _translation_languages(design)
+    attempts = generator.max_attempts if max_attempts is None else max_attempts
     out = design.corpus_dir
+    # Unparseable generations stay out of the cache, so rerunning a failed generation draws fresh answers.
+    cached = CachedClient(client, cache_dir, cache_unparseable=False)
+    if (out / MANIFEST).exists() and not force:
+        corpus = load_corpus(out)
+        _check_same_design(corpus, design, out)
+        missing = [lang for lang in languages if lang not in corpus.translated_job_ads]
+        if not missing:
+            raise CorpusFrozen(f"corpus {out} is frozen; pass force=True (--force) to regenerate, or bump the version")
+        return _translate_languages(cached, design, generator, corpus, missing, attempts, out, restart=False)
     _check_writable(out, force)
     _check_borderline(design, generator)
 
-    # Unparseable generations stay out of the cache, so rerunning a failed generation draws fresh answers.
-    cached = CachedClient(client, cache_dir, cache_unparseable=False)
     job_ads: dict[str, JobAd] = {}
     base_cvs: list[BaseCV] = []
+    failures: list[DocumentFailure] = []
     for role in design.roles:
-        ad = _generate_job_ad(cached, design, generator, role, max_attempts)
+        try:
+            ad = _generate_job_ad(cached, design, generator, role, attempts)
+        except _Exhausted as e:  # its base CVs need the job ad: they are asked once it is valid
+            failures.append(DocumentFailure(f"{role}/job_ad", LANGUAGE, str(e)))
+            continue
         job_ads[role] = ad
         for quality in design.quality_levels:
             n_borderline = generator.borderline.get(quality, 0)
             for n in range(1, design.base_cvs_per_role + 1):
                 borderline = n > design.base_cvs_per_role - n_borderline
-                base_cvs.append(_generate_base_cv(cached, design, generator, ad, quality, n, borderline, max_attempts))
+                try:
+                    base_cvs.append(_generate_base_cv(cached, design, generator, ad, quality, n, borderline, attempts))
+                except _Exhausted as e:
+                    failures.append(DocumentFailure(f"{ad.role}/{quality}/cv{n:02d}", LANGUAGE, str(e)))
+    if failures:
+        raise GenerationFailed(failures, kept=(
+            f"Nothing was written to {out}. The valid answers are cached: rerun the same command to replay them "
+            "at no cost and ask only the failing documents again."
+        ))
 
     corpus = Corpus(version=out.name, generator=generator, job_ads=job_ads, base_cvs=base_cvs)
-    for language in languages:
-        corpus = _translate(cached, design, generator, corpus, language, max_attempts)
     _write(corpus, design, out)
-    return corpus
+    return _translate_languages(cached, design, generator, corpus, languages, attempts, out, restart=True)
 
 
 def translate_corpus(
-    design: Design, client: LLMClient, cache_dir: str | Path, *, force: bool = False, max_attempts: int = 3,
+    design: Design, client: LLMClient, cache_dir: str | Path, *, force: bool = False, max_attempts: int | None = None,
 ) -> Corpus:
-    """Add every non-English design language to the frozen corpus at `corpus_dir`, translated by its generator.
+    """Add every non-English design language the frozen corpus at `corpus_dir` lacks, translated by its generator.
 
     The English job ads, base CVs and their ground truth are left untouched; each translated base CV keeps
-    its stable id and quality level. A language the corpus already has is refused with `CorpusFrozen` unless
-    `force`. All translations are made before anything is written, so a `GenerationFailed` changes nothing.
+    its stable id and quality level. A language whose translation was interrupted resumes from its kept
+    translations. If every design language is already there, `CorpusFrozen` is raised unless `force`, which
+    retranslates them all (the complete translation stays in place until its replacement is complete).
+    Raises `GenerationFailed` naming every document still invalid, keeping the valid translations.
     """
     generator = _generator(design)
     languages = _translation_languages(design)
+    attempts = generator.max_attempts if max_attempts is None else max_attempts
     corpus = load_corpus(design.corpus_dir)
-    existing = [lang for lang in languages if lang in corpus.translated_job_ads]
-    if existing and not force:
-        raise CorpusFrozen(f"corpus {design.corpus_dir} already has {existing}; pass force=True (--force) to retranslate")
-    cached = CachedClient(client, cache_dir)
-    for language in languages:
-        corpus = _translate(cached, design, generator, corpus, language, max_attempts)
-    _write_translations(corpus, design.corpus_dir, languages)
-    return corpus
+    targets = languages if force else [lang for lang in languages if lang not in corpus.translated_job_ads]
+    if not targets:
+        raise CorpusFrozen(f"corpus {design.corpus_dir} already has {languages}; pass force=True (--force) to retranslate")
+    cached = CachedClient(client, cache_dir, cache_unparseable=False)
+    return _translate_languages(cached, design, generator, corpus, targets, attempts, design.corpus_dir, restart=force)
 
 
 def load_corpus(corpus_dir: str | Path) -> Corpus:
@@ -348,8 +416,19 @@ def _ask(
     client: LLMClient, seed: int | None, generator: Generator, prompt: str, schema: dict, validate, max_attempts: int,
     temperature: float | None = None,
 ):
+    """The first valid answer, as `validate` returns it; raises `_Exhausted` after `max_attempts` new calls.
+
+    Attempt k > 1 carries a note with the previous rejection, so it is a new request (a new cache key). Cached
+    answers (from earlier runs) replay first and do not count against `max_attempts`: a rerun continues the
+    chain of attempts with new ones instead of replaying the same invalid answers (ADR 0006).
+    """
     reason = ""
-    for attempt in range(1, max_attempts + 1):
+    new_calls = 0
+    attempt = 0
+    while new_calls < max_attempts:
+        attempt += 1
+        if attempt > MAX_CHAIN:
+            raise _Exhausted(f"gave up after {MAX_CHAIN} attempts in all; last: {reason}")
         content = prompt
         if attempt > 1:
             # Changes the request, so the cached invalid answer is not served again.
@@ -361,11 +440,13 @@ def _ask(
             seed=seed,
             response_schema=schema,
         ))
+        if not response.cached:
+            new_calls += 1
         try:
             return validate(response.parsed)
         except _Invalid as e:
             reason = str(e)
-    raise GenerationFailed(f"still invalid after {max_attempts} attempts: {reason}")
+    raise _Exhausted(reason)
 
 
 def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, role: str, max_attempts: int) -> JobAd:
@@ -437,20 +518,85 @@ def _generate_base_cv(
 # --- translation -------------------------------------------------------------------------------------------
 
 
-def _translate(
-    client: LLMClient, design: Design, generator: Generator, corpus: Corpus, language: str, max_attempts: int,
+def _translate_languages(
+    client: LLMClient, design: Design, generator: Generator, corpus: Corpus, languages: list[str], max_attempts: int,
+    out: Path, *, restart: bool,
 ) -> Corpus:
-    """`corpus` with every job ad and base CV translated into `language` by the generator."""
-    ads = {role: _translate_job_ad(client, design, generator, ad, language, max_attempts)
-           for role, ad in corpus.job_ads.items()}
-    base_cvs = [
-        replace(cv, translations={**cv.translations,
-                                  language: _translate_base_cv(client, design, generator, cv, language, max_attempts)})
-        for cv in corpus.base_cvs
-    ]
+    """Translate the frozen `corpus` at `out` into `languages`, adding each complete one to it on disk.
+
+    `restart` discards the kept translations of an unfinished language first. Raises `GenerationFailed` with
+    every document still invalid, after the other documents (and languages) are done.
+    """
+    failures: list[DocumentFailure] = []
+    for language in languages:
+        corpus, failed = _translate_language(client, design, generator, corpus, language, max_attempts, out,
+                                             restart=restart)
+        failures += failed
+    if failures:
+        unfinished = sorted({f.language for f in failures})
+        kept = (f"The English corpus is frozen at {out}"
+                + (f" with {', '.join(corpus.languages[1:])}" if corpus.languages[1:] else "")
+                + f"; the valid translations into {', '.join(unfinished)} are kept in "
+                + ", ".join(str(out / PARTIAL / lang) for lang in unfinished)
+                + ". Rerun the same command to ask only the failing documents again.")
+        raise GenerationFailed(failures, kept=kept)
+    return corpus
+
+
+def _translate_language(
+    client: LLMClient, design: Design, generator: Generator, corpus: Corpus, language: str, max_attempts: int,
+    out: Path, *, restart: bool,
+) -> tuple[Corpus, list[DocumentFailure]]:
+    """Translate every job ad and base CV into `language`, keeping each valid one under `partial/<language>`.
+
+    Once all are valid they are written into the corpus and its manifest and the partial folder is removed;
+    otherwise `corpus` is returned unchanged with the failures.
+    """
+    partial = out / PARTIAL / language
+    if restart and partial.exists():
+        shutil.rmtree(partial)
+    failures: list[DocumentFailure] = []
+
+    def translate(document: str, prompt: str, schema: dict, validate) -> dict[str, Any] | None:
+        path = partial / f"{document}.json"
+        if path.exists():  # kept by an earlier run: re-checked, so a stricter check still applies
+            try:
+                return validate(json.loads(path.read_text()))
+            except (_Invalid, json.JSONDecodeError):
+                pass
+        try:
+            result = _ask(client, design.seed, generator, prompt, schema, validate, max_attempts,
+                          temperature=TRANSLATION_TEMPERATURE)
+        except _Exhausted as e:
+            failures.append(DocumentFailure(document, language, str(e)))
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+        tmp.replace(path)
+        return result
+
+    ads: dict[str, JobAd] = {}
+    for role, ad in corpus.job_ads.items():
+        parsed = translate(f"{role}/job_ad", *_job_ad_translation(ad, language))
+        if parsed is not None:
+            ads[role] = JobAd(role=role, language=language, **{k: parsed[k] for k in JOB_AD_TRANSLATION_SCHEMA["properties"]})
+    translations = {cv.id: translate(cv.id, *_cv_translation(cv, language)) for cv in corpus.base_cvs}
+    if failures:
+        return corpus, failures
+
     translator = Generator(model=generator.model, temperature=TRANSLATION_TEMPERATURE)
-    return replace(corpus, base_cvs=base_cvs, translated_job_ads={**corpus.translated_job_ads, language: ads},
-                   translated_by={**corpus.translated_by, language: translator})
+    corpus = replace(
+        corpus,
+        base_cvs=[replace(cv, translations={**cv.translations, language: translations[cv.id]}) for cv in corpus.base_cvs],
+        translated_job_ads={**corpus.translated_job_ads, language: ads},
+        translated_by={**corpus.translated_by, language: translator},
+    )
+    _write_translations(corpus, out, [language])
+    shutil.rmtree(partial)
+    if (out / PARTIAL).exists() and not any((out / PARTIAL).iterdir()):
+        (out / PARTIAL).rmdir()
+    return corpus, []
 
 
 _DIALECT_RULES = (
@@ -462,9 +608,8 @@ _DIALECT_RULES = (
 )
 
 
-def _translate_job_ad(
-    client: LLMClient, design: Design, generator: Generator, ad: JobAd, language: str, max_attempts: int,
-) -> JobAd:
+def _job_ad_translation(ad: JobAd, language: str) -> tuple[str, dict, Any]:
+    """The prompt, schema and validator of a job ad's translation (the validator returns the checked answer)."""
     source = {k: getattr(ad, k) for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
     prompt = (
         f"Translate this job ad ({_role_brief(ad.role)}) into {TRANSLATION_LANGUAGES[language]}. Keep its meaning, every requirement and "
@@ -472,23 +617,21 @@ def _translate_job_ad(
         f"Lisbon -> Lisboa). {_DIALECT_RULES}\n\n{SOURCE_MARKER}{json.dumps(source, ensure_ascii=False, indent=2)}"
     )
 
-    def validate(parsed: Any) -> JobAd:
+    def validate(parsed: Any) -> dict[str, Any]:
         _expect_keys(parsed, JOB_AD_TRANSLATION_SCHEMA)
         for key in ("mandatory", "desirable"):
             if len(parsed[key]) != len(source[key]) or not all(isinstance(r, str) and r.strip() for r in parsed[key]):
                 raise _Invalid(f"'{key}' must translate each of the {len(source[key])} requirements, in order")
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
-        return JobAd(role=ad.role, title=parsed["title"], location=parsed["location"], summary=parsed["summary"],
-                     mandatory=list(parsed["mandatory"]), desirable=list(parsed["desirable"]), language=language)
+        return {k: parsed[k] for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
 
-    return _ask(client, design.seed, generator, prompt, JOB_AD_TRANSLATION_SCHEMA, validate, max_attempts,
-                temperature=TRANSLATION_TEMPERATURE)
+    return prompt, JOB_AD_TRANSLATION_SCHEMA, validate
 
 
-def _translate_base_cv(
-    client: LLMClient, design: Design, generator: Generator, cv: BaseCV, language: str, max_attempts: int,
-) -> dict[str, Any]:
+def _cv_translation(cv: BaseCV, language: str) -> tuple[str, dict, Any]:
+    """The prompt, schema and validator of a base CV's translation (the validator returns the checked answer,
+    with a gendered word right after a candidate slot slotted when that alone makes it valid)."""
     source = {k: cv.content[k] for k in _TRANSLATED_FIELDS}
     prompt = (
         f"Translate this CV into {TRANSLATION_LANGUAGES[language]}. It is CV {cv.id} (a {cv.quality} candidate): "
@@ -515,11 +658,23 @@ def _translate_base_cv(
         _check_same_structure(source, parsed)
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
-        _check_translation_renders(parsed, language)
+        try:
+            _check_translation_renders(parsed, language)
+        except _Invalid:
+            repaired = _repair_slots(parsed, language)
+            if repaired is None:
+                raise
+            try:  # the repair is kept only if the repaired translation passes every check
+                _check_same_structure(source, repaired)
+                _check_same_numbers(source, repaired)
+                _check_dialect(repaired, language)
+                _check_translation_renders(repaired, language)
+            except _Invalid:
+                raise _Invalid(_slot_feedback(parsed, language) or "the translation breaks the slot rules") from None
+            return repaired
         return parsed
 
-    return _ask(client, design.seed, generator, prompt, CV_TRANSLATION_SCHEMA, validate, max_attempts,
-                temperature=TRANSLATION_TEMPERATURE)
+    return prompt, CV_TRANSLATION_SCHEMA, validate
 
 
 def _check_same_structure(source: dict[str, Any], parsed: dict[str, Any]) -> None:
@@ -572,6 +727,8 @@ def _check_dialect(parsed: dict[str, Any], language: str) -> None:
 
 def _check_translation_renders(parsed: dict[str, Any], language: str) -> None:
     """The translation is a valid slot template whose male and female renderings differ only in the slots."""
+    if feedback := _slot_feedback(parsed, language):
+        raise _Invalid(feedback)
     template = _render(parsed, escape=True, language=language)
     try:
         variants = [
@@ -587,15 +744,108 @@ def _check_translation_renders(parsed: dict[str, Any], language: str) -> None:
     # and is used again outside a slot (e.g. "{{Analista escolhido|Analista escolhida}} ... escolhido").
     outside = {w.casefold() for w in re.findall(r"\w+", _SLOT.sub(" ", template))}
     for masc, fem in gendered_pairs(template):
-        m_words, f_words = ({w.casefold() for w in re.findall(r"\w+", form)} for form in (masc, fem))
+        m_list, f_list = re.findall(r"\w+", masc), re.findall(r"\w+", fem)
+        m_words, f_words = {w.casefold() for w in m_list}, {w.casefold() for w in f_list}
         leaked = sorted(((m_words ^ f_words) & outside) - _ARTICLES)
         if leaked:
-            problems.append(f"gendered word(s) {leaked} of {{{{{masc}|{fem}}}}} also appear outside a slot")
+            # the word's other form, when the two forms line up word by word
+            pairs = dict(zip(m_list, f_list)) if len(m_list) == len(f_list) else {}
+            fixes = []
+            for word in leaked:
+                m, f = next(((m, f) for m, f in pairs.items() if word in (m.casefold(), f.casefold())), (word, word))
+                fixes.append(f"'{word}': write {{{{{m}|{f}}}}} if it describes the candidate, else {{{{{word}|{word}}}}}")
+            problems.append(f"gendered word(s) {leaked} of {{{{{masc}|{fem}}}}} also appear outside a slot; "
+                            + "; ".join(fixes))
     if problems:
         raise _Invalid("the translation's gendered slots are inconsistent: " + "; ".join(problems))
 
 
+def _slot_feedback(parsed: dict[str, Any], language: str) -> str:
+    """For each slot-only gendered word outside a slot: where it is and the exact fix ("" if there is none)."""
+    fixes: list[str] = []
+    for path, text in _fields(parsed):
+        for m in _unslotted_matches(text, language):
+            word = m.group(0)
+            masc, fem = gendered_forms(word, language) or (word, word)
+            start = max(0, m.start() - 30)
+            context = ("…" if start else "") + text[start: m.end() + 30] + ("…" if m.end() + 30 < len(text) else "")
+            slot = _slot_before(text, m.start())
+            if slot is not None and slot.group(1) != slot.group(2):
+                fixes.append(f"'{word}' in {path} follows {slot.group(0)}, so it agrees with the candidate: write "
+                             f"{slot.group(0)} {{{{{masc}|{fem}}}}} (\"{context}\")")
+            else:
+                fixes.append(f"'{word}' in {path} (\"{context}\"): write {{{{{masc}|{fem}}}}} if it describes the "
+                             f"candidate, else {{{{{word}|{word}}}}}")
+    if not fixes:
+        return ""
+    words = sorted({m.group(0) for _, text in _fields(parsed) for m in _unslotted_matches(text, language)})
+    return (f"the translation breaks the slot rules: gendered word(s) {words} outside a {{{{masc|fem}}}} slot. "
+            "Fix each: " + "; ".join(fixes))
+
+
+def _fields(value: Any, path: str = "") -> list[tuple[str, str]]:
+    """Every string of a structured document with its path, e.g. ("experience[2].bullets[1]", "...")."""
+    if isinstance(value, str):
+        return [(path, value)]
+    if isinstance(value, dict):
+        return [f for k, v in value.items() for f in _fields(v, f"{path}.{k}" if path else str(k))]
+    if isinstance(value, list):
+        return [f for i, v in enumerate(value, 1) for f in _fields(v, f"{path}[{i}]")]
+    return []
+
+
+def _unslotted_matches(text: str, language: str) -> list[re.Match[str]]:
+    """The matches of `unslotted_gendered_words` in `text`, with their positions."""
+    words = set(unslotted_gendered_words(text, language))
+    slots = [m.span() for m in _SLOT.finditer(text)]
+    return [m for m in re.finditer(r"\w+", text)
+            if m.group(0) in words and not any(a <= m.start() < b for a, b in slots)]
+
+
+def _slot_before(text: str, position: int) -> re.Match[str] | None:
+    """The slot immediately before `position`, separated from it by whitespace only."""
+    m = re.search(r"(\{\{([^{}|]*)\|([^{}|]*)\}\})\s+$", text[:position])
+    return _SLOT_GROUPS.fullmatch(m.group(1)) if m else None
+
+
+# Pronouns never agree with a preceding noun phrase: they are not repaired.
+_NOT_REPAIRED = {"ele", "ela", "dele", "dela"}
+
+
+def _repair_slots(parsed: dict[str, Any], language: str) -> dict[str, Any] | None:
+    """`parsed` with every slot-only gendered word that directly follows a slot referring to the candidate
+    (its two forms differ) put in a slot of its own, "{{Enfermeiro|Enfermeira}} dedicado" ->
+    "{{Enfermeiro|Enfermeira}} {{dedicado|dedicada}}"; None if there is nothing to repair. The caller keeps
+    the repair only if the result passes every check (the slot rules and the diff check)."""
+    pattern = re.compile(r"(\{\{([^{}|]*)\|([^{}|]*)\}\})(\s+)(\w+)(?![\w{|}])")
+
+    def fix(text: str) -> str:
+        while True:
+            def one(m: re.Match[str]) -> str:
+                forms = gendered_forms(m.group(5), language)
+                if m.group(2) == m.group(3) or forms is None or m.group(5).lower() in _NOT_REPAIRED:
+                    return m.group(0)
+                return f"{m.group(1)}{m.group(4)}{{{{{forms[0]}|{forms[1]}}}}}"
+            repaired = pattern.sub(one, text)
+            if repaired == text:
+                return text
+            text = repaired
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return fix(value)
+        if isinstance(value, dict):
+            return {k: walk(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        return value
+
+    repaired = walk(parsed)
+    return None if repaired == parsed else repaired
+
+
 _SLOT = re.compile(r"\{\{[^{}|]*\|[^{}|]*\}\}")
+_SLOT_GROUPS = re.compile(r"\{\{([^{}|]*)\|([^{}|]*)\}\}")
 # Articles and contractions differ between the forms of a slot ("o engenheiro" / "a engenheira") but occur
 # everywhere else too.
 _ARTICLES = {"o", "a", "os", "as", "do", "da", "dos", "das", "no", "na", "nos", "nas", "ao", "à", "aos", "às",
@@ -685,6 +935,21 @@ def _check_borderline(design: Design, generator: Generator) -> None:
             raise ValueError(f"borderline count for {quality!r} must be between 0 and base_cvs_per_role")
 
 
+def _provenance(generator: Generator) -> dict[str, Any]:
+    """Who generated (or translated) the corpus, for its manifest; `max_attempts` is a run setting, left out."""
+    return {k: v for k, v in asdict(generator).items() if k != "max_attempts"}
+
+
+def _check_same_design(corpus: Corpus, design: Design, out: Path) -> None:
+    """Resuming a frozen corpus's translation only makes sense for the design it was generated for."""
+    manifest = json.loads((out / MANIFEST).read_text())
+    same = (list(corpus.job_ads) == list(design.roles) and manifest.get("quality_levels") == design.quality_levels
+            and manifest.get("base_cvs_per_role") == design.base_cvs_per_role)
+    if not same:
+        raise CorpusFrozen(f"corpus {out} is frozen for another design (roles, quality levels or base CVs per role); "
+                           "bump the version, or pass force=True (--force) to regenerate")
+
+
 def _write(corpus: Corpus, design: Design, out: Path) -> None:
     """Write the whole corpus to a sibling directory, then swap it in, so a failure never leaves half a corpus."""
     staging = out.with_name(out.name + ".staging")
@@ -701,7 +966,7 @@ def _write(corpus: Corpus, design: Design, out: Path) -> None:
     _write_translation_files(corpus, staging, corpus.translated_job_ads)
     manifest = {
         "version": corpus.version,
-        "generator": asdict(corpus.generator),
+        "generator": _provenance(corpus.generator),
         "seed": design.seed,
         "quality_levels": design.quality_levels,
         "base_cvs_per_role": design.base_cvs_per_role,
@@ -713,7 +978,7 @@ def _write(corpus: Corpus, design: Design, out: Path) -> None:
         ],
         "languages": corpus.languages,
         "translated_job_ads": _translated_job_ads_manifest(corpus),
-        "translated_by": {language: asdict(g) for language, g in corpus.translated_by.items()},
+        "translated_by": {language: _provenance(g) for language, g in corpus.translated_by.items()},
     }
     (staging / MANIFEST).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     if out.exists():
@@ -744,7 +1009,7 @@ def _write_translations(corpus: Corpus, out: Path, languages: list[str]) -> None
     manifest = json.loads((out / MANIFEST).read_text())
     manifest["languages"] = corpus.languages
     manifest["translated_job_ads"] = _translated_job_ads_manifest(corpus)
-    manifest["translated_by"] = {language: asdict(g) for language, g in corpus.translated_by.items()}
+    manifest["translated_by"] = {language: _provenance(g) for language, g in corpus.translated_by.items()}
     tmp = out / (MANIFEST + ".tmp")
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     tmp.replace(out / MANIFEST)

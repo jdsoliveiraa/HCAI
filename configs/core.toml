@@ -28,6 +28,10 @@ model = "gemini-4-argon"
 temperature = 0.7
 # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
 borderline = { average = 1, weak = 1 }
+# New generator calls per document (job ad, base CV or translation) per run before it is reported as failed.
+# Answers cached by earlier runs replay first at no cost, so rerunning `hcai corpus` continues with fresh attempts
+# for the failing documents only (ADR 0006).
+max_attempts = 4
 
 # Oversight of the rubric conditions (C2, and C3 = C1 + C2 when it is listed in [design] conditions).
 # The judge checks each quoted piece of evidence; a decision is escalated to the human review queue
