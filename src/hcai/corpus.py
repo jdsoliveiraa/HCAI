@@ -63,8 +63,9 @@ from hcai.variants import (
 
 MANIFEST = "manifest.json"
 PARTIAL = "partial"  # <corpus>/partial/<lang>/: the valid translations of a language not yet complete
-# A safety stop on how long a chain of attempts (cached replays plus new calls) can grow across reruns.
-MAX_CHAIN = 200
+PARTIAL_SOURCE = "source.json"  # partial/<lang>/source.json: the generator model, temperature and seed behind it
+# A safety stop against a client that only ever serves cached answers; far beyond any real chain of reruns.
+MAX_CHAIN = 10_000
 LANGUAGE = "en"  # job ads and base CVs are written in English, then translated into the other design languages
 TRANSLATION_LANGUAGES = {"pt": "European Portuguese (PT-PT, as written in Portugal; never Brazilian Portuguese)"}
 # Translations should be faithful, not creative: the generator translates at temperature 0.
@@ -306,7 +307,7 @@ def generate_corpus(
     if (out / MANIFEST).exists() and not force:
         corpus = load_corpus(out)
         _check_same_design(corpus, design, out)
-        missing = [lang for lang in languages if lang not in corpus.translated_job_ads]
+        missing = _unfinished(corpus, languages, out)
         if not missing:
             raise CorpusFrozen(f"corpus {out} is frozen; pass force=True (--force) to regenerate, or bump the version")
         return _translate_languages(cached, design, generator, corpus, missing, attempts, out, restart=False)
@@ -357,11 +358,17 @@ def translate_corpus(
     languages = _translation_languages(design)
     attempts = generator.max_attempts if max_attempts is None else max_attempts
     corpus = load_corpus(design.corpus_dir)
-    targets = languages if force else [lang for lang in languages if lang not in corpus.translated_job_ads]
+    targets = languages if force else _unfinished(corpus, languages, design.corpus_dir)
     if not targets:
         raise CorpusFrozen(f"corpus {design.corpus_dir} already has {languages}; pass force=True (--force) to retranslate")
     cached = CachedClient(client, cache_dir, cache_unparseable=False)
-    return _translate_languages(cached, design, generator, corpus, targets, attempts, design.corpus_dir, restart=force)
+    # Kept translations are reused (also by --force) when the same generator, temperature and seed made them.
+    return _translate_languages(cached, design, generator, corpus, targets, attempts, design.corpus_dir, restart=False)
+
+
+def _unfinished(corpus: Corpus, languages: list[str], out: Path) -> list[str]:
+    """The languages not yet in the corpus, or whose (re)translation was interrupted (kept under `partial/`)."""
+    return [lang for lang in languages if lang not in corpus.translated_job_ads or (out / PARTIAL / lang).exists()]
 
 
 def load_corpus(corpus_dir: str | Path) -> Corpus:
@@ -428,7 +435,8 @@ def _ask(
     while new_calls < max_attempts:
         attempt += 1
         if attempt > MAX_CHAIN:
-            raise _Exhausted(f"gave up after {MAX_CHAIN} attempts in all; last: {reason}")
+            raise _Exhausted(f"gave up after {MAX_CHAIN} attempts in all (delete this document's cache entries "
+                             f"to start its chain again); last: {reason}")
         content = prompt
         if attempt > 1:
             # Changes the request, so the cached invalid answer is not served again.
@@ -443,10 +451,26 @@ def _ask(
         if not response.cached:
             new_calls += 1
         try:
-            return validate(response.parsed)
+            return _validated(validate, response.parsed)
         except _Invalid as e:
             reason = str(e)
     raise _Exhausted(reason)
+
+
+def _validated(validate, parsed: Any):
+    """`validate(parsed)`, with a crash on a malformed answer (e.g. a job without 'employer') as `_Invalid`, so
+    the answer is retried like any other invalid one instead of aborting the run (it is cached already)."""
+    try:
+        return validate(parsed)
+    except (KeyError, TypeError, AttributeError, IndexError) as e:
+        raise _Invalid(f"the answer is malformed ({type(e).__name__}: {e}); follow the schema exactly") from e
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, role: str, max_attempts: int) -> JobAd:
@@ -524,7 +548,8 @@ def _translate_languages(
 ) -> Corpus:
     """Translate the frozen `corpus` at `out` into `languages`, adding each complete one to it on disk.
 
-    `restart` discards the kept translations of an unfinished language first. Raises `GenerationFailed` with
+    `restart` discards the kept translations of an unfinished language first (they are also discarded when a
+    different generator model, temperature or seed made them). Raises `GenerationFailed` with
     every document still invalid, after the other documents (and languages) are done.
     """
     failures: list[DocumentFailure] = []
@@ -553,15 +578,16 @@ def _translate_language(
     otherwise `corpus` is returned unchanged with the failures.
     """
     partial = out / PARTIAL / language
-    if restart and partial.exists():
-        shutil.rmtree(partial)
+    source = {"model": generator.model, "temperature": TRANSLATION_TEMPERATURE, "seed": design.seed}
+    if partial.exists() and (restart or _read_json(partial / PARTIAL_SOURCE) != source):
+        shutil.rmtree(partial)  # a translation by another generator setup would be misattributed in the manifest
     failures: list[DocumentFailure] = []
 
     def translate(document: str, prompt: str, schema: dict, validate) -> dict[str, Any] | None:
         path = partial / f"{document}.json"
         if path.exists():  # kept by an earlier run: re-checked, so a stricter check still applies
             try:
-                return validate(json.loads(path.read_text()))
+                return _validated(validate, json.loads(path.read_text()))
             except (_Invalid, json.JSONDecodeError):
                 pass
         try:
@@ -570,6 +596,9 @@ def _translate_language(
         except _Exhausted as e:
             failures.append(DocumentFailure(document, language, str(e)))
             return None
+        if not (partial / PARTIAL_SOURCE).exists():
+            partial.mkdir(parents=True, exist_ok=True)
+            (partial / PARTIAL_SOURCE).write_text(json.dumps(source) + "\n")
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
@@ -669,8 +698,10 @@ def _cv_translation(cv: BaseCV, language: str) -> tuple[str, dict, Any]:
                 _check_same_numbers(source, repaired)
                 _check_dialect(repaired, language)
                 _check_translation_renders(repaired, language)
-            except _Invalid:
-                raise _Invalid(_slot_feedback(parsed, language) or "the translation breaks the slot rules") from None
+            except _Invalid as still:
+                # name both the words the repair would slot and what the repaired text still gets wrong
+                raise _Invalid(f"{_slot_feedback(parsed, language) or 'the translation breaks the slot rules'}. "
+                               f"Even with those slotted, {still}") from None
             return repaired
         return parsed
 
@@ -809,7 +840,8 @@ def _slot_before(text: str, position: int) -> re.Match[str] | None:
 
 
 # Pronouns never agree with a preceding noun phrase: they are not repaired.
-_NOT_REPAIRED = {"ele", "ela", "dele", "dela"}
+# 'certificado' and 'mestrado' are also nouns (a certificate, a master's degree): slotting them could inflect a noun.
+_NOT_REPAIRED = {"ele", "ela", "dele", "dela", "certificado", "certificada", "mestrado", "mestrada"}
 
 
 def _repair_slots(parsed: dict[str, Any], language: str) -> dict[str, Any] | None:

@@ -547,7 +547,7 @@ def test_a_failing_translation_keeps_the_frozen_english_corpus_and_the_valid_tra
     assert corpus.languages == ["en"] and len(corpus.base_cvs) == 12
     assert not list(bilingual_design.corpus_dir.rglob("*.pt.md"))
     partial = bilingual_design.corpus_dir / "partial" / "pt"
-    kept = sorted(str(p.relative_to(partial)) for p in partial.rglob("*.json"))
+    kept = sorted(str(p.relative_to(partial)) for p in partial.rglob("*.json") if p.name != "source.json")
     assert kept == sorted([f"{role}/job_ad.json" for role in ["nurse", "accountant"]]
                           + [f"{cv.id}.json" for cv in corpus.base_cvs if cv.id != FAILING])
 
@@ -745,3 +745,93 @@ def test_the_corpus_command_names_the_failed_documents_exits_1_and_resumes(tmp_p
     assert main(args) == 0
     assert "in en, pt" in capsys.readouterr().out
     assert load_corpus(corpus_dir).languages == ["en", "pt"]
+
+
+def fail_once(design: Design, tmp_path: Path, cache: str = "cache") -> None:
+    with pytest.raises(GenerationFailed):
+        generate_corpus(design, FakeLLMClient(resumable_responder(pt_cv_response(summary=LEAKY))),
+                        cache_dir=tmp_path / cache)
+
+
+def test_kept_translations_are_resumed_from_disk_without_the_cache(bilingual_design, tmp_path):
+    fail_once(bilingual_design, tmp_path)
+
+    fixed = FakeLLMClient(resumable_responder())
+    corpus = generate_corpus(bilingual_design, fixed, cache_dir=tmp_path / "empty-cache")
+
+    assert translation_calls(fixed) == fixed.calls and len(fixed.calls) == 1  # only the failing document
+    assert corpus.languages == ["en", "pt"]
+
+
+def test_a_kept_translation_that_no_longer_passes_the_checks_is_asked_again(bilingual_design, tmp_path):
+    fail_once(bilingual_design, tmp_path)
+    stale = bilingual_design.corpus_dir / "partial" / "pt" / "accountant" / "weak" / "cv02.json"
+    stale.write_text(json.dumps(pt_cv_response(summary=LEAKY)))  # e.g. kept before a check became stricter
+    (bilingual_design.corpus_dir / "partial" / "pt" / "nurse" / "job_ad.json").write_text("{not json")
+
+    fixed = FakeLLMClient(resumable_responder())
+    corpus = generate_corpus(bilingual_design, fixed, cache_dir=tmp_path / "empty-cache")
+
+    asked = {c.messages[-1]["content"].split("It is CV ")[1].split(" ")[0] if "It is CV " in c.messages[-1]["content"]
+             else "job_ad" for c in fixed.calls}
+    assert asked == {FAILING, "accountant/weak/cv02", "job_ad"} and len(fixed.calls) == 3
+    assert all(cv.translations["pt"] == pt_cv_response() for cv in corpus.base_cvs)
+
+
+def test_kept_translations_by_another_generator_are_discarded(bilingual_design, tmp_path):
+    fail_once(bilingual_design, tmp_path)
+
+    other = replace(bilingual_design, generator=Generator(model="generator/other"))
+    client = FakeLLMClient(resumable_responder())
+    corpus = generate_corpus(other, client, cache_dir=tmp_path / "cache")
+
+    assert len(client.calls) == 2 + 12 and {c.model for c in client.calls} == {"generator/other"}
+    assert corpus.translated_by["pt"].model == "generator/other"
+
+
+def test_an_answer_that_crashes_a_check_is_retried_and_does_not_trap_a_rerun(bilingual_design, tmp_path):
+    broken = pt_cv_response()
+    broken["experience"] = [{k: v for k, v in broken["experience"][0].items() if k != "employer"}]
+    with pytest.raises(GenerationFailed, match="malformed") as failed:
+        generate_corpus(bilingual_design, FakeLLMClient(resumable_responder(broken)), cache_dir=tmp_path / "cache")
+    assert [f.document for f in failed.value.failures] == [FAILING]  # the other documents were still done
+
+    fixed = FakeLLMClient(resumable_responder())
+    corpus = generate_corpus(bilingual_design, fixed, cache_dir=tmp_path / "cache")
+    assert len(fixed.calls) == 1 and corpus.languages == ["en", "pt"]
+
+
+def test_an_interrupted_forced_retranslation_resumes_without_force(bilingual_design, tmp_path):
+    generate_corpus(bilingual_design, FakeLLMClient(resumable_responder()), cache_dir=tmp_path / "cache")
+    before = load_corpus(bilingual_design.corpus_dir)
+    other = replace(bilingual_design, generator=Generator(model="generator/other"))
+
+    with pytest.raises(GenerationFailed):
+        translate_corpus(other, FakeLLMClient(resumable_responder(pt_cv_response(summary=LEAKY))),
+                         cache_dir=tmp_path / "cache", force=True)
+    assert load_corpus(bilingual_design.corpus_dir) == before  # the complete translation is still in place
+
+    fixed = FakeLLMClient(resumable_responder())
+    corpus = translate_corpus(other, fixed, cache_dir=tmp_path / "fresh-cache")
+    assert len(fixed.calls) == 1 and corpus.translated_by["pt"].model == "generator/other"
+    assert not (bilingual_design.corpus_dir / "partial").exists()
+
+
+def test_a_repair_that_still_fails_a_check_is_not_kept_and_the_retry_names_the_real_problem(bilingual_design, tmp_path):
+    # Slotting 'dedicado' fixes the slot rules, but 'escolhido' still leaks from its slot (the diff check).
+    summary = "{{Analista escolhido|Analista escolhida}} e {{Enfermeiro|Enfermeira}} dedicado, escolhido abaixo de $5k."
+    client = FakeLLMClient(resumable_responder(pt_cv_response(summary=summary)))
+
+    with pytest.raises(GenerationFailed) as failed:
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    reason = failed.value.failures[0].reason
+    assert "'dedicado'" in reason and "Even with those slotted" in reason and "escolhido" in reason.split("Even")[1]
+
+
+def test_certificado_after_a_candidate_slot_is_not_repaired_as_it_may_be_a_noun(bilingual_design, tmp_path):
+    summary = "{{Técnico|Técnica}} Certificado de Aptidão abaixo de $5k."
+    client = FakeLLMClient(resumable_responder(pt_cv_response(summary=summary)))
+
+    with pytest.raises(GenerationFailed, match="Certificado"):
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
