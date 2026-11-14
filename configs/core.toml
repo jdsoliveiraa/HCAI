@@ -11,8 +11,11 @@ base_cvs_per_role = 3
 languages = ["en", "pt"]
 # C0 baseline, C1 blinding, C2 rubric + judge + escalation. C3 (C1 + C2) is a stretch goal: add "C3" to run it.
 conditions = ["C0", "C1", "C2"]
-# Placeholder pipeline models (one commercial, one open-weight); the concrete ids are chosen in the pilot.
-models = ["openai/gpt-4o-mini", "meta-llama/llama-3.3-70b-instruct"]
+# Pipeline models, pinned in the pilot (#11 Part B, 2026-11-14; probe results in docs/pilot/check-2026-11-14.json):
+# gpt-5.6-luna (proprietary) and qwen3.8-flash (open-weight), both on OpenCode Go. Both return JSON-schema output;
+# chosen among the working candidates for low token use per call (Go budget). Neither is deterministic at
+# temperature 0 nor honours the seed, so run-to-run variation is measured by the stability sample.
+models = ["gpt-5.6-luna", "qwen3.8-flash"]
 temperature = 0.0
 seed = 42
 corpus_dir = "../data/corpus/v1"
@@ -20,8 +23,8 @@ corpus_dir = "../data/corpus/v1"
 name_bank = "../data/names/name_bank.toml"
 
 [generator]
-# A third model family, never one of the audited pipeline models (placeholder until the pilot).
-model = "google/gemini-2.5-flash"
+# A third model family, never one of the audited pipeline models: gemini-4-argon (Google), pinned in the pilot.
+model = "gemini-4-argon"
 temperature = 0.7
 # Borderline base CVs per role, by quality level: they meet every mandatory requirement, but only just.
 borderline = { average = 1, weak = 1 }
@@ -31,7 +34,7 @@ borderline = { average = 1, weak = 1 }
 # (review_queue.csv) when a quote is flagged or the score is within `margin` points of the shortlist cutoff.
 [oversight]
 # judge_model defaults to [generator] model (the third model family).
-# judge_model = "google/gemini-2.5-flash"
+# judge_model = "gemini-4-argon"
 # "median" (the median Evaluator score of the role x language x condition x model) or a fixed score, e.g. 70.
 cutoff = "median"
 margin = 5
@@ -70,11 +73,10 @@ mixed_quality = 1
 # Which provider serves each model (pipeline models, generator, judge): "opencode-go" (the OpenCode Go
 # subscription, the default for any model not listed) or "openrouter" (pay per token, the fallback).
 # Switching a model is this one line; ids are the provider's own, so a switch may also need the id changed.
-# The placeholder ids above are OpenRouter ids until the pilot pins OpenCode Go ones.
 [model_providers]
-"openai/gpt-4o-mini" = "openrouter"
-"meta-llama/llama-3.3-70b-instruct" = "openrouter"
-"google/gemini-2.5-flash" = "openrouter"
+"gpt-5.6-luna" = "opencode-go"
+"qwen3.8-flash" = "opencode-go"
+"gemini-4-argon" = "opencode-go"
 
 # Built-in providers (override base_url, key_env or billing here, or add another with base_url and key_env):
 # [providers.opencode-go]
