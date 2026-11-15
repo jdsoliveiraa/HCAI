@@ -218,6 +218,11 @@ def test_diff_check_fails_for_a_variant_with_the_other_gender_s_form(variant_des
     ("# $name\nEnfermeira dedicado ao registo\n", "pt"),  # a job title before it
     ("# $name\nRegisto rigorosa de avaliações\n", "pt"),  # does not agree with the noun's gender
     ("# $name\n{{Técnico|Técnica}} de controlo rigoroso\n", "pt"),  # a candidate slot earlier in its clause
+    ("# $name\n{{Enfermeiro Esp.|Enfermeira Esp.}} dedicado acompanhamento\n", "pt"),  # a '.' inside the slot
+    ("# $name\nProfissional com rigoroso controlo\n", "pt"),  # a person word earlier in the clause
+    ("# $name\nDocente de curso especializado\n", "pt"),  # a person word earlier in the clause
+    ("# $name\nSou capaz e estou dedicado ao registo\n", "pt"),  # a verb about the candidate earlier
+    ("# $name\nTrabalho focado em resultados\n", "pt"),  # 'Trabalho' is 'I work' here, not a noun
 ])
 def test_templates_that_break_the_slot_rules_are_rejected(template, language):
     with pytest.raises(TemplateError):

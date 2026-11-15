@@ -102,16 +102,19 @@ AGREEING_WORDS: dict[str, set[str]] = {
         ("distinguido", "distinguida"), ("promovido", "promovida"), ("contratado", "contratada"),
     ] for form in pair},
 }
-# Singular common nouns of CV text that never denote a person, by gender ("m"/"f").
+# Singular common nouns of CV text that never denote a person, by gender ("m"/"f"). Nouns that are also a
+# first-person verb that can take a predicative adjective ("Trabalho focado em resultados" = "I work focused
+# on results") are left out: trabalho, estudo, ensino, apoio, ensaio, teste, programa, arquivo, reporte, fecho,
+# balanço. The verb homographs kept (registo, controlo, processo, documento, modelo, ...) are transitive, so an
+# adjective right after them cannot describe the subject.
 AGREEMENT_NOUNS: dict[str, dict[str, str]] = {
     "pt": {
         **dict.fromkeys([
             "registo", "controlo", "acompanhamento", "cumprimento", "planeamento", "atendimento", "cuidado",
-            "tratamento", "procedimento", "protocolo", "processo", "projeto", "trabalho", "serviço", "sistema",
-            "plano", "programa", "relatório", "estudo", "ensino", "apoio", "curso", "desenvolvimento",
-            "levantamento", "inventário", "código", "produto", "documento", "ensaio", "teste", "modelo",
-            "método", "seguimento", "rastreio", "diagnóstico", "orçamento", "suporte", "fecho", "reporte",
-            "arquivo", "circuito", "ciclo", "fluxo", "lançamento", "pagamento", "balanço", "cálculo",
+            "tratamento", "procedimento", "protocolo", "processo", "projeto", "serviço", "sistema",
+            "plano", "relatório", "curso", "desenvolvimento",
+            "levantamento", "inventário", "código", "produto", "documento", "modelo",
+            "método", "seguimento", "rastreio", "diagnóstico", "orçamento", "suporte", "circuito", "ciclo", "fluxo", "lançamento", "pagamento", "cálculo",
         ], "m"),
         **dict.fromkeys([
             "gestão", "avaliação", "análise", "monitorização", "documentação", "formação", "abordagem",
@@ -128,7 +131,8 @@ AGREEMENT_NOUNS: dict[str, dict[str, str]] = {
 CANDIDATE_WORDS: dict[str, set[str]] = {
     "pt": {"profissional", "pessoa", "membro", "elemento", "especialista", "responsável", "líder", "perfil",
            "colega", "analista", "assistente", "gerente", "chefe", "jovem", "auxiliar", "farmacêutico",
-           "farmacêutica", "contabilista", "economista", "sou", "estou", "fui"},
+           "farmacêutica", "contabilista", "economista", "docente", "estudante", "trabalhador", "trabalhadora",
+           "aluno", "aluna", "pai", "mãe", "eu", "sou", "estou", "fui", "trabalho", "estudo"},
 }
 _AGREEMENT_FORMS = {"pt": {masc: "m" for masc, _ in GENDERED_WORD_PAIRS["pt"]}
                     | {fem: "f" for _, fem in GENDERED_WORD_PAIRS["pt"]}}
@@ -235,7 +239,9 @@ def _agrees_with_a_noun(text: str, tokens: list[re.Match[str]], i: int, language
     if not any(nouns.get(n) == gender for n in neighbours):
         return False
     # The clause before the word must not name the candidate: no candidate slot, no person word.
-    clause_start = max((m.end() for m in _CLAUSE_BREAK.finditer(text, 0, tokens[i].start())), default=0)
+    # Punctuation inside a slot ("{{Enfermeiro Esp.|Enfermeira Esp.}}") does not end a clause.
+    unslotted = _ALTERNATION.sub(lambda m: "\0" * len(m.group(0)), text)
+    clause_start = max((m.end() for m in _CLAUSE_BREAK.finditer(unslotted, 0, tokens[i].start())), default=0)
     clause = text[clause_start: tokens[i].start()]
     if any(m.group(1) != m.group(2) for m in _ALTERNATION.finditer(clause)):
         return False

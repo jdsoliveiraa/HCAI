@@ -22,13 +22,19 @@ A slot-only word outside a slot is accepted as written when all of these hold (`
 2. The word right before or right after it, separated by exactly one space (no punctuation, no line break, no
    slot), is a curated singular common noun that never denotes a person (`registo`, `controlo`,
    `acompanhamento`, `gestão`, `avaliação`, ...) of the same gender. The listed forms are all singular, so number
-   agrees too.
-3. Its clause (since the last `, ; : . ! ?` or line break) has, before it, no slot whose two forms differ and no
-   word that refers to a person: a job title of the guard list or a gender-invariant person word (`profissional`,
-   `especialista`, `responsável`, `perfil`, ...).
+   agrees too. Nouns that are also a first-person verb able to take a predicative adjective are left out
+   (`trabalho`, `estudo`, `ensino`, `apoio`, ...: "Trabalho focado em resultados" means "I work focused on
+   results"); the verb homographs kept (`registo`, `controlo`, `processo`, ...) are transitive, so the adjective
+   after them cannot describe the subject.
+3. Its clause (since the last `, ; : . ! ?` or line break outside a slot, so "{{Enfermeiro Esp.|Enfermeira
+   Esp.}}" does not end one) has, before it, no slot whose two forms differ and no word that refers to a person:
+   a job title of the guard list or a gender-invariant person word (`profissional`, `especialista`, `docente`,
+   `estudante`, `eu`, `sou`, ...).
 
 The template validator, the translation's retry feedback and the "slot word also used outside a slot" check all use
-the same rule, so a template the corpus accepts also renders.
+the same rule, so a template the corpus accepts also renders. The Blinder's proxy-leak report (`hcai.blinding`)
+does not count such a word as a surviving gendered word either; otherwise a masculine "registo rigoroso" left in
+a rewritten line would count as an other-gender word for every female variant.
 
 ## Consequences
 

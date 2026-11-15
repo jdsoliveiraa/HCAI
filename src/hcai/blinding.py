@@ -22,7 +22,8 @@ from hcai.config import Design
 from hcai.llm import LLMClient, LLMRequest
 from hcai.pipeline import AgentOutput, ClientLLM, Retry
 from hcai.variants import (
-    NATIONALITY_LABEL, PRONOUN_PAIRS, SLOT_ONLY_WORDS, WORK_ELIGIBILITY, Variant, build_variants, gendered_pairs,
+    AGREEING_WORDS, NATIONALITY_LABEL, PRONOUN_PAIRS, SLOT_ONLY_WORDS, WORK_ELIGIBILITY, Variant, build_variants,
+    gendered_pairs, noun_agreeing_matches,
 )
 
 if TYPE_CHECKING:
@@ -279,8 +280,11 @@ def _gendered_words(text: str, cues: Cues, v: Variant) -> tuple[list[str], list[
     own: list[str] = []
     other: list[str] = []
     for line in _unshared(text, cues):
-        for word in re.findall(r"\w+", line):
-            if word.lower() not in SLOT_ONLY_WORDS[v.language] or word in _ACRONYMS:
+        # an adjective agreeing with an adjacent non-candidate noun ("registo rigoroso") is no gender cue (ADR 0007)
+        agreeing = {m.start() for m in noun_agreeing_matches(line, v.language)} if v.language in AGREEING_WORDS else set()
+        for m in re.finditer(r"\w+", line):
+            word = m.group(0)
+            if word.lower() not in SLOT_ONLY_WORDS[v.language] or word in _ACRONYMS or m.start() in agreeing:
                 continue
             # Every PT-PT feminine form in the list ends in -a and no masculine one does.
             feminine = word.lower() in _FEMININE_EN if v.language == "en" else word.lower().endswith("a")

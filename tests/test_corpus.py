@@ -722,6 +722,17 @@ def test_a_noun_agreeing_adjective_may_also_be_a_candidate_slot_form_elsewhere(b
     assert "Enfermeira rigorosa" in texts["female"] and "Registo rigoroso de" in texts["female"]
 
 
+def test_a_slot_word_used_outside_a_slot_next_to_a_noun_of_the_other_gender_is_still_rejected(bilingual_design, tmp_path):
+    summary = "{{Enfermeiro rigoroso|Enfermeira rigorosa}} com custos abaixo de $5k."
+    answer = pt_cv_with_bullet("Registo rigorosa de avaliações com a equipa.", summary=summary)
+    client = FakeLLMClient(resumable_responder(answer))
+
+    with pytest.raises(GenerationFailed) as failed:
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert "'rigorosa'" in failed.value.failures[0].reason
+
+
 @pytest.mark.parametrize("field, text, word", [
     ("summary", "Profissional rigoroso com custos abaixo de $5k.", "rigoroso"),
     ("summary", "Rigoroso e dedicado, com custos abaixo de $5k.", "Rigoroso"),
@@ -730,6 +741,7 @@ def test_a_noun_agreeing_adjective_may_also_be_a_candidate_slot_form_elsewhere(b
     ("bullet", "Registo rigorosa de avaliações com a equipa.", "rigorosa"),  # the noun is masculine
     ("bullet", "Fez o controlo rigoroso e organizado da equipa.", "organizado"),  # not next to the noun
     ("bullet", "Fez o controlo, rigoroso, da equipa.", "rigoroso"),  # punctuation in between
+    ("bullet", "Trabalho focado na equipa.", "focado"),  # 'Trabalho' is 'I work': a self-description
 ])
 def test_a_gendered_word_that_may_describe_the_candidate_is_still_rejected(bilingual_design, tmp_path, field, text, word):
     answer = pt_cv_with_bullet(text) if field == "bullet" else pt_cv_response(summary=text)
