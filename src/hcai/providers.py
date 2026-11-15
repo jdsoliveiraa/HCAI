@@ -151,7 +151,8 @@ def http_client(provider: Provider, environ: Mapping[str, str] | None = None,
     env = os.environ if environ is None else environ
     check_keys([provider], env)
     return OpenAICompatibleClient(provider.base_url, env[provider.key_env], name=provider.name,
-                                  usage_include=provider.usage_include, http=http,
+                                  usage_include=provider.usage_include,
+                                  subscription=provider.billing == "subscription", http=http,
                                   headers=provider.http_headers())
 
 

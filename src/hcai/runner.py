@@ -63,6 +63,11 @@ class ResultRow:
     # no Evaluator score, "evaluator missing", "screener missing" or "blinding failed"
     escalation_reason: str = ""
     judge_model: str = ""  # judge rows: the model that judged (`model` stays the pipeline model it judged)
+    # OpenCode Go: dollars this row's calls took from the Go allowance (also when served from the cache), and
+    # what billed them ("go", or e.g. "balance" for Extra Usage; "+"-joined if the attempts differ). Blank when
+    # the provider reported neither (another provider, or a cache entry from before these fields).
+    allowance: float | None = None
+    billing_source: str = ""
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
 
 
@@ -181,7 +186,8 @@ def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[
 
     The prompt and completion tokens are scaled the same way (`estimated_full_tokens`): what a subscription's
     usage budget is spent on. When the provider gave no price for some pilot calls, `estimated_full_cost` is
-    None (unknown).
+    None (unknown). On OpenCode Go, `estimated_full_allowance` scales the dollars taken from the Go allowance
+    the same way; it is None unless every pilot call that answered reported its allowance.
 
     Rough: it assumes the full run screens in as many CVs as the pilot did and costs the same per CV. The
     stability sample is added as its expected share (`repeat_fraction x repeats`) of the scaled cost of the
@@ -223,9 +229,16 @@ def _pilot_estimate(pilot: Design, full: Design, rows: list[ResultRow]) -> dict[
     tokens = {kind: round(total(scale(lambda r, k=kind: float(getattr(r, f"{k}_tokens")))[0]))
               for kind in ("prompt", "completion")}
     unpriced = any(r.cost is None for r in rows)
+    # a row with tokens but no allowance was billed without one (another provider, an older cache entry); a row
+    # with neither had no answer at all (every attempt failed), so it took nothing
+    no_allowance = (not any(r.allowance is not None for r in rows)
+                    or any(r.allowance is None and (r.prompt_tokens or r.completion_tokens) for r in rows))
+    allowance = None if no_allowance else round(total(scale(lambda r: r.allowance or 0.0)[0]), 4)
     return dict(cv_scale=round(cv_scale, 4), ranker_scale=round(ranker_scale, 4),
                 # None when the pilot's provider reported no price for some calls (a subscription)
                 estimated_full_cost=None if unpriced else round(total(by_agent), 4),
+                # None unless every pilot call reported what it took from the Go allowance (OpenCode Go)
+                estimated_full_allowance=allowance,
                 by_agent={} if unpriced else {a: round(c, 4) for a, c in by_agent.items()},
                 estimated_full_tokens=tokens, unestimated=sorted(unestimated))
 
@@ -258,6 +271,13 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
     - Costs sum the known prices only: `unpriced_attempts` and `unpriced_calls` count the calls the provider
       gave no price for (their cost is unknown, e.g. on a subscription; their tokens are counted). With the
       design, each model also names its `provider` and `billing` ("metered" or "subscription").
+    - OpenCode Go: `allowance_total` and `allowance_spent` are the dollars taken from the Go allowance by the
+      outputs and by this run's calls; `balance_spent` what this run's calls billed elsewhere (Extra Usage);
+      `billing_sources` this run's calls per billing source; `not_go_calls` counts this run's calls not
+      billed to "go", and `not_go_attempts` the attempts of output rows with any such call (a row mixing
+      "go" and another source counts all its attempts). A call naming no billing source ("unknown") is
+      counted at its allowance and flagged. Rows and calls without the
+      `usage.opencode` block (another provider, older cache entries) add nothing to these.
     - `missing_session_errors`: calls the provider refused for a missing or rejected session header (HTTP 400
       MissingSessionID; a warning is printed the first time). Their rows are missing like any failed call.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
@@ -275,13 +295,23 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
             completion_tokens=sum(r.completion_tokens for r in subset),
             cost_total=round(sum(r.cost or 0.0 for r in subset), 6),
             unpriced_attempts=sum(r.attempts for r in subset if r.cost is None),
+            allowance_total=round(sum(r.allowance or 0.0 for r in subset), 6),
+            not_go_attempts=sum(r.attempts for r in subset if r.billing_source not in ("", "go")),
         )
 
     def spent(models: list[str], subset: list[ResultRow]) -> dict[str, Any]:
         calls = sum(meter.calls.get(m, 0) for m in models)
+        sources: dict[str, int] = {}
+        for m in models:
+            for source, n in meter.billing.get(m, {}).items():
+                sources[source] = sources.get(source, 0) + n
         return dict(calls=calls, cache_hits=sum(r.attempts for r in subset) - calls,
                     cost_spent=round(sum(meter.cost.get(m, 0.0) for m in models), 6),
                     unpriced_calls=sum(meter.unpriced.get(m, 0) for m in models),
+                    allowance_spent=round(sum(meter.allowance.get(m, 0.0) for m in models), 6),
+                    balance_spent=round(sum(meter.balance.get(m, 0.0) for m in models), 6),
+                    billing_sources=sources,
+                    not_go_calls=sum(n for s, n in sources.items() if s != "go"),
                     missing_session_errors=sum(meter.missing_session.get(m, 0) for m in models))
 
     status: dict[str, int] = {}
@@ -430,10 +460,12 @@ class _Context:
 
 def _usage(out: AgentOutput) -> dict[str, Any]:
     return dict(prompt_tokens=out.usage.prompt_tokens, completion_tokens=out.usage.completion_tokens,
-                cost=out.usage.cost, cached=out.cached, attempts=out.attempts)
+                cost=out.usage.cost, cached=out.cached, attempts=out.attempts,
+                allowance=out.usage.allowance, billing_source=out.usage.billing_source or "")
 
 
-_NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False, attempts=0)
+_NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False, attempts=0,
+                                allowance=None, billing_source="")
 
 
 def _screen_and_evaluate(ctx: _Context, v: Variant) -> tuple[ResultRow, ResultRow]:
@@ -594,5 +626,8 @@ def _parse_row(raw: dict[str, str]) -> ResultRow:
     for k in _INT_FIELDS:
         values[k] = int(raw.get(k) or 0)  # `attempts` and `repeat` are absent from tables written before #6
     values["cost"] = float(raw["cost"]) if raw.get("cost") else None  # blank: the provider gave no price
+    values["allowance"] = float(raw["allowance"]) if raw.get("allowance") else None  # absent before #11 Part B
+    if "billing_source" not in raw and values["cost"] == 0 and (values["prompt_tokens"] or values["completion_tokens"]):
+        values["cost"] = None  # a table from before #11 Part B: OpenCode Go's 0 was misread as a price
     values["cached"] = raw["cached"] == "True"
     return ResultRow(**values)

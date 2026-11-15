@@ -20,6 +20,7 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from hcai.blinding import fake_blinding
 from hcai.check import ProbeResult, format_probes, probe_model
@@ -31,6 +32,27 @@ from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv,
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
 from hcai.runner import execute
 from hcai.variants import IdentityError, TemplateError, VariantCheckError, build_variants, write_variants
+
+
+def _go_billing_summary(totals: dict[str, Any]) -> str:
+    """The OpenCode Go lines of the run summary: allowance spent per model and overall, and calls billed elsewhere."""
+    models = {m: t for m, t in totals["by_model"].items()
+              if t["billing_sources"] or t["allowance_total"] or t["not_go_attempts"]}
+    if not models:
+        return ""
+    out = (f"\nGo allowance: ${totals['allowance_spent']:.4f} spent this run "
+           f"(the outputs took ${totals['allowance_total']:.4f} in all)")
+    for m, t in models.items():
+        out += f"\n  {m}: ${t['allowance_spent']:.4f} this run (${t['allowance_total']:.4f} in all)"
+    if totals["not_go_calls"] or totals["not_go_attempts"]:
+        elsewhere = ", ".join(f"{s} x{n}" for s, n in sorted(totals["billing_sources"].items()) if s != "go")
+        out += (f"\nWARNING: {totals['not_go_calls']} calls this run ({totals['not_go_attempts']} attempts in all) "
+                f"were not billed to the Go allowance" + (f" ({elsewhere})" if elsewhere else "")
+                + f"; ${totals['balance_spent']:.4f} billed elsewhere (e.g. the pay-as-you-go balance) this run")
+        if totals["billing_sources"].get("unknown"):
+            out += (f"; {totals['billing_sources']['unknown']} calls named no billing source "
+                    "(counted at their allowance)")
+    return out
 
 
 def run_command(
@@ -55,11 +77,14 @@ def run_command(
                     f"({totals['unpriced_attempts']} in all): no price reported"
                     + (f" ({', '.join(billing)})" if billing else ""))
     summary += f" -> {Path(out_dir) / 'results.csv'}, {Path(out_dir) / 'run_summary.json'}"
+    summary += _go_billing_summary(totals)
     if "pilot" in totals:
         p = totals["pilot"]
         tokens = p["estimated_full_tokens"]
         cost = ("unknown (no price reported)" if p["estimated_full_cost"] is None
                 else f"${p['estimated_full_cost']:.2f}")
+        if p.get("estimated_full_allowance") is not None:
+            cost += f" (${p['estimated_full_allowance']:.2f} of it from the Go allowance)"
         summary += (f"\npilot: the full design has {p['cv_scale']:g}x these CVs and {p['ranker_scale']:g}x the "
                     f"Ranker load; estimated full-run cost {cost}, {tokens['prompt']} prompt + "
                     f"{tokens['completion']} completion tokens (before caching)")

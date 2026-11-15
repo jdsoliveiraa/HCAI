@@ -14,7 +14,7 @@ import sys
 import time
 from email.utils import parsedate_to_datetime
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -49,7 +49,30 @@ class LLMRequest:
 class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cost: float | None = 0.0  # None: the provider reported no price (e.g. a subscription): cost unknown
+    # What the call cost in dollars, from whichever source paid it; None: no price reported (cost unknown).
+    # On OpenCode Go it is what the call took from the Go allowance, or, billed elsewhere, from the balance.
+    cost: float | None = 0.0
+    # OpenCode Go's `usage.opencode` (None when the answer has none, e.g. OpenRouter or a cache entry from
+    # before these fields): `billing_source` is "go" (the subscription allowance) or what paid instead (e.g.
+    # "balance" once Extra Usage kicks in), "+"-joined when the attempts behind one output differ;
+    # `allowance` the dollars taken from the Go allowance (0 when billed elsewhere); `list_cost` the price
+    # at list rates.
+    billing_source: str | None = None
+    allowance: float | None = None
+    list_cost: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Usage:
+        """A `Usage` from its `asdict` form; missing fields (an older cache entry) take their defaults.
+
+        An entry cached before `billing_source` was recorded (#11 Part B) with a cost of 0 is an OpenCode Go
+        call whose 0 was misread as a price: its cost is unknown (None), not free.
+        """
+        known = {f.name for f in fields(cls)}
+        usage = cls(**{k: v for k, v in data.items() if k in known})
+        if "billing_source" not in data and usage.cost == 0:
+            usage = replace(usage, cost=None)
+        return usage
 
 
 @dataclass(frozen=True)
@@ -95,6 +118,60 @@ class FakeLLMClient:
 def add_costs(costs: list[float | None]) -> float | None:
     """The sum of `costs`, or None (unknown) when any of them is unknown."""
     return None if any(c is None for c in costs) else sum(c for c in costs if c is not None)
+
+
+def add_usage(usages: list[Usage]) -> Usage:
+    """The usage of several attempts behind one output: tokens summed, costs summed (None if any is unknown).
+
+    The Go allowance and list cost are None when no attempt reported them, and are otherwise summed like
+    costs (an attempt without them, e.g. from an older cache entry, makes them unknown).
+    """
+    reported = [u for u in usages if u.billing_source is not None]
+    sources = sorted({s for u in reported for s in (u.billing_source or "").split("+") if s})
+    return Usage(
+        prompt_tokens=sum(u.prompt_tokens for u in usages),
+        completion_tokens=sum(u.completion_tokens for u in usages),
+        cost=add_costs([u.cost for u in usages]),
+        billing_source="+".join(sources) if reported else None,
+        allowance=add_costs([u.allowance for u in usages]) if reported else None,
+        list_cost=add_costs([u.list_cost for u in usages]) if reported else None,
+    )
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return None if value is None or isinstance(value, bool) else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_usage(u: Any, *, subscription: bool = False) -> Usage:
+    """The `Usage` of a chat-completions `usage` block.
+
+    With OpenCode Go's `usage.opencode`, the cost is what the call took from its billing source: the
+    `allowance` when `billing_source` is "go", else the reported `cost`, or `list_cost` when that is 0 or
+    missing (the pay-as-you-go balance is charged at list price). Without it, a missing `cost` is unknown
+    (None), and so is a `cost` of 0 from a `subscription` provider, which prices nothing per call.
+    """
+    u = u if isinstance(u, dict) else {}
+    tokens: dict[str, Any] = dict(prompt_tokens=int(u.get("prompt_tokens", 0) or 0),
+                                  completion_tokens=int(u.get("completion_tokens", 0) or 0))
+    cost = _number(u.get("cost"))
+    oc = u.get("opencode")
+    if isinstance(oc, dict):
+        source = str(oc.get("billing_source") or "unknown")
+        allowance, list_cost = _number(oc.get("allowance")), _number(oc.get("list_cost"))
+        if source == "go":
+            return Usage(**tokens, cost=allowance, billing_source=source, allowance=allowance, list_cost=list_cost)
+        if source == "unknown":  # billed somewhere unnamed: what the allowance says it took, flagged as not go
+            return Usage(**tokens, cost=allowance if allowance is not None else cost, billing_source=source,
+                         allowance=allowance, list_cost=list_cost)
+        # billed elsewhere: its price, or the list price; a 0 with no list price is unknown, not free
+        return Usage(**tokens, cost=cost if cost else list_cost, billing_source=source, allowance=0.0,
+                     list_cost=list_cost)
+    if subscription and not cost:
+        cost = None
+    return Usage(**tokens, cost=cost)
 
 
 class RateLimited(Exception):
@@ -146,7 +223,8 @@ class OpenAICompatibleClient:
 
     The key is sent only in the Authorization header: it is never part of a request, response or error text
     (an error body that echoes it is redacted). `usage_include` asks for the price in the usage block
-    (OpenRouter); a provider that reports none gives `Usage.cost = None`.
+    (OpenRouter); a provider that reports none, or a `subscription` one that reports 0 without OpenCode Go's
+    `usage.opencode` block, gives `Usage.cost = None` (see `parse_usage`).
 
     Every call also sends `User-Agent: hcai/<version>` and the `headers` given (e.g. OpenCode Go's
     `x-opencode-session`). They are transport details: never part of the `LLMRequest`, so never in the cache
@@ -154,7 +232,7 @@ class OpenAICompatibleClient:
     """
 
     def __init__(self, base_url: str, api_key: str, *, name: str = "", usage_include: bool = False,
-                 http: httpx.Client | None = None, timeout: float = 120.0,
+                 subscription: bool = False, http: httpx.Client | None = None, timeout: float = 120.0,
                  headers: dict[str, str] | None = None, log: Callable[[str], None] | None = None):
         api_key = api_key.strip()  # a stray space or newline would make httpx echo the key in its error
         if not api_key:
@@ -162,6 +240,7 @@ class OpenAICompatibleClient:
         self.name = name or base_url
         self.base_url = base_url.rstrip("/")
         self.usage_include = usage_include
+        self.subscription = subscription
         self._http = http or httpx.Client(timeout=timeout)
         self._key = api_key
         self._log = log or _stderr
@@ -242,13 +321,7 @@ class OpenAICompatibleClient:
             text = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
             raise ProviderError(f"{self.name}: no message in the answer: {self._redact(str(data), 300)}") from e
-        u = data.get("usage") or {}
-        cost = u.get("cost")
-        usage = Usage(
-            prompt_tokens=int(u.get("prompt_tokens", 0) or 0),
-            completion_tokens=int(u.get("completion_tokens", 0) or 0),
-            cost=None if cost is None else float(cost),
-        )
+        usage = parse_usage(data.get("usage"), subscription=self.subscription)
         return LLMResponse(text=text, parsed=_parse_if_schema(request, text), usage=usage)
 
     def list_models(self) -> list[str]:
@@ -318,7 +391,9 @@ class RateLimitGuard:
 class MeteredClient:
     """Wraps a client and counts the calls it makes and what they cost, per model.
 
-    Placed below the cache, it measures what a run actually spends: cache hits never reach it.
+    Placed below the cache, it measures what a run actually spends: cache hits never reach it. On OpenCode
+    Go it also sums the dollars taken from the Go allowance (`allowance`) and from elsewhere (`balance`: the
+    cost of calls whose `billing_source` is not "go"), and counts the calls per billing source.
     """
 
     def __init__(self, inner: LLMClient):
@@ -327,6 +402,9 @@ class MeteredClient:
         self.cost: dict[str, float] = {}  # the known prices only
         self.unpriced: dict[str, int] = {}  # calls the provider gave no price for (cost unknown)
         self.missing_session: dict[str, int] = {}  # calls refused for a missing session header (MissingSession)
+        self.allowance: dict[str, float] = {}  # dollars taken from the Go allowance
+        self.balance: dict[str, float] = {}  # dollars billed outside the Go allowance (known prices only)
+        self.billing: dict[str, dict[str, int]] = {}  # calls per billing source (OpenCode Go only)
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
@@ -339,6 +417,15 @@ class MeteredClient:
             self.unpriced[request.model] = self.unpriced.get(request.model, 0) + 1
         else:
             self.cost[request.model] = self.cost.get(request.model, 0.0) + response.usage.cost
+        u = response.usage
+        if u.billing_source is not None:
+            by_source = self.billing.setdefault(request.model, {})
+            by_source[u.billing_source] = by_source.get(u.billing_source, 0) + 1
+            if u.allowance is not None:
+                self.allowance[request.model] = self.allowance.get(request.model, 0.0) + u.allowance
+            # an "unknown" source is counted at its allowance (above), not as balance
+            if u.billing_source not in ("go", "unknown") and u.cost is not None:
+                self.balance[request.model] = self.balance.get(request.model, 0.0) + u.cost - (u.allowance or 0.0)
         return response
 
 
@@ -362,7 +449,7 @@ class CachedClient:
         path = self.cache_dir / f"{request.cache_key()}.json"
         if path.exists():
             cached = json.loads(path.read_text())
-            return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage(**cached["usage"]), cached=True)
+            return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage.from_dict(cached["usage"]), cached=True)
         response = self.inner.complete(request)
         if not self.cache_unparseable and request.response_schema is not None and response.parsed is None:
             return response
