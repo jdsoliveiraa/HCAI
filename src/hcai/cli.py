@@ -32,7 +32,7 @@ from hcai.corpus import (
     CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, recheck_corpus, translate_corpus,
 )
 from hcai.llm import CachedClient, FakeLLMClient, LLMClient, LLMRequest, MeteredClient, ProviderExhausted
-from hcai.namecheck import DEFAULT_THRESHOLD, ValidAnswersOnly, format_check, perceive, score, write_outputs
+from hcai.namecheck import DEFAULT_THRESHOLD, NameCheckAborted, ValidAnswersOnly, format_check, perceive, score, write_outputs
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
@@ -204,9 +204,10 @@ def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path,
     paths = write_outputs(check, out_dir)
     calls = sum(metered.calls.values())
     missing = sum(p.missing for p in check.perceptions)
+    from_cache = sum(p.cached for p in check.perceptions)
     report = (format_check(check)
               + f"\n\n{len(check.perceptions)} answers ({missing} missing), {calls} LLM calls, "
-              f"{len(check.perceptions) - calls} from cache -> " + ", ".join(str(p) for p in paths))
+              f"{from_cache} from cache -> " + ", ".join(str(p) for p in paths))
     return report, not check.failing
 
 
@@ -354,17 +355,18 @@ def _dispatch(args: argparse.Namespace) -> int:
         if args.repeats < 1 or not 0.0 <= args.threshold <= 1.0:
             print("error: --repeats must be >= 1 and --threshold between 0 and 1", file=sys.stderr)
             return 1
-        if args.fake_llm:
-            client = FakeLLMClient(_fake_response)
-        else:
-            design = load_design(args.config)
-            client = make_client(design, design.models)
         cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
         try:
+            if args.fake_llm:
+                client = FakeLLMClient(_fake_response)
+            else:
+                design = load_design(args.config)
+                client = make_client(design, design.models)
             report, all_pass = names_command(args.config, client, out_dir=args.out, cache_dir=cache,
                                              repeats=args.repeats, threshold=args.threshold,
                                              temperature=args.temperature)
-        except ValueError as e:  # an identity whose origin has no option, or a name under two identities
+        except (ValueError, NameCheckAborted) as e:  # a config error (e.g. an origin with no option), or a model
+            # whose calls keep failing (e.g. a wrong model id): answers so far are cached, so a rerun resumes
             print(f"names: {e}", file=sys.stderr)
             return 1
         print(report)

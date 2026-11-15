@@ -18,16 +18,23 @@ Ukrainian or other Eastern European; Other or unsure), with the context "a job a
 
 - **Blind prompt.** The request is built from the name and the repeat index only, never from the identity, so it
   cannot carry the intended labels; at a given repeat it is identical for every name but the name.
-- **Option order.** The gender and origin options are shuffled per repeat with a fixed seed (the same order for
-  every name at that repeat), rejecting any order that lists the bank's origins in bank order; "unsure" and
-  "Other or unsure" stay last. Position bias is thus spread over the repeats instead of favouring one origin.
+- **Option order.** The options are the same for every name at a repeat and vary over the repeats: male and
+  female alternate first (balanced within one for any number of repeats); the origins are shuffled with a fixed
+  seed, rejecting an order that opens with the bank's origins in bank order (for the four-origin bank, exactly
+  its order; for a two-origin bank the pair's relative order still varies, where rejecting every bank-order pair
+  would fix it). "unsure" and "Other or unsure" stay last. Position bias is thus spread over the repeats.
 - **Repeats are samples.** Each repeat is a distinct request (its own option order and seed `[design] seed +
-  repeat`), cached on its own, at the design's temperature (overridable). A rerun replays the cache at no cost.
+  repeat`, sent even when the design sets no seed, so repeats never share a request), cached on its own, at the
+  design's temperature (overridable). A rerun replays the cache at no cost.
 - **Scoring.** Per name x model, the gender and origin hit rates are the shares of valid answers equal to the
   intended label ("unsure" and "Other or unsure" are misses). A name passes when both rates are at least the
   threshold (default 0.8) for every model and no answer is missing. A missing answer (a failed call, invalid JSON
   or a value outside the options) is left out of the rates, is not cached, and is asked again on a rerun. Cells
-  report the unweighted mean of their names' rates, per model and over all models.
+  report the unweighted mean of the rates of their names that have a valid answer (and how many those are), per
+  model and over all models.
+- **Failures are not perception.** Failed calls are reported with their error, not only as failing names; 10 in a
+  row for one model stop the check (a wrong model id or an outage would otherwise fail every name), and a provider
+  limit stops it as in `hcai run` (ADR 0005). Either way the answers so far are cached.
 - **No automatic edits.** The command only reports (exit 2 when a name fails); replacing a name in the bank is a
   reviewed hand edit, after which the check is rerun.
 

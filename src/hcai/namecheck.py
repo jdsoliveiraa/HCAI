@@ -35,6 +35,7 @@ OTHER_LABEL = "Other or unsure"
 OTHER = "other_or_unsure"  # the perceived origin written for OTHER_LABEL
 GENDER_OPTIONS = ("male", "female", "unsure")
 DEFAULT_THRESHOLD = 0.8
+MAX_CONSECUTIVE_ERRORS = 10  # failed calls in a row to one model that stop the check (a model id typo, an outage)
 CONTEXT = "a job applicant in Portugal"
 
 
@@ -49,6 +50,8 @@ class Perception:
     repeat: int
     perceived_gender: str
     perceived_origin: str
+    error: str = ""  # the exception of a failed call (not written to perceptions.csv)
+    cached: bool = False  # served from the cache
 
     @property
     def missing(self) -> bool:
@@ -78,6 +81,7 @@ class CellScore:
     origin: str
     model: str
     names: int
+    answered: int  # names with at least one valid answer: the means are over these
     gender_hit_rate: float | None
     origin_hit_rate: float | None
     passed: int  # names of the cell that pass for this model (for "all": for every model)
@@ -110,20 +114,25 @@ def bank_names(design: Design) -> list[tuple[str, str, str]]:
     return [(name, g, o) for name, (g, o) in out.items()]
 
 
-def option_order(repeat: int, bank_origins: list[str]) -> tuple[list[str], list[str]]:
-    """The gender and origin options shown at `repeat`: the same for every name, shuffled per repeat.
+class NameCheckAborted(RuntimeError):
+    """A model failed `MAX_CONSECUTIVE_ERRORS` calls in a row: the check stops instead of reporting every name as
+    failing. Every answer received so far is cached, so a rerun resumes."""
 
-    The origin options never list the bank's origins in bank order (with two or more of them); "Other or unsure"
-    is always last and "unsure" always the last gender option.
+
+def option_order(repeat: int, bank_origins: list[str]) -> tuple[list[str], list[str]]:
+    """The gender and origin options shown at `repeat`: the same for every name, varied over the repeats.
+
+    Male and female alternate first (male at even repeats), so any number of repeats is balanced within one.
+    The origin options are shuffled per repeat, rejecting an order that opens with the bank's origins in bank
+    order (with two or more of them): with four origins that is exactly the bank's order, with two it still lets
+    their relative order vary. "unsure" and "Other or unsure" are always last.
     """
+    genders = ["male", "female"] if repeat % 2 == 0 else ["female", "male"]
     rng = random.Random(f"hcai-names-{repeat}")  # a str seed is hashed with SHA-512: stable across runs
-    genders = list(GENDER_OPTIONS[:2])
-    rng.shuffle(genders)
     keys = list(ORIGIN_LABELS)
     while True:
         rng.shuffle(keys)
-        in_bank = [k for k in keys if k in bank_origins]
-        if len(bank_origins) < 2 or in_bank != bank_origins:
+        if len(bank_origins) < 2 or keys[:len(bank_origins)] != bank_origins:
             break
     return genders + ["unsure"], [ORIGIN_LABELS[k] for k in keys] + [OTHER_LABEL]
 
@@ -180,23 +189,36 @@ class ValidAnswersOnly:
 
 def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: float | None = None
              ) -> list[Perception]:
-    """Ask every pipeline model about every name `repeats` times (a call that raises is a missing answer)."""
+    """Ask every pipeline model about every name `repeats` times.
+
+    A call that raises is a missing answer (its error kept); `MAX_CONSECUTIVE_ERRORS` of them in a row for one
+    model raise `NameCheckAborted`. `ProviderExhausted` (a BaseException) stops the check as in `hcai run`.
+    """
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
     names = bank_names(design)
     bank_origins = list(dict.fromkeys(o for _, _, o in names))
     temperature = design.temperature if temperature is None else temperature
     out = []
+    failures = dict.fromkeys(design.models, 0)  # consecutive failed calls per model
     for name, gender, origin in names:
         for model in design.models:
             for repeat in range(repeats):
                 request = build_request(name, model, repeat, bank_origins=bank_origins, temperature=temperature,
                                         seed=design.seed)
                 try:
-                    perceived = parse_answer(client.complete(request).parsed)
-                except Exception:  # noqa: BLE001 - a failed call is a missing answer; ProviderExhausted still stops
-                    perceived = ("", "")
-                out.append(Perception(name, gender, origin, model, repeat, *perceived))
+                    response = client.complete(request)
+                except Exception as e:  # noqa: BLE001 - a failed call is a missing answer, asked again on a rerun
+                    failures[model] += 1
+                    error = f"{type(e).__name__}: {e}"
+                    if failures[model] >= MAX_CONSECUTIVE_ERRORS:
+                        raise NameCheckAborted(f"{model}: {failures[model]} calls in a row failed, the last with "
+                                               f"{error}") from e
+                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error))
+                    continue
+                failures[model] = 0
+                out.append(Perception(name, gender, origin, model, repeat, *parse_answer(response.parsed),
+                                      cached=response.cached))
     return out
 
 
@@ -231,10 +253,12 @@ def score(perceptions: list[Perception], threshold: float = DEFAULT_THRESHOLD) -
         in_cell = [s for s in scores if (s.intended_gender, s.intended_origin) == (gender, origin)]
         for model in models:
             ss = [s for s in in_cell if s.model == model]
-            cells.append(CellScore(gender, origin, model, len(ss), _mean([s.gender_hit_rate for s in ss]),
+            cells.append(CellScore(gender, origin, model, len(ss), sum(s.gender_hit_rate is not None for s in ss),
+                                   _mean([s.gender_hit_rate for s in ss]),
                                    _mean([s.origin_hit_rate for s in ss]), sum(s.passed for s in ss)))
         names = list(dict.fromkeys(s.name for s in in_cell))
-        cells.append(CellScore(gender, origin, "all", len(names), _mean([s.gender_hit_rate for s in in_cell]),
+        answered = sum(any(s.gender_hit_rate is not None for s in in_cell if s.name == n) for n in names)
+        cells.append(CellScore(gender, origin, "all", len(names), answered, _mean([s.gender_hit_rate for s in in_cell]),
                                _mean([s.origin_hit_rate for s in in_cell]),
                                sum(all(s.passed for s in in_cell if s.name == n) for n in names)))
     return NameCheck(perceptions, scores, cells, threshold)
@@ -258,9 +282,9 @@ def write_outputs(check: NameCheck, out_dir: str | Path) -> list[Path]:
                         [[s.name, s.intended_gender, s.intended_origin, s.model, s.answers, s.missing,
                           _fmt(s.gender_hit_rate), _fmt(s.origin_hit_rate), check.threshold, s.passed]
                          for s in check.scores]),
-        "cells.csv": (["gender", "origin", "model", "names", "mean_gender_hit_rate", "mean_origin_hit_rate",
+        "cells.csv": (["gender", "origin", "model", "names", "names_answered", "mean_gender_hit_rate", "mean_origin_hit_rate",
                        "names_passing"],
-                      [[c.gender, c.origin, c.model, c.names, _fmt(c.gender_hit_rate), _fmt(c.origin_hit_rate),
+                      [[c.gender, c.origin, c.model, c.names, c.answered, _fmt(c.gender_hit_rate), _fmt(c.origin_hit_rate),
                         c.passed] for c in check.cells]),
     }
     paths = []
@@ -291,8 +315,18 @@ def format_check(check: NameCheck) -> str:
     if not failing:
         lines.append(f"\nall {total} names pass for every model")
         return "\n".join(lines)
-    lines.append(f"\n{len(check.failing)} of {total} names fail (replace them in the name bank and rerun):")
+    incomplete = list(dict.fromkeys(s.name for s in failing if s.missing))
+    lines.append(f"\n{len(check.failing)} of {total} names fail (replace a name that fails on its hit rates in the "
+                 f"name bank; rerun to ask missing answers again):")
     lines += _table(["name", "intended", "model", "gender hit", "origin hit", "missing"],
                     [[s.name, f"{s.intended_gender} {s.intended_origin}", s.model, _fmt(s.gender_hit_rate),
                       _fmt(s.origin_hit_rate), f"{s.missing}/{s.answers}"] for s in failing])
+    errors: dict[str, list[str]] = {}
+    for p in check.perceptions:
+        if p.error:
+            errors.setdefault(p.model, []).append(p.error)
+    if incomplete:
+        lines.append(f"\n{len(incomplete)} names have missing answers (a failed call, or an answer outside the "
+                     "options); rerun to ask them again")
+    lines += [f"{model}: {len(es)} failed calls, e.g. {es[-1]}" for model, es in errors.items()]
     return "\n".join(lines)

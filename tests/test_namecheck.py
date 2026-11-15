@@ -8,10 +8,10 @@ import pytest
 
 from hcai.cli import main, names_command
 from hcai.config import load_design
-from hcai.llm import FakeLLMClient, LLMRequest, ProviderError
+from hcai.llm import FakeLLMClient, LLMRequest, ProviderError, ProviderExhausted
 from hcai.namecheck import (
-    GENDER_OPTIONS, ORIGIN_LABELS, OTHER, OTHER_LABEL, Perception, bank_names, build_request, option_order,
-    parse_answer, perceive, score,
+    GENDER_OPTIONS, MAX_CONSECUTIVE_ERRORS, ORIGIN_LABELS, OTHER, OTHER_LABEL, NameCheckAborted, Perception,
+    bank_names, build_request, option_order, parse_answer, perceive, score,
 )
 
 CONFIGS = Path(__file__).parent.parent / "configs"
@@ -112,6 +112,7 @@ def test_cells_report_the_mean_hit_rates_of_their_names():
 
     assert (cells["m1"].gender_hit_rate, cells["m1"].origin_hit_rate, cells["m1"].passed) == (0.75, 0.75, 2)
     assert (cells["m2"].gender_hit_rate, cells["m2"].origin_hit_rate) == (1.0, 1.0)
+    assert (cells["all"].names, cells["all"].answered) == (2, 2)
     assert (cells["all"].names, cells["all"].gender_hit_rate, cells["all"].origin_hit_rate) == (2, 0.875, 0.875)
 
 
@@ -128,7 +129,8 @@ def test_the_prompt_never_reveals_the_intended_labels():
         identity = next(i for i in design.identities if name in i.names)
         # nothing in the request is about this identity but the name: no id, key, country or nationality
         text = prompt + str(request.response_schema)
-        for leak in [identity.id, o, identity.nationality_in("pt"), f" {g} name", "intended"]:
+        # (the origin words themselves are options, offered to every name alike: checked below)
+        for leak in [identity.id, identity.nationality_in("pt"), f" {g} name", "intended", o]:
             assert leak not in text
         # the gender and origin words appear only as options in the lists (the context sentence has none)
         context = prompt.split("\n")[0].replace(name, "<NAME>")
@@ -153,7 +155,13 @@ def test_origin_options_are_never_in_bank_order():
         assert sorted(labels) == sorted(ORIGIN_LABELS.values()) and origins[-1] == OTHER_LABEL
         assert sorted(genders[:2]) == ["female", "male"] and genders[-1] == "unsure"
         two = option_order(repeat, ["portuguese", "brazilian"])[1]
-        assert two.index("Portuguese") > two.index("Brazilian")
+        assert two[:2] != ["Portuguese", "Brazilian"]
+    # with two bank origins their relative order still varies over the repeats
+    assert len({option_order(r, ["portuguese", "brazilian"])[1].index("Portuguese")
+                < option_order(r, ["portuguese", "brazilian"])[1].index("Brazilian") for r in range(10)}) == 2
+    # male and female alternate first, so any number of repeats is balanced within one
+    firsts = [option_order(r, bank)[0][0] for r in range(5)]
+    assert firsts == ["male", "female", "male", "female", "male"]
     # the order varies across repeats (position bias is spread), and is the same for a repeat on every call
     assert len({tuple(option_order(r, bank)[1]) for r in range(10)}) > 1
     assert option_order(3, bank) == option_order(3, bank)
@@ -228,6 +236,32 @@ def test_a_failed_call_is_a_missing_answer(tmp_path):
 
     rows = list(csv.DictReader((tmp_path / "summary.csv").open(encoding="utf-8")))
     assert not all_pass and all(r["missing"] == "1" and r["pass"] == "False" for r in rows)
+    assert "2 failed calls, e.g. ProviderError: boom" in _ and "rerun to ask them again" in _
+    cells = list(csv.DictReader((tmp_path / "cells.csv").open(encoding="utf-8")))
+    assert all(c["names_answered"] == "0" and c["mean_gender_hit_rate"] == "" for c in cells)
+
+
+def test_a_model_whose_calls_keep_failing_stops_the_check(tmp_path):
+    def respond(request: LLMRequest):
+        raise ProviderError("HTTP 404: no such model")
+
+    client = FakeLLMClient(respond)
+    with pytest.raises(NameCheckAborted, match="404"):
+        perceive(load_design(CORE), client, repeats=5)
+    assert len(client.calls) < 2 * MAX_CONSECUTIVE_ERRORS  # stopped at the first model to fail 10 in a row
+    code = main(["names", str(CORE), "--out", str(tmp_path / "o"), "--cache", str(tmp_path / "c"), "--fake-llm"])
+    assert code == 2  # the fake model answers, so nothing stops
+
+
+def test_provider_exhausted_stops_the_check_and_the_cli_exits_3(tmp_path, monkeypatch):
+    def respond(request: LLMRequest):
+        raise ProviderExhausted("no credits left")
+
+    with pytest.raises(ProviderExhausted):
+        perceive(load_design(SKELETON), FakeLLMClient(respond), repeats=1)
+    monkeypatch.setattr("hcai.cli.FakeLLMClient", lambda _: FakeLLMClient(respond))
+    assert main(["names", str(SKELETON), "--out", str(tmp_path / "o"), "--cache", str(tmp_path / "c"),
+                 "--fake-llm"]) == 3
 
 
 def test_an_identity_whose_origin_has_no_option_is_an_error(tmp_path):
@@ -245,3 +279,4 @@ def test_cli_names_with_the_fake_llm_reports_every_name_failing(tmp_path, capsys
     assert code == 2  # some name fails
     assert "names fail" in out and (tmp_path / "out" / "summary.csv").exists()
     assert main(["names", str(SKELETON), "--repeats", "0", "--fake-llm", "--cache", str(tmp_path / "c")]) == 1
+    assert main(["names", str(SKELETON), "--threshold", "1.5", "--fake-llm", "--cache", str(tmp_path / "c")]) == 1
