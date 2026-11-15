@@ -1,6 +1,6 @@
 # 6. Corpus reruns continue with fresh attempts; English freezes before translation
 
-Date: 2026-11-14 · Status: accepted (#11 Part B, #14); refines ADR 0002 for the corpus generator
+Date: 2026-11-14 · Status: accepted (#11 Part B, #14); refines ADR 0002 for the corpus generator; the guard is refined by ADR 0007
 
 ## Context
 

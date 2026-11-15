@@ -212,10 +212,33 @@ def test_diff_check_fails_for_a_variant_with_the_other_gender_s_form(variant_des
     ("# $name\nLicenciada em Gestão\n", "pt"),  # a PT gendered adjective outside a slot
     ("# $name\nEstagiário de Dados, 2021\n", "pt"),  # a PT gendered intern title outside a slot
     ("# $name\n{{o|a}} {{Engenheiro|Engenheira}} de Dados\n", "pt"),  # an article-only alternation
+    ("# $name\nProfissional rigoroso\n", "pt"),  # an adjective describing the candidate
+    ("# $name\n{{Enfermeiro|Enfermeira}} dedicado\n", "pt"),  # an adjective after a candidate slot
+    ("# $name\nRigoroso e dedicado, focado em resultados\n", "pt"),  # a self-description
+    ("# $name\nEnfermeira dedicado ao registo\n", "pt"),  # a job title before it
+    ("# $name\nRegisto rigorosa de avaliações\n", "pt"),  # does not agree with the noun's gender
+    ("# $name\n{{Técnico|Técnica}} de controlo rigoroso\n", "pt"),  # a candidate slot earlier in its clause
+    ("# $name\n{{Enfermeiro Esp.|Enfermeira Esp.}} dedicado acompanhamento\n", "pt"),  # a '.' inside the slot
+    ("# $name\nProfissional com rigoroso controlo\n", "pt"),  # a person word earlier in the clause
+    ("# $name\nDocente de curso especializado\n", "pt"),  # a person word earlier in the clause
+    ("# $name\nSou capaz e estou dedicado ao registo\n", "pt"),  # a verb about the candidate earlier
+    ("# $name\nTrabalho focado em resultados\n", "pt"),  # 'Trabalho' is 'I work' here, not a noun
 ])
 def test_templates_that_break_the_slot_rules_are_rejected(template, language):
     with pytest.raises(TemplateError):
         render_variant(template, name="Rita Sousa", nationality="Portuguesa", gender="female", language=language)
+
+
+@pytest.mark.parametrize("line", [
+    "Registo rigoroso de avaliações iniciais de enfermagem",
+    "Rigoroso controlo de stocks; gestão rigorosa de prazos",
+    "Reporta à {{Enfermeira-Chefe|Enfermeira-Chefe}}; acompanhamento dedicado aos utentes",
+])
+def test_a_gendered_adjective_agreeing_with_an_adjacent_non_candidate_noun_needs_no_slot(line):
+    for gender in ("male", "female"):
+        text = render_variant(f"# $name\n{line}\n", name="Rita Sousa", nationality="Portuguesa", gender=gender,
+                              language="pt")
+        assert line.replace("{{Enfermeira-Chefe|Enfermeira-Chefe}}", "Enfermeira-Chefe") in text
 
 
 def test_all_caps_acronyms_are_not_mistaken_for_pronouns():

@@ -170,6 +170,17 @@ def test_proxy_leak_report_counts_surviving_gendered_words_and_origin_linked_fie
         assert (leak.language, leak.condition, leak.model) == ("pt", "C1", "model-a")
 
 
+def test_an_adjective_agreeing_with_a_non_candidate_noun_is_not_counted_as_a_gendered_word(pt_design, tmp_path):
+    from hcai.blinding import proxy_leaks
+
+    blinded = PT_BLINDED.replace("experiência.", "experiência; registo rigoroso de avaliações.")
+    rows = run_experiment(pt_design, FakeLLMClient(crew(blinded)), cache_dir=tmp_path / "cache")
+
+    leaks = {leak.identity: leak for leak in proxy_leaks(pt_design, rows)}
+    assert (leaks["br_f"].own_gender_words, leaks["br_f"].other_gender_words) == (2, 0)  # not 'rigoroso'
+    assert (leaks["pt_m"].own_gender_words, leaks["pt_m"].other_gender_words) == (0, 2)
+
+
 def test_proxy_leak_report_counts_the_cues_the_blinder_left_in(pt_design, tmp_path):
     from hcai.blinding import proxy_leaks
 

@@ -688,6 +688,72 @@ def test_a_gendered_word_after_an_invariant_slot_is_not_repaired(bilingual_desig
         generate_corpus(bilingual_design, client, cache_dir=tmp_path / "other-cache", force=True)
 
 
+def pt_cv_with_bullet(bullet: str, **changes) -> dict:
+    cv = pt_cv_response(**changes)
+    return {**cv, "experience": [{**cv["experience"][0], "bullets": [bullet]}]}
+
+
+@pytest.mark.parametrize("bullet", [
+    "Registo rigoroso de avaliações iniciais de enfermagem com a equipa.",  # the real gemini-4-argon bullet
+    "Rigoroso controlo de stocks e gestão rigorosa de prazos.",
+])
+def test_a_gendered_adjective_agreeing_with_a_non_candidate_noun_is_accepted_as_written(
+    bilingual_design, tmp_path, bullet,
+):
+    client = FakeLLMClient(resumable_responder(pt_cv_with_bullet(bullet)))
+
+    corpus = generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert len(translation_calls(client, FAILING)) == 1  # no retry
+    texts = [v.text for v in build_variants(bilingual_design) if v.base_cv == FAILING and v.language == "pt"]
+    assert texts and all(bullet in t for t in texts)
+    assert next(cv for cv in corpus.base_cvs if cv.id == FAILING).translations["pt"]["experience"][0]["bullets"] == [bullet]
+
+
+def test_a_noun_agreeing_adjective_may_also_be_a_candidate_slot_form_elsewhere(bilingual_design, tmp_path):
+    summary = "{{Enfermeiro rigoroso|Enfermeira rigorosa}} com custos abaixo de $5k."
+    answer = pt_cv_with_bullet("Registo rigoroso de avaliações com a equipa.", summary=summary)
+    client = FakeLLMClient(resumable_responder(answer))
+
+    generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert len(translation_calls(client, FAILING)) == 1
+    texts = {v.gender: v.text for v in build_variants(bilingual_design) if v.base_cv == FAILING and v.language == "pt"}
+    assert "Enfermeira rigorosa" in texts["female"] and "Registo rigoroso de" in texts["female"]
+
+
+def test_a_slot_word_used_outside_a_slot_next_to_a_noun_of_the_other_gender_is_still_rejected(bilingual_design, tmp_path):
+    summary = "{{Enfermeiro rigoroso|Enfermeira rigorosa}} com custos abaixo de $5k."
+    answer = pt_cv_with_bullet("Registo rigorosa de avaliações com a equipa.", summary=summary)
+    client = FakeLLMClient(resumable_responder(answer))
+
+    with pytest.raises(GenerationFailed) as failed:
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert "'rigorosa'" in failed.value.failures[0].reason
+
+
+@pytest.mark.parametrize("field, text, word", [
+    ("summary", "Profissional rigoroso com custos abaixo de $5k.", "rigoroso"),
+    ("summary", "Rigoroso e dedicado, com custos abaixo de $5k.", "Rigoroso"),
+    ("summary", "Com custos abaixo de $5k; {{Enfermeiro|Enfermeira}} de controlo dedicado.", "dedicado"),
+    ("summary", "Com custos abaixo de $5k; Enfermeira com registo rigoroso.", "rigoroso"),
+    ("bullet", "Registo rigorosa de avaliações com a equipa.", "rigorosa"),  # the noun is masculine
+    ("bullet", "Fez o controlo rigoroso e organizado da equipa.", "organizado"),  # not next to the noun
+    ("bullet", "Fez o controlo, rigoroso, da equipa.", "rigoroso"),  # punctuation in between
+    ("bullet", "Trabalho focado na equipa.", "focado"),  # 'Trabalho' is 'I work': a self-description
+])
+def test_a_gendered_word_that_may_describe_the_candidate_is_still_rejected(bilingual_design, tmp_path, field, text, word):
+    answer = pt_cv_with_bullet(text) if field == "bullet" else pt_cv_response(summary=text)
+    client = FakeLLMClient(resumable_responder(answer))
+
+    with pytest.raises(GenerationFailed) as failed:
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+    assert f"'{word}'" in failed.value.failures[0].reason
+    assert len(translation_calls(client, FAILING)) == 4
+
+
 def core_config(tmp_path: Path, **replacements: str) -> Path:
     config = tmp_path / "core.toml"
     text = (CORE.read_text()

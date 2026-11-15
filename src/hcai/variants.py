@@ -83,6 +83,61 @@ SLOT_ONLY_WORDS = {
     "pt": {form for pair in GENDERED_WORD_PAIRS["pt"] for form in pair},
 }
 
+# Noun agreement (docs/adr/0007). A slot-only adjective or participle may stay outside a slot when it plainly
+# agrees with an adjacent common noun that is not the candidate: "Registo rigoroso de avaliações",
+# "rigoroso controlo de stocks". It is exempt only if all of these hold:
+#   - the word is one of AGREEING_WORDS (adjectives/participles that also qualify things; never job titles,
+#     degrees or pronouns);
+#   - the noun right before or right after it, separated by one space only (no punctuation, no line break,
+#     no slot), is in AGREEMENT_NOUNS with the word's gender (all forms on the list are singular);
+#   - its clause (since the last , ; : . ! ? or line break) has no candidate slot (`{{masc|fem}}` whose forms
+#     differ) and no word that refers to a person (CANDIDATE_WORDS, or any job title of the list) before it.
+# Anything else ("Profissional rigoroso", "{{Enfermeiro|Enfermeira}} dedicado", "Rigoroso e dedicado, ...")
+# still needs a slot. Coordinated adjectives ("controlo rigoroso e organizado") are not exempt for the second one.
+AGREEING_WORDS: dict[str, set[str]] = {
+    "pt": {form for pair in [
+        ("rigoroso", "rigorosa"), ("meticuloso", "meticulosa"), ("dedicado", "dedicada"),
+        ("organizado", "organizada"), ("especializado", "especializada"), ("focado", "focada"),
+        ("proativo", "proativa"), ("certificado", "certificada"), ("premiado", "premiada"),
+        ("distinguido", "distinguida"), ("promovido", "promovida"), ("contratado", "contratada"),
+    ] for form in pair},
+}
+# Singular common nouns of CV text that never denote a person, by gender ("m"/"f"). Nouns that are also a
+# first-person verb that can take a predicative adjective ("Trabalho focado em resultados" = "I work focused
+# on results") are left out: trabalho, estudo, ensino, apoio, ensaio, teste, programa, arquivo, reporte, fecho,
+# balanço. The verb homographs kept (registo, controlo, processo, documento, modelo, ...) are transitive, so an
+# adjective right after them cannot describe the subject.
+AGREEMENT_NOUNS: dict[str, dict[str, str]] = {
+    "pt": {
+        **dict.fromkeys([
+            "registo", "controlo", "acompanhamento", "cumprimento", "planeamento", "atendimento", "cuidado",
+            "tratamento", "procedimento", "protocolo", "processo", "projeto", "serviço", "sistema",
+            "plano", "relatório", "curso", "desenvolvimento",
+            "levantamento", "inventário", "código", "produto", "documento", "modelo",
+            "método", "seguimento", "rastreio", "diagnóstico", "orçamento", "suporte", "circuito", "ciclo", "fluxo", "lançamento", "pagamento", "cálculo",
+        ], "m"),
+        **dict.fromkeys([
+            "gestão", "avaliação", "análise", "monitorização", "documentação", "formação", "abordagem",
+            "revisão", "auditoria", "verificação", "prática", "triagem", "administração", "preparação",
+            "vigilância", "atenção", "comunicação", "organização", "execução", "implementação", "manutenção",
+            "aplicação", "solução", "plataforma", "ferramenta", "prestação", "higiene", "investigação",
+            "intervenção", "campanha", "iniciativa", "consulta", "medicação", "prescrição", "estratégia",
+            "política", "metodologia", "reconciliação", "conciliação", "contabilidade", "faturação",
+            "previsão", "otimização", "migração", "integração",
+        ], "f"),
+    },
+}
+# Gender-invariant words that refer to a person: after one, an adjective may describe the candidate.
+CANDIDATE_WORDS: dict[str, set[str]] = {
+    "pt": {"profissional", "pessoa", "membro", "elemento", "especialista", "responsável", "líder", "perfil",
+           "colega", "analista", "assistente", "gerente", "chefe", "jovem", "auxiliar", "farmacêutico",
+           "farmacêutica", "contabilista", "economista", "docente", "estudante", "trabalhador", "trabalhadora",
+           "aluno", "aluna", "pai", "mãe", "eu", "sou", "estou", "fui", "trabalho", "estudo"},
+}
+_AGREEMENT_FORMS = {"pt": {masc: "m" for masc, _ in GENDERED_WORD_PAIRS["pt"]}
+                    | {fem: "f" for _, fem in GENDERED_WORD_PAIRS["pt"]}}
+_CLAUSE_BREAK = re.compile(r"[,;:.!?\n]")
+
 # Articles and contractions are too short to mask or leak-check reliably ("a" and "o" occur everywhere):
 # a slot must hold the whole gendered phrase, e.g. `{{o engenheiro|a engenheira}}`.
 _TOO_SHORT_FORMS = {"o", "a", "os", "as", "do", "da", "dos", "das", "no", "na", "nos", "nas", "ao", "à", "aos", "às",
@@ -142,11 +197,56 @@ def gendered_pairs(template: str) -> list[tuple[str, str]]:
 
 def unslotted_gendered_words(text: str, language: str) -> list[str]:
     """The slot-only gendered words of `text` written outside a `{{masc|fem}}` slot, as written, in order
-    (all-caps tokens such as "MS Excel" are acronyms and exempt)."""
+    (all-caps tokens such as "MS Excel" are acronyms and exempt, and so is an adjective that agrees with an
+    adjacent non-candidate noun, see AGREEING_WORDS)."""
+    return [m.group(0) for m in unslotted_gendered_matches(text, language)]
+
+
+def unslotted_gendered_matches(text: str, language: str) -> list[re.Match[str]]:
+    """The matches (with positions in `text`) of `unslotted_gendered_words`."""
+    tokens = _unslotted_tokens(text)
     return [
-        w for w in re.findall(r"\w+", _ALTERNATION.sub(" ", text))
-        if w.lower() in SLOT_ONLY_WORDS[language] and not (len(w) > 1 and w.isupper())
+        m for i, m in enumerate(tokens)
+        if m.group(0).lower() in SLOT_ONLY_WORDS[language] and not (len(m.group(0)) > 1 and m.group(0).isupper())
+        and not _agrees_with_a_noun(text, tokens, i, language)
     ]
+
+
+def noun_agreeing_matches(text: str, language: str) -> list[re.Match[str]]:
+    """The slot-only words of `text` outside a slot that are exempt because they agree with an adjacent
+    non-candidate noun ("Registo rigoroso"), with their positions."""
+    tokens = _unslotted_tokens(text)
+    return [m for i, m in enumerate(tokens) if _agrees_with_a_noun(text, tokens, i, language)]
+
+
+def _unslotted_tokens(text: str) -> list[re.Match[str]]:
+    slots = [m.span() for m in _ALTERNATION.finditer(text)]
+    return [m for m in re.finditer(r"\w+", text) if not any(a <= m.start() < b for a, b in slots)]
+
+
+def _agrees_with_a_noun(text: str, tokens: list[re.Match[str]], i: int, language: str) -> bool:
+    """Whether `tokens[i]` is an AGREEING_WORDS adjective that agrees with an adjacent non-candidate noun."""
+    word = tokens[i].group(0).lower()
+    if word not in AGREEING_WORDS.get(language, set()) or tokens[i].group(0).isupper():
+        return False
+    gender = _AGREEMENT_FORMS[language][word]
+    nouns = AGREEMENT_NOUNS[language]
+    neighbours = []
+    if i > 0 and text[tokens[i - 1].end(): tokens[i].start()] == " ":
+        neighbours.append(tokens[i - 1].group(0).lower())
+    if i + 1 < len(tokens) and text[tokens[i].end(): tokens[i + 1].start()] == " ":
+        neighbours.append(tokens[i + 1].group(0).lower())
+    if not any(nouns.get(n) == gender for n in neighbours):
+        return False
+    # The clause before the word must not name the candidate: no candidate slot, no person word.
+    # Punctuation inside a slot ("{{Enfermeiro Esp.|Enfermeira Esp.}}") does not end a clause.
+    unslotted = _ALTERNATION.sub(lambda m: "\0" * len(m.group(0)), text)
+    clause_start = max((m.end() for m in _CLAUSE_BREAK.finditer(unslotted, 0, tokens[i].start())), default=0)
+    clause = text[clause_start: tokens[i].start()]
+    if any(m.group(1) != m.group(2) for m in _ALTERNATION.finditer(clause)):
+        return False
+    persons = CANDIDATE_WORDS[language] | {f for pair in GENDERED_WORD_PAIRS[language] for f in pair} - AGREEING_WORDS[language]
+    return not any(w.lower() in persons for w in re.findall(r"\w+", _ALTERNATION.sub(" ", clause)))
 
 
 def gendered_forms(word: str, language: str) -> tuple[str, str] | None:
