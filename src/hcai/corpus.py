@@ -12,7 +12,8 @@ with the candidate's gender in a `{{masc|fem}}` slot. A translation must pass `h
 gendered-word guard and diff check, and use no common PT-BR term (`hcai.ptpt`); otherwise it is retried, with
 feedback that names each leaked gendered word and its fix. A gendered word right after a slot that refers to
 the candidate ("{{Enfermeiro|Enfermeira}} dedicado") is slotted deterministically ("{{dedicado|dedicada}}"),
-kept only if the repaired translation passes every check.
+kept only if the repaired translation passes every check. An adjective that agrees with an adjacent
+non-candidate noun ("Registo rigoroso de avaliações") needs no slot (ADR 0007).
 
 Retries and reruns (ADR 0006): each document gets `[generator] max_attempts` new generator calls per run.
 Answers cached by earlier runs replay first at no cost (a valid one ends the document with zero calls) and do
@@ -58,7 +59,7 @@ from hcai.llm import CachedClient, LLMClient, LLMRequest
 from hcai.ptpt import describe, ptbr_terms
 from hcai.variants import (
     NATIONALITY_LABEL, WORK_ELIGIBILITY, TemplateError, Variant, check_variants, gendered_forms, gendered_pairs,
-    render_variant, unslotted_gendered_words,
+    noun_agreeing_matches, render_variant, unslotted_gendered_matches,
 )
 
 MANIFEST = "manifest.json"
@@ -773,7 +774,12 @@ def _check_translation_renders(parsed: dict[str, Any], language: str) -> None:
     problems = check_variants(variants, gendered_pairs(template))
     # The diff check masks whole slot phrases, so also reject a word that differs between a slot's two forms
     # and is used again outside a slot (e.g. "{{Analista escolhido|Analista escolhida}} ... escolhido").
-    outside = {w.casefold() for w in re.findall(r"\w+", _SLOT.sub(" ", template))}
+    # An adjective that agrees with an adjacent non-candidate noun ("Registo rigoroso") is not such a use.
+    agreeing = [m.span() for m in noun_agreeing_matches(template, language)]
+    unagreeing = "".join(
+        template[start:end] for start, end in zip([0, *(b for _, b in agreeing)], [*(a for a, _ in agreeing), len(template)])
+    )
+    outside = {w.casefold() for w in re.findall(r"\w+", _SLOT.sub(" ", unagreeing))}
     for masc, fem in gendered_pairs(template):
         m_list, f_list = re.findall(r"\w+", masc), re.findall(r"\w+", fem)
         m_words, f_words = {w.casefold() for w in m_list}, {w.casefold() for w in f_list}
@@ -795,7 +801,7 @@ def _slot_feedback(parsed: dict[str, Any], language: str) -> str:
     """For each slot-only gendered word outside a slot: where it is and the exact fix ("" if there is none)."""
     fixes: list[str] = []
     for path, text in _fields(parsed):
-        for m in _unslotted_matches(text, language):
+        for m in unslotted_gendered_matches(text, language):
             word = m.group(0)
             masc, fem = gendered_forms(word, language) or (word, word)
             start = max(0, m.start() - 30)
@@ -809,7 +815,7 @@ def _slot_feedback(parsed: dict[str, Any], language: str) -> str:
                              f"candidate, else {{{{{word}|{word}}}}}")
     if not fixes:
         return ""
-    words = sorted({m.group(0) for _, text in _fields(parsed) for m in _unslotted_matches(text, language)})
+    words = sorted({m.group(0) for _, text in _fields(parsed) for m in unslotted_gendered_matches(text, language)})
     return (f"the translation breaks the slot rules: gendered word(s) {words} outside a {{{{masc|fem}}}} slot. "
             "Fix each: " + "; ".join(fixes))
 
@@ -823,14 +829,6 @@ def _fields(value: Any, path: str = "") -> list[tuple[str, str]]:
     if isinstance(value, list):
         return [f for i, v in enumerate(value, 1) for f in _fields(v, f"{path}[{i}]")]
     return []
-
-
-def _unslotted_matches(text: str, language: str) -> list[re.Match[str]]:
-    """The matches of `unslotted_gendered_words` in `text`, with their positions."""
-    words = set(unslotted_gendered_words(text, language))
-    slots = [m.span() for m in _SLOT.finditer(text)]
-    return [m for m in re.finditer(r"\w+", text)
-            if m.group(0) in words and not any(a <= m.start() < b for a, b in slots)]
 
 
 def _slot_before(text: str, position: int) -> re.Match[str] | None:
