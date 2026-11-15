@@ -17,7 +17,8 @@ costs a fraction of a cent of allowance. The key comes from .env (OPENCODE_API_K
 `--spent` makes no request and needs no key: it sums, per model, the allowance recorded in a request cache
 (every entry, the stability `repeats/` included; each entry is one call paid once). Entries cached before
 the allowance was recorded, or from another provider, carry no `billing_source` and are counted as
-uncounted, not as free.
+uncounted, not as free. Calls the cache never kept are missed too: the corpus generator's unparseable
+answers (not cached, ADR 0002) and calls that raised.
 """
 from __future__ import annotations
 

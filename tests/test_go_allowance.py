@@ -64,6 +64,14 @@ def test_a_call_billed_to_the_balance_costs_its_price_and_takes_no_allowance():
 
     assert (at_list.cost, at_list.allowance, at_list.billing_source) == (8e-05, 0.0, "balance")
     assert (priced.cost, priced.allowance) == (0.0003, 0.0)
+    unpriced = parse_usage({"cost": 0, "opencode": {"billing_source": "balance"}})
+    assert (unpriced.cost, unpriced.allowance) == (None, 0.0)  # no price and no list price: unknown
+
+
+def test_a_call_naming_no_billing_source_costs_its_allowance_and_is_flagged():
+    usage = parse_usage({"prompt_tokens": 1, "cost": 0, "opencode": {"allowance": 0.0002}})
+
+    assert (usage.cost, usage.allowance, usage.billing_source) == (0.0002, 0.0002, "unknown")
 
 
 def test_a_go_answer_without_its_allowance_has_an_unknown_cost():
@@ -104,9 +112,25 @@ def test_the_cache_stores_the_allowance_and_loads_old_entries_without_it(tmp_pat
     old = cached.complete(REQ)
     assert old.cached and old.usage == Usage(prompt_tokens=35, completion_tokens=1, cost=None)
 
-    entry["usage"] = {"prompt_tokens": 35, "completion_tokens": 1, "cost": 0.0, "future_field": 1}
+    entry["usage"] = {"prompt_tokens": 35, "completion_tokens": 1, "cost": 0.0}  # Go's 0, read as a price
     next(tmp_path.glob("*.json")).write_text(json.dumps(entry))
-    assert cached.complete(REQ).usage.cost == 0.0  # an unknown field is ignored
+    assert cached.complete(REQ).usage.cost is None  # unknown, not free
+
+    entry["usage"] = {"prompt_tokens": 35, "completion_tokens": 1, "cost": 0.002}  # an old metered price
+    next(tmp_path.glob("*.json")).write_text(json.dumps(entry))
+    assert cached.complete(REQ).usage.cost == 0.002
+
+    entry["usage"] = {"prompt_tokens": 35, "cost": 0.0, "billing_source": None, "future_field": 1}
+    next(tmp_path.glob("*.json")).write_text(json.dumps(entry))
+    assert cached.complete(REQ).usage.cost == 0.0  # written after the change: a real 0; unknown fields ignored
+
+
+def test_an_output_mixing_an_old_cache_entry_and_a_go_call_has_an_unknown_cost():
+    old = Usage.from_dict({"prompt_tokens": 35, "completion_tokens": 1, "cost": 0.0})
+
+    both = add_usage([old, parse_usage(go_usage())])
+
+    assert both.cost is None and both.allowance is None and both.billing_source == "go"
 
 
 def test_results_keep_the_allowance_and_billing_source_and_older_tables_still_load(tmp_path):
@@ -127,6 +151,14 @@ def test_results_keep_the_allowance_and_billing_source_and_older_tables_still_lo
         writer.writeheader()
         writer.writerows(records)
     assert all(r.allowance is None and r.billing_source == "" for r in read_results(old_path))
+
+    for r in records:  # Go rows on main: cost 0.0 misread as a price; read back as unknown
+        r["cost"] = "0.0"
+    with old_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(records[0]))
+        writer.writeheader()
+        writer.writerows(records)
+    assert all((r.cost is None) == bool(r.prompt_tokens) for r in read_results(old_path))
 
 
 # --- run totals and the printed summary --------------------------------------------------------------------
@@ -164,6 +196,16 @@ def test_calls_not_billed_to_go_are_flagged_with_what_they_took_from_the_balance
     assert summary["balance_spent"] == pytest.approx(0.0001)  # list cost 0.00005 x 2
     assert summary["cost_spent"] == pytest.approx(0.0004)
     assert "WARNING: 2 calls this run (2 attempts in all) were not billed to the Go allowance (balance x2)" in report
+
+
+def test_calls_naming_no_billing_source_are_flagged_and_not_counted_as_balance(tmp_path):
+    report = run_command(config(tmp_path), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
+                         client=routed_client(billed(lambda n: "" if n == 0 else "go")))
+
+    summary = json.loads((tmp_path / "out" / "run_summary.json").read_text())
+    assert summary["billing_sources"] == {"unknown": 1, "go": 4} and summary["not_go_calls"] == 1
+    assert summary["allowance_spent"] == pytest.approx(0.0005) and summary["balance_spent"] == 0
+    assert "1 calls named no billing source (counted at their allowance)" in report
 
 
 def test_a_provider_without_the_opencode_block_prints_no_allowance(tmp_path):

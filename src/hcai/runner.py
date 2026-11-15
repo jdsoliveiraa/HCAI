@@ -273,8 +273,10 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
       design, each model also names its `provider` and `billing` ("metered" or "subscription").
     - OpenCode Go: `allowance_total` and `allowance_spent` are the dollars taken from the Go allowance by the
       outputs and by this run's calls; `balance_spent` what this run's calls billed elsewhere (Extra Usage);
-      `billing_sources` this run's calls per billing source; `not_go_calls` and `not_go_attempts` count the
-      calls (this run) and attempts (the outputs) not billed to "go". Rows and calls without the
+      `billing_sources` this run's calls per billing source; `not_go_calls` counts this run's calls not
+      billed to "go", and `not_go_attempts` the attempts of output rows with any such call (a row mixing
+      "go" and another source counts all its attempts). A call naming no billing source ("unknown") is
+      counted at its allowance and flagged. Rows and calls without the
       `usage.opencode` block (another provider, older cache entries) add nothing to these.
     - `missing_session_errors`: calls the provider refused for a missing or rejected session header (HTTP 400
       MissingSessionID; a warning is printed the first time). Their rows are missing like any failed call.
@@ -625,5 +627,7 @@ def _parse_row(raw: dict[str, str]) -> ResultRow:
         values[k] = int(raw.get(k) or 0)  # `attempts` and `repeat` are absent from tables written before #6
     values["cost"] = float(raw["cost"]) if raw.get("cost") else None  # blank: the provider gave no price
     values["allowance"] = float(raw["allowance"]) if raw.get("allowance") else None  # absent before #11 Part B
+    if "billing_source" not in raw and values["cost"] == 0 and (values["prompt_tokens"] or values["completion_tokens"]):
+        values["cost"] = None  # a table from before #11 Part B: OpenCode Go's 0 was misread as a price
     values["cached"] = raw["cached"] == "True"
     return ResultRow(**values)

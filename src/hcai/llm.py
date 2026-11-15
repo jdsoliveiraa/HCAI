@@ -14,7 +14,7 @@ import sys
 import time
 from email.utils import parsedate_to_datetime
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -63,9 +63,16 @@ class Usage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Usage:
-        """A `Usage` from its `asdict` form; missing fields (an older cache entry) take their defaults."""
+        """A `Usage` from its `asdict` form; missing fields (an older cache entry) take their defaults.
+
+        An entry cached before `billing_source` was recorded (#11 Part B) with a cost of 0 is an OpenCode Go
+        call whose 0 was misread as a price: its cost is unknown (None), not free.
+        """
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        usage = cls(**{k: v for k, v in data.items() if k in known})
+        if "billing_source" not in data and usage.cost == 0:
+            usage = replace(usage, cost=None)
+        return usage
 
 
 @dataclass(frozen=True)
@@ -159,8 +166,9 @@ def parse_usage(u: Any, *, subscription: bool = False) -> Usage:
         if source == "unknown":  # billed somewhere unnamed: what the allowance says it took, flagged as not go
             return Usage(**tokens, cost=allowance if allowance is not None else cost, billing_source=source,
                          allowance=allowance, list_cost=list_cost)
-        return Usage(**tokens, cost=cost if cost else (list_cost if list_cost is not None else cost),
-                     billing_source=source, allowance=0.0, list_cost=list_cost)
+        # billed elsewhere: its price, or the list price; a 0 with no list price is unknown, not free
+        return Usage(**tokens, cost=cost if cost else list_cost, billing_source=source, allowance=0.0,
+                     list_cost=list_cost)
     if subscription and not cost:
         cost = None
     return Usage(**tokens, cost=cost)
@@ -415,7 +423,8 @@ class MeteredClient:
             by_source[u.billing_source] = by_source.get(u.billing_source, 0) + 1
             if u.allowance is not None:
                 self.allowance[request.model] = self.allowance.get(request.model, 0.0) + u.allowance
-            if u.billing_source != "go" and u.cost is not None:
+            # an "unknown" source is counted at its allowance (above), not as balance
+            if u.billing_source not in ("go", "unknown") and u.cost is not None:
                 self.balance[request.model] = self.balance.get(request.model, 0.0) + u.cost - (u.allowance or 0.0)
         return response
 

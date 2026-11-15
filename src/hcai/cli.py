@@ -49,6 +49,9 @@ def _go_billing_summary(totals: dict[str, Any]) -> str:
         out += (f"\nWARNING: {totals['not_go_calls']} calls this run ({totals['not_go_attempts']} attempts in all) "
                 f"were not billed to the Go allowance" + (f" ({elsewhere})" if elsewhere else "")
                 + f"; ${totals['balance_spent']:.4f} billed elsewhere (e.g. the pay-as-you-go balance) this run")
+        if totals["billing_sources"].get("unknown"):
+            out += (f"; {totals['billing_sources']['unknown']} calls named no billing source "
+                    "(counted at their allowance)")
     return out
 
 
