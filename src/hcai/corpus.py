@@ -61,7 +61,7 @@ from typing import Any
 
 from hcai.config import Design, Generator
 from hcai.llm import CachedClient, LLMClient, LLMRequest
-from hcai.language import language_problem
+from hcai.language import Field, language_problem
 from hcai.ptpt import describe, ptbr_terms
 from hcai.variants import (
     NATIONALITY_LABEL, WORK_ELIGIBILITY, TemplateError, Variant, check_variants, gendered_forms, gendered_pairs,
@@ -310,6 +310,7 @@ def generate_corpus(
     languages = _translation_languages(design)
     attempts = generator.max_attempts if max_attempts is None else max_attempts
     out = design.corpus_dir
+    _recover_swap(out)
     # Unparseable generations stay out of the cache, so rerunning a failed generation draws fresh answers.
     cached = CachedClient(client, cache_dir, cache_unparseable=False)
     if (out / MANIFEST).exists() and not force:
@@ -365,6 +366,7 @@ def translate_corpus(
     generator = _generator(design)
     languages = _translation_languages(design)
     attempts = generator.max_attempts if max_attempts is None else max_attempts
+    _recover_swap(design.corpus_dir)
     corpus = load_corpus(design.corpus_dir)
     targets = languages if force else _unfinished(corpus, languages, design.corpus_dir)
     if not targets:
@@ -402,6 +404,7 @@ def recheck_corpus(
     languages = _translation_languages(design)
     attempts = generator.max_attempts if max_attempts is None else max_attempts
     out = design.corpus_dir
+    _recover_swap(out)
     corpus = load_corpus(out)
     _check_same_design(corpus, design, out)
     manifest = json.loads((out / MANIFEST).read_text())
@@ -453,27 +456,22 @@ def recheck_corpus(
         ))
 
     changed = set(regenerated)
-    targets = []
-    for language in languages:
-        if (changed or not _translated_by(corpus, language, generator) or (out / PARTIAL / language).exists()
-                or not _translations_pass(corpus, language)):
-            targets.append(language)
-    if not changed and not targets:
+    valid = {lang: _translated_by(corpus, lang, generator) and _translations_pass(corpus, lang) for lang in languages}
+    # Dropped from the manifest until retranslated: languages with a regenerated source or a failing (or
+    # foreign-made) translation, and when a source changed, languages outside the design (now stale).
+    drop = [lang for lang in corpus.translated_job_ads
+            if changed or (lang in languages and not valid[lang])]
+    # Retranslated: those, the missing languages, and the unfinished ones (a leftover partial/<lang> resumes
+    # without dropping its complete, valid translation, like `translate_corpus`).
+    targets = [lang for lang in languages if changed or not valid[lang] or (out / PARTIAL / lang).exists()]
+    if not changed and not drop and not targets:
         return Recheck(corpus, [], [])
 
-    keep = [lang for lang in corpus.translated_job_ads if lang not in targets and (not changed or lang in languages)]
-    rechecked = Corpus(
-        version=corpus.version, generator=corpus.generator, job_ads=job_ads,
-        base_cvs=[replace(cv, translations={lang: cv.translations[lang] for lang in keep if lang in cv.translations})
-                  for cv in base_cvs],
-        translated_job_ads={lang: corpus.translated_job_ads[lang] for lang in keep},
-        translated_by={lang: corpus.translated_by[lang] for lang in keep if lang in corpus.translated_by},
-    )
-    _rewrite_keeping_partial(rechecked, design, out)
-    # Frozen translations of unchanged sources become kept translations: re-checked, not asked again.
+    # Frozen translations of unchanged sources become kept translations (re-checked, not asked again). They are
+    # kept before the rewrite drops their language, so an interruption never loses them.
     setup = _partial_setup(design, generator)
-    for language in targets:
-        if not _translated_by(corpus, language, generator):
+    for language in drop:
+        if language not in languages or not _translated_by(corpus, language, generator):
             continue
         partial = out / PARTIAL / language
         if partial.exists() and _read_json(partial / PARTIAL_SOURCE) != setup:
@@ -483,10 +481,20 @@ def recheck_corpus(
                 _keep_translation(partial, setup, f"{role}/job_ad", ad,
                                   _job_ad_fields(corpus.translated_job_ads[language][role]))
         for cv in base_cvs:
-            frozen = frozen_cvs.get(cv.id)
-            if (cv is frozen and language in cv.translations
+            if (cv is frozen_cvs.get(cv.id) and language in cv.translations
                     and _kept_translation(partial, cv.id, cv) is None):
                 _keep_translation(partial, setup, cv.id, cv, cv.translations[language])
+
+    keep = [lang for lang in corpus.translated_job_ads if lang not in drop]
+    rechecked = Corpus(
+        version=corpus.version, generator=corpus.generator, job_ads=job_ads,
+        base_cvs=[replace(cv, translations={lang: cv.translations[lang] for lang in keep if lang in cv.translations})
+                  for cv in base_cvs],
+        translated_job_ads={lang: corpus.translated_job_ads[lang] for lang in keep},
+        translated_by={lang: corpus.translated_by[lang] for lang in keep if lang in corpus.translated_by},
+    )
+    if changed or drop:
+        _write(rechecked, design, out, keep_partial=True)
     corpus = _translate_languages(cached, design, generator, rechecked, targets, attempts, out, restart=False)
     return Recheck(corpus, regenerated, targets)
 
@@ -527,20 +535,6 @@ def _translations_pass(corpus: Corpus, language: str) -> bool:
         if not _passes(validate, cv.translations[language]):
             return False
     return True
-
-
-def _rewrite_keeping_partial(corpus: Corpus, design: Design, out: Path) -> None:
-    """`_write` the corpus over `out`, keeping its `partial/` translations (rewriting replaces the folder)."""
-    aside = out.with_name(out.name + ".partial-keep")
-    if aside.exists():
-        shutil.rmtree(aside)
-    if (out / PARTIAL).exists():
-        (out / PARTIAL).rename(aside)
-    try:
-        _write(corpus, design, out)
-    finally:
-        if aside.exists():
-            aside.rename(out / PARTIAL)
 
 
 def _unfinished(corpus: Corpus, languages: list[str], out: Path) -> list[str]:
@@ -877,6 +871,7 @@ def _job_ad_translation(ad: JobAd, language: str) -> tuple[str, dict, Any]:
             if len(parsed[key]) != len(source[key]) or not all(isinstance(r, str) and r.strip() for r in parsed[key]):
                 raise _Invalid(f"'{key}' must translate each of the {len(source[key])} requirements, in order")
         _check_language(parsed, language)
+        _check_translated(source, parsed)
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
         return {k: parsed[k] for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
@@ -912,6 +907,7 @@ def _cv_translation(cv: BaseCV, language: str) -> tuple[str, dict, Any]:
         _expect_keys(parsed, CV_TRANSLATION_SCHEMA)
         _check_language(parsed, language)
         _check_same_structure(source, parsed)
+        _check_translated(source, parsed)
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
         try:
@@ -978,8 +974,12 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
-# Fields that hold names, places and dates rather than prose: not part of the language check.
-_NAME_FIELDS = {"employer", "institution", "location", "start", "end", "year", "evidence"}
+# Fields that hold names, places and dates: not part of the language check (evidence quotes repeat the CV body).
+_SKIPPED_FIELDS = {"employer", "institution", "location", "start", "end", "year", "evidence"}
+# Headlines and job titles (the title rule of `hcai.language`), and fields that are often proper names (counted
+# toward the document's totals only); every other text field is prose.
+_TITLE_FIELDS = {"headline", "title"}
+_NAME_LIKE_FIELDS = {"skills", "certifications", "degree"}
 _LANGUAGE_HINTS = {
     "en": ("Write every field in English; only proper nouns (employer and institution names, cities, the Ordem / "
            "OCC names, degree names such as Licenciatura) may stay in Portuguese, glossed in English where natural"),
@@ -988,18 +988,40 @@ _LANGUAGE_HINTS = {
 }
 
 
-def _prose_fields(parsed: dict[str, Any]) -> list[tuple[str, str]]:
-    """The (path, text) fields of a document that must be in its language: all but names, places and dates
-    (and the evidence quotes, which repeat the CV body)."""
-    return [(path, text) for path, text in _fields(parsed)
-            if re.sub(r"\[\d+\]", "", path).rsplit(".", 1)[-1] not in _NAME_FIELDS]
+def _field_key(path: str) -> str:
+    """The schema key of a field path: "experience[2].bullets[1]" -> "bullets"."""
+    return re.sub(r"\[\d+\]", "", path).rsplit(".", 1)[-1]
+
+
+def _language_fields(parsed: dict[str, Any]) -> list[Field]:
+    """The fields of a document that must be in its language, by kind: all but names, places and dates."""
+    fields = []
+    for path, text in _fields(parsed):
+        key = _field_key(path)
+        if key in _SKIPPED_FIELDS:
+            continue
+        kind = "title" if key in _TITLE_FIELDS else "name" if key in _NAME_LIKE_FIELDS else "prose"
+        fields.append(Field(path, text, kind))
+    return fields
 
 
 def _check_language(parsed: dict[str, Any], language: str) -> None:
-    """The document's prose is in `language` (an English source is not Portuguese, a translation is not left in
+    """The document is in `language` (an English source is not Portuguese, a translation is not left in
     English): see `hcai.language`."""
-    if problem := language_problem(_prose_fields(parsed), language):
+    if problem := language_problem(_language_fields(parsed), language):
         raise _Invalid(f"{problem}. {_LANGUAGE_HINTS[language]}")
+
+
+def _check_translated(source: dict[str, Any], parsed: dict[str, Any]) -> None:
+    """No prose field or title of the translation is the original's text copied verbatim (3+ words): a terse
+    English bullet has too few function words for the language check, but copying it is easy to see."""
+    original = dict(_fields(source))
+    copied = [path for path, text in _fields(parsed)
+              if _field_key(path) not in _SKIPPED_FIELDS | _NAME_LIKE_FIELDS
+              and len(re.findall(r"[^\W\d_]+", text)) >= 3 and _normalise(text) == _normalise(original.get(path, ""))]
+    if copied:
+        raise _Invalid(f"left untranslated, copied from the original: {', '.join(copied[:6])}. "
+                       f"{_LANGUAGE_HINTS['pt']}")
 
 
 def _translation_source(document: JobAd | BaseCV) -> dict[str, Any]:
@@ -1244,8 +1266,18 @@ def _check_same_design(corpus: Corpus, design: Design, out: Path) -> None:
                            "bump the version, or pass force=True (--force) to regenerate")
 
 
-def _write(corpus: Corpus, design: Design, out: Path) -> None:
-    """Write the whole corpus to a sibling directory, then swap it in, so a failure never leaves half a corpus."""
+def _recover_swap(out: Path) -> None:
+    """Finish a `_write` interrupted between its two renames: put the previous corpus back in place."""
+    old = out.with_name(out.name + ".old")
+    if not out.exists() and old.exists():
+        old.rename(out)
+
+
+def _write(corpus: Corpus, design: Design, out: Path, *, keep_partial: bool = False) -> None:
+    """Write the whole corpus to a sibling directory, then swap it in, so a failure never leaves half a corpus.
+
+    `keep_partial` carries the kept translations (`partial/`) of the corpus being replaced over.
+    """
     staging = out.with_name(out.name + ".staging")
     if staging.exists():
         shutil.rmtree(staging)
@@ -1275,10 +1307,19 @@ def _write(corpus: Corpus, design: Design, out: Path) -> None:
         "translated_by": {language: _provenance(g) for language, g in corpus.translated_by.items()},
     }
     (staging / MANIFEST).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-    if out.exists():
-        shutil.rmtree(out)
+    if keep_partial and (out / PARTIAL).exists():
+        shutil.copytree(out / PARTIAL, staging / PARTIAL)
+    # Two renames: until the second, the previous corpus is whole (in place, or as <out>.old, which
+    # `_recover_swap` puts back), so an interrupted write never loses it.
+    old = out.with_name(out.name + ".old")
+    if old.exists():
+        shutil.rmtree(old)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        out.rename(old)
     staging.rename(out)
+    if old.exists():
+        shutil.rmtree(old)
 
 
 def _write_translation_files(corpus: Corpus, root: Path, languages) -> None:

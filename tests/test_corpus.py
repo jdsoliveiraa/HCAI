@@ -1003,6 +1003,7 @@ def frozen_with_portuguese_accountant(design: Design, tmp_path: Path, monkeypatc
     """A corpus frozen before the language check existed, with accountant written in Portuguese."""
     with monkeypatch.context() as m:
         m.setattr("hcai.corpus._check_language", lambda parsed, language: None)
+        m.setattr("hcai.corpus._check_translated", lambda source, parsed: None)  # PT 'translated' into PT
         generate_corpus(design, FakeLLMClient(role_responder(ACCOUNTANT)), cache_dir=tmp_path / "old-cache")
     assert load_corpus(design.corpus_dir).job_ads["accountant"].summary == portuguese_job_ad()["summary"]
 
@@ -1109,3 +1110,57 @@ def test_the_corpus_command_rechecks_a_frozen_corpus(tmp_path, capsys):
     assert main([*args, "--recheck"]) == 0
     assert "nothing regenerated" in capsys.readouterr().out
     assert main([*args, "--recheck", "--force"]) == 1
+
+
+def test_a_terse_english_bullet_copied_into_a_translation_is_rejected(bilingual_design, tmp_path):
+    copied = pt_cv_response()
+    copied["experience"] = [{**copied["experience"][0], "bullets": ["Did the job well."]}]  # too few function words
+    client = FakeLLMClient(resumable_responder(copied))
+    with pytest.raises(GenerationFailed, match="left untranslated.*experience\\[1\\].bullets\\[1\\]"):
+        generate_corpus(bilingual_design, client, cache_dir=tmp_path / "cache")
+
+
+def test_recheck_resumes_a_leftover_partial_without_dropping_the_complete_language(bilingual_design, tmp_path):
+    generate_corpus(bilingual_design, FakeLLMClient(resumable_responder()), cache_dir=tmp_path / "cache")
+    other = replace(bilingual_design, generator=Generator(model="generator/other"))
+    with pytest.raises(GenerationFailed):  # an interrupted --translate --force leaves partial/pt
+        translate_corpus(other, FakeLLMClient(resumable_responder(pt_cv_response(summary=LEAKY))),
+                         cache_dir=tmp_path / "cache", force=True)
+    before = load_corpus(bilingual_design.corpus_dir)
+
+    with pytest.raises(GenerationFailed):  # the original generator rechecks: the partial is another's, retranslated
+        recheck_corpus(bilingual_design, FakeLLMClient(resumable_responder(pt_cv_response(summary=LEAKY))),
+                       cache_dir=tmp_path / "cache2")
+    assert load_corpus(bilingual_design.corpus_dir) == before  # the complete, valid PT-PT stays in place
+
+
+def test_a_recheck_whose_english_fails_changes_nothing(bilingual_design, tmp_path, monkeypatch):
+    frozen_with_portuguese_accountant(bilingual_design, tmp_path, monkeypatch)
+    before = snapshot(bilingual_design.corpus_dir, "")
+
+    with pytest.raises(GenerationFailed, match="accountant/job_ad") as failed:
+        recheck_corpus(bilingual_design, FakeLLMClient(role_responder(ACCOUNTANT)), cache_dir=tmp_path / "cache")
+    assert "Nothing was changed" in str(failed.value)
+    assert snapshot(bilingual_design.corpus_dir, "") == before
+
+
+def test_a_rewrite_interrupted_between_its_renames_is_recovered(bilingual_design, tmp_path):
+    first = generate_corpus(bilingual_design, FakeLLMClient(resumable_responder()), cache_dir=tmp_path / "cache")
+    out = bilingual_design.corpus_dir
+    out.rename(out.with_name(out.name + ".old"))  # killed after moving the old corpus aside
+
+    result = recheck_corpus(bilingual_design, FakeLLMClient(resumable_responder()), cache_dir=tmp_path / "cache")
+    assert result.corpus == first and result.regenerated == [] and out.exists()
+
+
+def test_the_corpus_command_reports_what_a_recheck_regenerated(tmp_path, capsys):
+    config = core_config(tmp_path)
+    args = ["corpus", str(config), "--cache", str(tmp_path / "cache"), "--fake-llm"]
+    assert main(args) == 0
+    cv = tmp_path / "corpus" / "v1-fake" / "nurse" / "weak" / "cv01.json"
+    content = json.loads(cv.read_text())
+    content["summary"] = "Profissional de enfermagem com uma equipa de cuidados e formação em urgência."
+    cv.write_text(json.dumps(content))
+    capsys.readouterr()
+    assert main([*args, "--recheck"]) == 0
+    assert "regenerated 1 English document(s) (nurse/weak/cv01), retranslated pt" in capsys.readouterr().out
