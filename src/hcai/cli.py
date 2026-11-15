@@ -9,6 +9,8 @@ With condition C1 in the design it also prints what survived blinding (`hcai.bli
 `hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
 `hcai models <config.toml>` lists the models of the config's providers; `hcai check <config.toml>` also probes
 each configured model (chat endpoint, JSON schema, temperature and seed determinism), see `hcai.check`.
+`hcai names <config.toml>` runs the name manipulation check: does each name of the bank signal its intended
+gender and origin to every pipeline model (`hcai.namecheck`, ADR 0009)? It reports failing names and changes nothing.
 
 Each model is served by its provider (`hcai.providers`: `opencode-go` by default, `openrouter` as the fallback);
 API keys come from the environment or a `.env` file in the working directory.
@@ -29,7 +31,8 @@ from hcai.config import Design, load_design, pilot_design
 from hcai.corpus import (
     CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, recheck_corpus, translate_corpus,
 )
-from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, ProviderExhausted
+from hcai.llm import CachedClient, FakeLLMClient, LLMClient, LLMRequest, MeteredClient, ProviderExhausted
+from hcai.namecheck import DEFAULT_THRESHOLD, ValidAnswersOnly, format_check, perceive, score, write_outputs
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
@@ -189,8 +192,28 @@ def check_command(config: str | Path, client: LLMClient, listings: dict[str, lis
     return results
 
 
+def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path, cache_dir: str | Path,
+                  repeats: int = 5, threshold: float = DEFAULT_THRESHOLD, temperature: float | None = None
+                  ) -> tuple[str, bool]:
+    """Run the name manipulation check through `client` (cached in `cache_dir`); (report, every name passes)."""
+    design = load_design(config)
+    metered = MeteredClient(client)
+    # a missing answer (unparseable, or outside the options) is not cached, so a rerun asks it again
+    cached = CachedClient(ValidAnswersOnly(metered), cache_dir, cache_unparseable=False)
+    check = score(perceive(design, cached, repeats=repeats, temperature=temperature), threshold)
+    paths = write_outputs(check, out_dir)
+    calls = sum(metered.calls.values())
+    missing = sum(p.missing for p in check.perceptions)
+    report = (format_check(check)
+              + f"\n\n{len(check.perceptions)} answers ({missing} missing), {calls} LLM calls, "
+              f"{len(check.perceptions) - calls} from cache -> " + ", ".join(str(p) for p in paths))
+    return report, not check.failing
+
+
 def _fake_response(request: LLMRequest) -> dict:
     props = (request.response_schema or {}).get("properties", {})
+    if set(props) == {"gender", "origin"}:  # name manipulation check: no signal at all
+        return {"gender": "unsure", "origin": props["origin"]["enum"][-1]}
     if "blinded_cv" in props:
         return fake_blinding(request)
     if "passed" in props:
@@ -249,6 +272,19 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--model", action="append", default=None, help="probe only this model (repeatable)")
     check.add_argument("--repeats", type=int, default=3, help="identical requests per determinism probe (default 3)")
     check.add_argument("--out", type=Path, default=None, help="also write the results as JSON to this file")
+    names = sub.add_parser("names", help="name manipulation check: does each name signal its gender and origin?")
+    names.add_argument("config", type=Path)
+    names.add_argument("--repeats", type=int, default=5, help="answers per name and model (default 5)")
+    names.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
+                       help=f"minimum gender and origin hit rate for a name to pass (default {DEFAULT_THRESHOLD})")
+    names.add_argument("--temperature", type=float, default=None,
+                       help="sampling temperature (default: the design's [design] temperature)")
+    names.add_argument("--out", type=Path, default=Path("results/names"), help="output directory (default: results/names)")
+    names.add_argument(
+        "--cache", type=Path, default=None,
+        help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
+    )
+    names.add_argument("--fake-llm", action="store_true", help="smoke test: a fake LLM perceives nothing, no API calls")
     args = parser.parse_args(argv)
     load_dotenv(".env")  # keys from a gitignored .env in the working directory; the environment wins
 
@@ -313,6 +349,26 @@ def _dispatch(args: argparse.Namespace) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 1
         return 0
+
+    if args.command == "names":
+        if args.repeats < 1 or not 0.0 <= args.threshold <= 1.0:
+            print("error: --repeats must be >= 1 and --threshold between 0 and 1", file=sys.stderr)
+            return 1
+        if args.fake_llm:
+            client = FakeLLMClient(_fake_response)
+        else:
+            design = load_design(args.config)
+            client = make_client(design, design.models)
+        cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
+        try:
+            report, all_pass = names_command(args.config, client, out_dir=args.out, cache_dir=cache,
+                                             repeats=args.repeats, threshold=args.threshold,
+                                             temperature=args.temperature)
+        except ValueError as e:  # an identity whose origin has no option, or a name under two identities
+            print(f"names: {e}", file=sys.stderr)
+            return 1
+        print(report)
+        return 0 if all_pass else 2
 
     if args.command == "variants":
         try:

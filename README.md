@@ -85,6 +85,19 @@ uv run hcai run configs/variants.toml --fake-llm         # run the same 16 varia
 - **Diff check:** within each base CV × language, the variants are compared after masking the name, the nationality value, pronouns and the gendered pairs. Any other difference, a gendered form of the wrong gender, or a missing right-to-work / proficiency line fails the check. Templates are also rejected if they use an EN pronoun or a common PT-PT gendered word (Engenheiro, licenciada, ...) outside a slot; write `{{X|X}}` for one that does not refer to the candidate. All-caps acronyms (`MS Excel`) are not pronouns. The PT-PT word list is not exhaustive, so slot every gendered word yourself; an alternation of only an article (`{{o|a}}`) is rejected, slot the whole phrase (`{{o engenheiro|a engenheira}}`). Every identity needs a nationality in every design language. `hcai variants` then exits with status 1 without writing anything, and `hcai run` stops before its first LLM call.
 - **Gender cue strength:** generated base CVs (`hcai corpus`) are pronoun-free by instruction, so in EN their only gender cue is the name; hand-written templates such as the `data_analyst` one also use `{{He|She}}`. Keep this in mind when comparing gender gaps across corpora.
 
+## Name manipulation check
+
+Before the full run, check that every name of the bank signals its intended gender and origin to the audited models (spec #1, story 11):
+
+```sh
+uv run hcai names configs/core.toml                      # every name x pipeline model, 5 answers each
+uv run hcai names configs/core.toml --repeats 10 --threshold 0.9 --out results/names
+```
+
+- **What is asked:** each pipeline model (`[design] models`; not the generator or the judge) sees one name at a time, as "a job applicant in Portugal", and answers in JSON with the perceived gender (male / female / unsure) and the most likely origin (Portuguese; Brazilian; Cape Verdean or other PALOP; Ukrainian or other Eastern European; Other or unsure). The prompt is the same for every name but the name: it never states the intended gender or origin. The option order changes per repeat (never the bank's origin order; "unsure" and "Other or unsure" always last), and each repeat has its own seed, so the repeats are separate samples, each cached on its own. A rerun with the same settings makes no calls. The temperature is the design's (`--temperature` to override).
+- **Outputs** (in `--out`, default `results/names`): `perceptions.csv` (one row per answer: name, intended and perceived gender and origin, model, repeat; blank when the answer is missing), `summary.csv` (per name x model: answers, missing, gender and origin hit rates, pass) and `cells.csv` (per gender x origin cell and model, plus `all`: the mean hit rates of its names and how many pass). The printed report shows the cells and lists the failing names.
+- **Pass rule:** a name passes when, for every model, both its gender and its origin hit rate are at least `--threshold` (default 0.8) and none of its answers is missing. Rates are over the valid answers; a missing answer (a failed call, or one outside the options) is not cached, so rerunning asks it again. The command exits 2 when a name fails. It never edits the name bank: replace failing names in `data/names/name_bank.toml` by hand and rerun (see `docs/adr/0009-name-manipulation-check.md`).
+
 ## Generating the corpus
 
 `configs/core.toml` is the core design: 3 roles (software engineer, nurse, accountant) × 3 quality levels (strong, average, weak) × `base_cvs_per_role` base CVs per role and quality level. Its `[generator]` section sets the generator model (a third model family; generation refuses a model that is also one of the audited pipeline `models`), its temperature, and how many borderline base CVs to write per role and quality level.
