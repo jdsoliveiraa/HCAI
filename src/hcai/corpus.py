@@ -40,12 +40,17 @@ only the missing or failing documents are asked again.
 
 `translate_corpus` adds a language to an already frozen corpus without touching its English files.
 
+Every English document must read as English and every translation must not read as English (`hcai.language`,
+ADR 0008); a failure is retried like any other invalid answer. `recheck_corpus` re-validates a frozen corpus
+with today's checks and regenerates only the failing documents and their translations.
+
 A corpus is frozen once written: generating into a complete existing corpus raises `CorpusFrozen` unless
 `force=True`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -56,6 +61,7 @@ from typing import Any
 
 from hcai.config import Design, Generator
 from hcai.llm import CachedClient, LLMClient, LLMRequest
+from hcai.language import language_problem
 from hcai.ptpt import describe, ptbr_terms
 from hcai.variants import (
     NATIONALITY_LABEL, WORK_ELIGIBILITY, TemplateError, Variant, check_variants, gendered_forms, gendered_pairs,
@@ -65,6 +71,7 @@ from hcai.variants import (
 MANIFEST = "manifest.json"
 PARTIAL = "partial"  # <corpus>/partial/<lang>/: the valid translations of a language not yet complete
 PARTIAL_SOURCE = "source.json"  # partial/<lang>/source.json: the generator model, temperature and seed behind it
+SOURCE_HASH = "_source_sha256"  # in each kept translation: the hash of the English text it was made from
 # A safety stop against a client that only ever serves cached answers; far beyond any real chain of reruns.
 MAX_CHAIN = 10_000
 LANGUAGE = "en"  # job ads and base CVs are written in English, then translated into the other design languages
@@ -367,6 +374,175 @@ def translate_corpus(
     return _translate_languages(cached, design, generator, corpus, targets, attempts, design.corpus_dir, restart=False)
 
 
+@dataclass(frozen=True)
+class Recheck:
+    """What `recheck_corpus` did: the English documents it regenerated and the languages it retranslated."""
+    corpus: Corpus
+    regenerated: list[str]  # "<role>/job_ad" or base CV ids
+    retranslated: list[str]  # languages
+
+
+def recheck_corpus(
+    design: Design, client: LLMClient, cache_dir: str | Path, *, max_attempts: int | None = None,
+) -> Recheck:
+    """Re-validate the frozen corpus at `corpus_dir` with today's checks and regenerate only what fails.
+
+    A frozen English document that still passes every check is kept as it is, with no call and no cache
+    needed. A failing job ad is regenerated with fresh attempts, and so are all of its base CVs (they quote
+    its requirements); a failing base CV is regenerated alone. A language is retranslated when a source
+    changed, a frozen translation fails a check, or it is unfinished: frozen translations of unchanged sources
+    are kept under `partial/<lang>/` and re-checked, so only the failing and the regenerated documents are
+    translated again. The corpus is rewritten (atomically) without the retranslated languages first, so a
+    language is in the manifest only when all of it is valid; a language outside the design is dropped when an
+    English document changed. Needs the generator (model, temperature, seed) the corpus was made with.
+
+    Raises `GenerationFailed` like `generate_corpus`: an English failure changes nothing on disk.
+    """
+    generator = _generator(design)
+    languages = _translation_languages(design)
+    attempts = generator.max_attempts if max_attempts is None else max_attempts
+    out = design.corpus_dir
+    corpus = load_corpus(out)
+    _check_same_design(corpus, design, out)
+    manifest = json.loads((out / MANIFEST).read_text())
+    if _provenance(corpus.generator) != _provenance(generator) or manifest.get("seed") != design.seed:
+        raise CorpusFrozen(f"corpus {out} was made by another generator setup ({_provenance(corpus.generator)}, "
+                           f"seed {manifest.get('seed')}); a recheck regenerates with the same one. Pass --force to "
+                           "regenerate everything, or bump the version")
+    _check_borderline(design, generator)
+    cached = CachedClient(client, cache_dir, cache_unparseable=False)
+
+    frozen_cvs = {cv.id: cv for cv in corpus.base_cvs}
+    job_ads: dict[str, JobAd] = {}
+    base_cvs: list[BaseCV] = []
+    regenerated: list[str] = []
+    failures: list[DocumentFailure] = []
+    for role in design.roles:
+        frozen_ad = corpus.job_ads[role]
+        prompt, validate = _job_ad_request(design, role)
+        ad = frozen_ad if _passes(validate, _job_ad_fields(frozen_ad)) else None
+        if ad is None:
+            try:
+                ad = _ask(cached, design.seed, generator, prompt, JOB_AD_SCHEMA, validate, attempts)
+            except _Exhausted as e:
+                failures.append(DocumentFailure(f"{role}/job_ad", LANGUAGE, str(e)))
+                continue
+            regenerated.append(f"{role}/job_ad")
+        job_ads[role] = ad
+        for quality in design.quality_levels:
+            n_borderline = generator.borderline.get(quality, 0)
+            for n in range(1, design.base_cvs_per_role + 1):
+                borderline = n > design.base_cvs_per_role - n_borderline
+                cv_id = f"{role}/{quality}/cv{n:02d}"
+                prompt, validate = _base_cv_request(design, ad, quality, n, borderline)
+                frozen = frozen_cvs.get(cv_id)
+                if (ad is frozen_ad and frozen is not None and frozen.borderline == borderline
+                        and _passes(validate, frozen.content)):
+                    base_cvs.append(frozen)
+                    continue
+                try:
+                    base_cvs.append(_ask(cached, design.seed, generator, prompt, BASE_CV_SCHEMA, validate, attempts))
+                except _Exhausted as e:
+                    failures.append(DocumentFailure(cv_id, LANGUAGE, str(e)))
+                    continue
+                regenerated.append(cv_id)
+    if failures:
+        raise GenerationFailed(failures, kept=(
+            f"Nothing was changed in {out}. The valid answers are cached: rerun the same command to replay them "
+            "at no cost and ask only the failing documents again."
+        ))
+
+    changed = set(regenerated)
+    targets = []
+    for language in languages:
+        if (changed or not _translated_by(corpus, language, generator) or (out / PARTIAL / language).exists()
+                or not _translations_pass(corpus, language)):
+            targets.append(language)
+    if not changed and not targets:
+        return Recheck(corpus, [], [])
+
+    keep = [lang for lang in corpus.translated_job_ads if lang not in targets and (not changed or lang in languages)]
+    rechecked = Corpus(
+        version=corpus.version, generator=corpus.generator, job_ads=job_ads,
+        base_cvs=[replace(cv, translations={lang: cv.translations[lang] for lang in keep if lang in cv.translations})
+                  for cv in base_cvs],
+        translated_job_ads={lang: corpus.translated_job_ads[lang] for lang in keep},
+        translated_by={lang: corpus.translated_by[lang] for lang in keep if lang in corpus.translated_by},
+    )
+    _rewrite_keeping_partial(rechecked, design, out)
+    # Frozen translations of unchanged sources become kept translations: re-checked, not asked again.
+    setup = _partial_setup(design, generator)
+    for language in targets:
+        if not _translated_by(corpus, language, generator):
+            continue
+        partial = out / PARTIAL / language
+        if partial.exists() and _read_json(partial / PARTIAL_SOURCE) != setup:
+            shutil.rmtree(partial)
+        for role, ad in job_ads.items():
+            if ad is corpus.job_ads[role] and _kept_translation(partial, f"{role}/job_ad", ad) is None:
+                _keep_translation(partial, setup, f"{role}/job_ad", ad,
+                                  _job_ad_fields(corpus.translated_job_ads[language][role]))
+        for cv in base_cvs:
+            frozen = frozen_cvs.get(cv.id)
+            if (cv is frozen and language in cv.translations
+                    and _kept_translation(partial, cv.id, cv) is None):
+                _keep_translation(partial, setup, cv.id, cv, cv.translations[language])
+    corpus = _translate_languages(cached, design, generator, rechecked, targets, attempts, out, restart=False)
+    return Recheck(corpus, regenerated, targets)
+
+
+def _translated_by(corpus: Corpus, language: str, generator: Generator) -> bool:
+    """The corpus has `language`, translated by `generator`'s model at the translation temperature."""
+    by = corpus.translated_by.get(language)
+    return (language in corpus.translated_job_ads and by is not None and by.model == generator.model
+            and by.temperature == TRANSLATION_TEMPERATURE)
+
+
+def _job_ad_fields(ad: JobAd) -> dict[str, Any]:
+    """A job ad as the generator wrote it (JOB_AD_SCHEMA), e.g. to re-check a frozen one."""
+    return {k: getattr(ad, k) for k in JOB_AD_SCHEMA["properties"]}
+
+
+def _passes(validate, parsed: Any) -> bool:
+    try:
+        _validated(validate, parsed)
+    except _Invalid:
+        return False
+    return True
+
+
+def _translations_pass(corpus: Corpus, language: str) -> bool:
+    """Every frozen translation into `language` still passes today's checks."""
+    ads = corpus.translated_job_ads.get(language, {})
+    for role, ad in corpus.job_ads.items():
+        if role not in ads:
+            return False
+        _, _, validate = _job_ad_translation(ad, language)
+        if not _passes(validate, _job_ad_fields(ads[role])):
+            return False
+    for cv in corpus.base_cvs:
+        if language not in cv.translations:
+            return False
+        _, _, validate = _cv_translation(cv, language)
+        if not _passes(validate, cv.translations[language]):
+            return False
+    return True
+
+
+def _rewrite_keeping_partial(corpus: Corpus, design: Design, out: Path) -> None:
+    """`_write` the corpus over `out`, keeping its `partial/` translations (rewriting replaces the folder)."""
+    aside = out.with_name(out.name + ".partial-keep")
+    if aside.exists():
+        shutil.rmtree(aside)
+    if (out / PARTIAL).exists():
+        (out / PARTIAL).rename(aside)
+    try:
+        _write(corpus, design, out)
+    finally:
+        if aside.exists():
+            aside.rename(out / PARTIAL)
+
+
 def _unfinished(corpus: Corpus, languages: list[str], out: Path) -> list[str]:
     """The languages not yet in the corpus, or whose (re)translation was interrupted (kept under `partial/`)."""
     return [lang for lang in languages if lang not in corpus.translated_job_ads or (out / PARTIAL / lang).exists()]
@@ -474,13 +650,25 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, role: str, max_attempts: int) -> JobAd:
+_ENGLISH_ONLY = (
+    "Write EVERY field in English: this is the English source of the corpus (it is translated into Portuguese "
+    "separately). Portuguese proper nouns may stay as they are (employer and institution names, cities, the "
+    "Ordem dos Enfermeiros or the Ordem dos Contabilistas Certificados (OCC), degree names such as "
+    "Licenciatura or Mestrado), glossed in English where natural, e.g. \"Licenciatura (bachelor's degree) in "
+    "Accounting\", \"registered with the Ordem dos Enfermeiros (Portuguese nursing council)\"; everything else, "
+    "including job titles, requirements, bullets and skills, is in English."
+)
+
+
+def _job_ad_request(design: Design, role: str) -> tuple[str, Any]:
+    """The prompt and validator of a role's English job ad (the validator returns the `JobAd`)."""
     brief = _role_brief(role)
     prompt = (
         f"Write a job ad for: {brief}.\n"
         "List 3-5 explicit MANDATORY requirements (e.g. degree, minimum years of experience, a licence or core "
         "skill, fluent Portuguese) and 3-5 DESIRABLE requirements. State a concrete minimum for each mandatory "
-        "requirement so a CV can be checked against it. Do not mention age, gender or nationality."
+        "requirement so a CV can be checked against it. Do not mention age, gender or nationality.\n"
+        f"{_ENGLISH_ONLY}"
     )
 
     def validate(parsed: Any) -> JobAd:
@@ -488,16 +676,20 @@ def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, ro
         for key in ("mandatory", "desirable"):
             if not parsed[key] or not all(isinstance(r, str) and r.strip() for r in parsed[key]):
                 raise _Invalid(f"'{key}' must be a non-empty list of requirements")
+        _check_language(parsed, LANGUAGE)
         return JobAd(role=role, title=parsed["title"], location=parsed["location"], summary=parsed["summary"],
                      mandatory=list(parsed["mandatory"]), desirable=list(parsed["desirable"]))
 
+    return prompt, validate
+
+
+def _generate_job_ad(client: LLMClient, design: Design, generator: Generator, role: str, max_attempts: int) -> JobAd:
+    prompt, validate = _job_ad_request(design, role)
     return _ask(client, design.seed, generator, prompt, JOB_AD_SCHEMA, validate, max_attempts)
 
 
-def _generate_base_cv(
-    client: LLMClient, design: Design, generator: Generator, ad: JobAd, quality: str, n: int, borderline: bool,
-    max_attempts: int,
-) -> BaseCV:
+def _base_cv_request(design: Design, ad: JobAd, quality: str, n: int, borderline: bool) -> tuple[str, Any]:
+    """The prompt and validator of an English base CV for `ad` (the validator returns the `BaseCV`)."""
     if quality not in QUALITY_TEMPLATES:
         raise ValueError(f"no CV template for quality level {quality!r}; known: {sorted(QUALITY_TEMPLATES)}")
     mandatory = "\n".join(f"{i}. {r}" for i, r in enumerate(ad.mandatory, 1))
@@ -523,11 +715,13 @@ def _generate_base_cv(
         "In 'mandatory_evidence' give, for EVERY mandatory requirement by its number, a short verbatim quote from "
         f"the CV body (not the header) that shows it is met; for a requirement met only by the header (languages, "
         f"right to work) give the evidence \"{HEADER_EVIDENCE}\". In 'desirable_met' list the numbers of the "
-        "desirable requirements the CV meets."
+        "desirable requirements the CV meets.\n\n"
+        f"{_ENGLISH_ONLY}"
     )
 
     def validate(parsed: Any) -> BaseCV:
         _expect_keys(parsed, BASE_CV_SCHEMA)
+        _check_language(parsed, LANGUAGE)
         _check_evidence(parsed, ad)
         if any(not isinstance(i, int) or not 1 <= i <= len(ad.desirable) for i in parsed["desirable_met"]):
             raise _Invalid("'desirable_met' must hold desirable requirement numbers")
@@ -537,6 +731,14 @@ def _generate_base_cv(
         return BaseCV(id=f"{ad.role}/{quality}/cv{n:02d}", role=ad.role, quality=quality, borderline=borderline,
                       content=parsed)
 
+    return prompt, validate
+
+
+def _generate_base_cv(
+    client: LLMClient, design: Design, generator: Generator, ad: JobAd, quality: str, n: int, borderline: bool,
+    max_attempts: int,
+) -> BaseCV:
+    prompt, validate = _base_cv_request(design, ad, quality, n, borderline)
     return _ask(client, design.seed, generator, prompt, BASE_CV_SCHEMA, validate, max_attempts)
 
 
@@ -579,17 +781,17 @@ def _translate_language(
     otherwise `corpus` is returned unchanged with the failures.
     """
     partial = out / PARTIAL / language
-    source = {"model": generator.model, "temperature": TRANSLATION_TEMPERATURE, "seed": design.seed}
-    if partial.exists() and (restart or _read_json(partial / PARTIAL_SOURCE) != source):
+    setup = _partial_setup(design, generator)
+    if partial.exists() and (restart or _read_json(partial / PARTIAL_SOURCE) != setup):
         shutil.rmtree(partial)  # a translation by another generator setup would be misattributed in the manifest
     failures: list[DocumentFailure] = []
 
-    def translate(document: str, prompt: str, schema: dict, validate) -> dict[str, Any] | None:
-        path = partial / f"{document}.json"
-        if path.exists():  # kept by an earlier run: re-checked, so a stricter check still applies
+    def translate(document: str, original: JobAd | BaseCV, prompt: str, schema: dict, validate) -> dict[str, Any] | None:
+        kept = _kept_translation(partial, document, original)
+        if kept is not None:  # kept by an earlier run: re-checked, so a stricter check still applies
             try:
-                return _validated(validate, json.loads(path.read_text()))
-            except (_Invalid, json.JSONDecodeError):
+                return _validated(validate, kept)
+            except _Invalid:
                 pass
         try:
             result = _ask(client, design.seed, generator, prompt, schema, validate, max_attempts,
@@ -597,21 +799,15 @@ def _translate_language(
         except _Exhausted as e:
             failures.append(DocumentFailure(document, language, str(e)))
             return None
-        if not (partial / PARTIAL_SOURCE).exists():
-            partial.mkdir(parents=True, exist_ok=True)
-            (partial / PARTIAL_SOURCE).write_text(json.dumps(source) + "\n")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
-        tmp.replace(path)
+        _keep_translation(partial, setup, document, original, result)
         return result
 
     ads: dict[str, JobAd] = {}
     for role, ad in corpus.job_ads.items():
-        parsed = translate(f"{role}/job_ad", *_job_ad_translation(ad, language))
+        parsed = translate(f"{role}/job_ad", ad, *_job_ad_translation(ad, language))
         if parsed is not None:
             ads[role] = JobAd(role=role, language=language, **{k: parsed[k] for k in JOB_AD_TRANSLATION_SCHEMA["properties"]})
-    translations = {cv.id: translate(cv.id, *_cv_translation(cv, language)) for cv in corpus.base_cvs}
+    translations = {cv.id: translate(cv.id, cv, *_cv_translation(cv, language)) for cv in corpus.base_cvs}
     if failures:
         return corpus, failures
 
@@ -629,6 +825,34 @@ def _translate_language(
     return corpus, []
 
 
+def _partial_setup(design: Design, generator: Generator) -> dict[str, Any]:
+    """Who makes the translations kept under `partial/<lang>/` (its `source.json`)."""
+    return {"model": generator.model, "temperature": TRANSLATION_TEMPERATURE, "seed": design.seed}
+
+
+def _kept_translation(partial: Path, document: str, original: JobAd | BaseCV) -> dict[str, Any] | None:
+    """The translation of `document` kept under `partial`, if there is one and it was made from `original`'s
+    current English text (a kept translation without that record, or of an older source, is not reused)."""
+    kept = _read_json(partial / f"{document}.json")
+    if not isinstance(kept, dict) or kept.pop(SOURCE_HASH, None) != _source_hash(original):
+        return None
+    return kept
+
+
+def _keep_translation(
+    partial: Path, setup: dict[str, Any], document: str, original: JobAd | BaseCV, translation: dict[str, Any],
+) -> None:
+    """Keep a valid translation of `original` under `partial` (atomically), with the hash of its source."""
+    if not (partial / PARTIAL_SOURCE).exists():
+        partial.mkdir(parents=True, exist_ok=True)
+        (partial / PARTIAL_SOURCE).write_text(json.dumps(setup) + "\n")
+    path = partial / f"{document}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({**translation, SOURCE_HASH: _source_hash(original)}, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
 _DIALECT_RULES = (
     "Write European Portuguese as used in Portugal (PT-PT, current spelling), never Brazilian Portuguese: e.g. "
     "utilizador (not usuário), equipa (not equipe), gestão / gerir (not gerenciamento / gerenciar), ensino "
@@ -640,7 +864,7 @@ _DIALECT_RULES = (
 
 def _job_ad_translation(ad: JobAd, language: str) -> tuple[str, dict, Any]:
     """The prompt, schema and validator of a job ad's translation (the validator returns the checked answer)."""
-    source = {k: getattr(ad, k) for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
+    source = _translation_source(ad)
     prompt = (
         f"Translate this job ad ({_role_brief(ad.role)}) into {TRANSLATION_LANGUAGES[language]}. Keep its meaning, every requirement and "
         "every number exactly; keep the same requirements, in the same order. Translate the location (e.g. "
@@ -652,6 +876,7 @@ def _job_ad_translation(ad: JobAd, language: str) -> tuple[str, dict, Any]:
         for key in ("mandatory", "desirable"):
             if len(parsed[key]) != len(source[key]) or not all(isinstance(r, str) and r.strip() for r in parsed[key]):
                 raise _Invalid(f"'{key}' must translate each of the {len(source[key])} requirements, in order")
+        _check_language(parsed, language)
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
         return {k: parsed[k] for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
@@ -662,7 +887,7 @@ def _job_ad_translation(ad: JobAd, language: str) -> tuple[str, dict, Any]:
 def _cv_translation(cv: BaseCV, language: str) -> tuple[str, dict, Any]:
     """The prompt, schema and validator of a base CV's translation (the validator returns the checked answer,
     with a gendered word right after a candidate slot slotted when that alone makes it valid)."""
-    source = {k: cv.content[k] for k in _TRANSLATED_FIELDS}
+    source = _translation_source(cv)
     prompt = (
         f"Translate this CV into {TRANSLATION_LANGUAGES[language]}. It is CV {cv.id} (a {cv.quality} candidate): "
         "keep its content and quality level exactly, with the same jobs, bullets, degrees, certifications and "
@@ -685,6 +910,7 @@ def _cv_translation(cv: BaseCV, language: str) -> tuple[str, dict, Any]:
 
     def validate(parsed: Any) -> dict[str, Any]:
         _expect_keys(parsed, CV_TRANSLATION_SCHEMA)
+        _check_language(parsed, language)
         _check_same_structure(source, parsed)
         _check_same_numbers(source, parsed)
         _check_dialect(parsed, language)
@@ -750,6 +976,44 @@ def _strings(value: Any) -> list[str]:
     if isinstance(value, list):
         return [s for v in value for s in _strings(v)]
     return []
+
+
+# Fields that hold names, places and dates rather than prose: not part of the language check.
+_NAME_FIELDS = {"employer", "institution", "location", "start", "end", "year", "evidence"}
+_LANGUAGE_HINTS = {
+    "en": ("Write every field in English; only proper nouns (employer and institution names, cities, the Ordem / "
+           "OCC names, degree names such as Licenciatura) may stay in Portuguese, glossed in English where natural"),
+    "pt": ("Translate every field into European Portuguese; only proper nouns and names of tools or "
+           "certifications may stay in English"),
+}
+
+
+def _prose_fields(parsed: dict[str, Any]) -> list[tuple[str, str]]:
+    """The (path, text) fields of a document that must be in its language: all but names, places and dates
+    (and the evidence quotes, which repeat the CV body)."""
+    return [(path, text) for path, text in _fields(parsed)
+            if re.sub(r"\[\d+\]", "", path).rsplit(".", 1)[-1] not in _NAME_FIELDS]
+
+
+def _check_language(parsed: dict[str, Any], language: str) -> None:
+    """The document's prose is in `language` (an English source is not Portuguese, a translation is not left in
+    English): see `hcai.language`."""
+    if problem := language_problem(_prose_fields(parsed), language):
+        raise _Invalid(f"{problem}. {_LANGUAGE_HINTS[language]}")
+
+
+def _translation_source(document: JobAd | BaseCV) -> dict[str, Any]:
+    """The fields of an English document that its translation request carries."""
+    if isinstance(document, JobAd):
+        return {k: getattr(document, k) for k in JOB_AD_TRANSLATION_SCHEMA["properties"]}
+    return {k: document.content[k] for k in _TRANSLATED_FIELDS}
+
+
+def _source_hash(document: JobAd | BaseCV) -> str:
+    """Identifies the English text a translation was made from, so a kept translation of a since regenerated
+    source is never reused."""
+    text = json.dumps(_translation_source(document), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _check_dialect(parsed: dict[str, Any], language: str) -> None:

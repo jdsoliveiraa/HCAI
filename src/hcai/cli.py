@@ -2,7 +2,8 @@
 
 `hcai corpus <config.toml>` generates the job ads and base CVs with the generator model and freezes them
 (in English, translated into the design's other languages); `--translate` adds the design's other languages
-to an already frozen corpus without regenerating it. If documents stay invalid after `[generator] max_attempts`,
+to an already frozen corpus without regenerating it; `--recheck` re-validates a frozen corpus with today's checks
+(e.g. the English-language check) and regenerates only the failing documents and their translations. If documents stay invalid after `[generator] max_attempts`,
 the command names them and exits 1, keeping what succeeded; rerunning it resumes with only the failing ones.
 With condition C1 in the design it also prints what survived blinding (`hcai.blinding`).
 `hcai variants <config.toml>` renders every identity x language variant and runs the demographic-only diff check.
@@ -24,7 +25,9 @@ from pathlib import Path
 from hcai.blinding import fake_blinding
 from hcai.check import ProbeResult, format_probes, probe_model
 from hcai.config import Design, load_design, pilot_design
-from hcai.corpus import CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, translate_corpus
+from hcai.corpus import (
+    CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, recheck_corpus, translate_corpus,
+)
 from hcai.llm import FakeLLMClient, LLMClient, LLMRequest, ProviderExhausted
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
@@ -81,15 +84,25 @@ def run_command(
 
 def corpus_command(
     config: str | Path, cache_dir: str | Path, client: LLMClient, force: bool = False, fake: bool = False,
-    translate: bool = False,
+    translate: bool = False, recheck: bool = False,
 ) -> str:
     design = load_design(config)
     if fake:  # a fake corpus must never take the place of (or freeze over) the real one
         design = replace(design, corpus_dir=design.corpus_dir.with_name(design.corpus_dir.name + "-fake"))
-    make = translate_corpus if translate else generate_corpus
-    corpus = make(design, client, cache_dir=cache_dir, force=force)
+    prefix = ""
+    if recheck:
+        result = recheck_corpus(design, client, cache_dir=cache_dir)
+        corpus = result.corpus
+        prefix = ("recheck: every frozen document passes; nothing regenerated\n"
+                  if not result.regenerated and not result.retranslated else
+                  f"recheck: regenerated {len(result.regenerated)} English document(s)"
+                  + (f" ({', '.join(result.regenerated)})" if result.regenerated else "")
+                  + (f", retranslated {', '.join(result.retranslated)}" if result.retranslated else "") + "\n")
+    else:
+        make = translate_corpus if translate else generate_corpus
+        corpus = make(design, client, cache_dir=cache_dir, force=force)
     borderline = sum(cv.borderline for cv in corpus.base_cvs)
-    return (
+    return prefix + (
         f"corpus {corpus.version}: {len(corpus.job_ads)} job ads, {len(corpus.base_cvs)} base CVs "
         f"({borderline} borderline) in {', '.join(corpus.languages)}, generator {corpus.generator.model}"
         f" -> {design.corpus_dir}"
@@ -192,6 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         help="add the design's non-English languages to the frozen corpus, leaving its English files unchanged",
     )
     gen.add_argument(
+        "--recheck", action="store_true",
+        help="re-validate the frozen corpus and regenerate only the failing documents and their translations",
+    )
+    gen.add_argument(
         "--cache", type=Path, default=None,
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
     )
@@ -255,6 +272,9 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0 if all(r.endpoint_ok for r in results) else 2
 
     if args.command == "corpus":
+        if args.recheck and (args.force or args.translate):
+            print("error: --recheck cannot be combined with --force or --translate", file=sys.stderr)
+            return 1
         if args.fake_llm:
             client = FakeLLMClient(fake_generator_response)
         else:
@@ -263,7 +283,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
         try:
             print(corpus_command(args.config, cache_dir=cache, client=client, force=args.force, fake=args.fake_llm,
-                                 translate=args.translate))
+                                 translate=args.translate, recheck=args.recheck))
         except (CorpusFrozen, GenerationFailed, FileNotFoundError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
