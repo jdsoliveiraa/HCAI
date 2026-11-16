@@ -11,6 +11,8 @@ With condition C1 in the design it also prints what survived blinding (`hcai.bli
 each configured model (chat endpoint, JSON schema, temperature and seed determinism), see `hcai.check`.
 `hcai names <config.toml>` runs the name manipulation check: does each name of the bank signal its intended
 gender and origin to every pipeline model (`hcai.namecheck`, ADR 0009)? It reports failing names and changes nothing.
+`hcai site <config.toml>` writes the static project site (`hcai.site`, ADR 0010): the realism review page and the
+project's navigation hub. It reads the repository only and never calls an LLM.
 
 Each model is served by its provider (`hcai.providers`: `opencode-go` by default, `openrouter` as the fallback);
 API keys come from the environment or a `.env` file in the working directory.
@@ -286,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
     )
     names.add_argument("--fake-llm", action="store_true", help="smoke test: a fake LLM perceives nothing, no API calls")
+    site = sub.add_parser("site", help="write the static project site (realism review + project hub); no API calls")
+    site.add_argument("config", type=Path)
+    site.add_argument("--out", type=Path, default=Path("site"), help="output directory (default: site)")
     args = parser.parse_args(argv)
     load_dotenv(".env")  # keys from a gitignored .env in the working directory; the environment wins
 
@@ -306,6 +311,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "site":
+        from hcai.site import build_site  # the markdown dependency is only needed here
+
+        try:
+            pages = build_site(args.config, args.out)
+        except (ValueError, FileExistsError, TemplateError, IdentityError) as e:
+            print(f"site: {e}", file=sys.stderr)
+            return 1
+        print(f"{len(pages)} pages -> {args.out / 'index.html'}")
+        return 0
+
     if args.command == "models":
         try:
             print(models_command(args.config, provider=args.provider))

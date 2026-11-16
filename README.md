@@ -155,6 +155,31 @@ uv run python -m hcai.audit agreement results/audit/audit_key.csv labels_a.csv l
 - **Labels:** `faithful` (every quote is in the CV and supports its score) or `unfaithful` (at least one is not), any case. Each sheet is checked against the key: every item labelled exactly once, no unknown ids, no other labels; any problem is listed and nothing is computed.
 - **Agreement:** `agreement.csv` has Cohen's κ of the judge against each rater (`judge-human`) and of the raters against each other (`human-human`, the reference), with the observed and chance agreement, the 2×2 counts and a bootstrap 95% CI over items. Raters are named by their file's stem. κ is undefined (empty) when both sides used one same label throughout. The sample is stratified 50/50 by the judge's flag, so κ describes agreement on that balanced sample, not at the judge's real flag rate (see `oversight.csv`). Label sheets may be saved by a spreadsheet as UTF-8 or Windows-1252, comma- or semicolon-separated; blank rows are ignored.
 
+## Project site and the realism review
+
+`hcai site` writes a static site from the repository: the place to do the realism review of the pilot corpus (spec #1 story 12), and the project's hub next to the notebook and the final report. It is plain HTML and CSS, with a little vanilla JS. It reads the repository only, needs no API key and makes no API call (see `docs/adr/0010-project-site-static-review-in-browser.md`).
+
+```sh
+uv run hcai site configs/core.toml && python -m http.server -d site   # preview at http://localhost:8000
+```
+
+- **Pages:**
+  - **Home:** summary, research questions, links to the proposal PDF, spec #1, tickets, notebook, report and configs, plus the status of the corpus, the review, the name check and the results.
+  - **Corpus:** each role's job ad in EN and PT. Each base CV in EN and PT with its quality level and borderline label, its template with the identity slots marked, and a variant viewer of its identities with the demographic differences highlighted. The variants are rendered in-process from the corpus and the name bank, so nothing is written to `data/`.
+  - **Pilot:** model probes from `docs/pilot/check-*.json`, the name check from `results/names/*.csv`, the pilot run summary, and usage notes.
+  - **Results:** the analysis tables and figures, once they exist.
+  - **Decisions:** the ADRs.
+
+  A page whose inputs are missing (no corpus, no results) says "not generated yet". Links are relative, so the site works under `https://<user>.github.io/HCAI/` and opened from disk. The interface switches between EN and PT-PT; repository prose stays English.
+- **Paths:** set in an optional `[site]` section of the config: `root` (relative to the config), then `notebook`, `report`, `results`, `review` and `repo`, relative to the project root (see `configs/core.toml`). `--out` defaults to `site/` (gitignored). The command only ever replaces a directory it wrote itself.
+- **Realism review (`review.html`):** every job ad in every language, plus one non-borderline EN CV and one borderline PT CV per role. The sample is drawn by the documented seeded rule in `hcai.review.review_sample` (the design's `seed`): the roles take the quality levels in turn, all origins are covered and the genders alternate. Each item has its text, the checklist (Realistic, Quality matches label, Meets mandatory requirements, Language OK, No stray identity cues; job ads only the first and fourth), and notes. The page also has the overall verdict and reviewer/date fields. "Show identity slots" highlights the name, nationality and gendered words, for the stray-cue check.
+  - Answers autosave in the browser (localStorage) as a draft only.
+  - **Export review** downloads `cv-realism-review.md` and `cv-realism-review.json`, always in English. Commit both to `docs/pilot/`: that commit is the record.
+  - **Import JSON** restores an export.
+  - The committed JSON is preloaded when there is no draft.
+  - A record of another corpus version, seed or set of items is refused, with a message.
+- **Deployment:** `.github/workflows/pages.yml` builds the site with uv and deploys it with `actions/upload-pages-artifact` and `actions/deploy-pages` on every push to `main`. The repository is private, and GitHub Pages serves a private repository only on a paid plan. So either make the repository public (the plan in ADR 0010; the corpus and results are synthetic) or use a plan that allows Pages for private repositories. Then choose Settings → Pages → Source: "GitHub Actions". The build uses only what is committed, so commit the frozen corpus (`data/corpus/v1`) for the corpus pages and the review to appear.
+
 ## Tests
 
 ```sh

@@ -1,0 +1,46 @@
+# Build the project site (hcai site, ADR 0010) and deploy it to GitHub Pages on every push to main.
+# No API keys and no API calls: the site is generated from the committed repository only.
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions" (the repository must be public, or on a plan that
+# serves Pages from private repositories).
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Build the site
+        run: uv run hcai site configs/core.toml --out site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

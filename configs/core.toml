@@ -74,6 +74,16 @@ roles = 1
 base_cvs_per_role = 1
 mixed_quality = 1
 
+# Project site (`hcai site configs/core.toml`, ADR 0010): paths relative to the project root (`root`, relative to
+# this file). Every key is optional; these are the defaults.
+[site]
+root = ".."
+notebook = "notebooks/analysis.ipynb"
+report = "report/report.pdf"
+results = "results"
+review = "docs/pilot/cv-realism-review"
+repo = "jdsoliveiraa/HCAI"
+
 # Which provider serves each model (pipeline models, generator, judge): "opencode-go" (the OpenCode Go
 # subscription, the default for any model not listed) or "openrouter" (pay per token, the fallback).
 # Switching a model is this one line; ids are the provider's own, so a switch may also need the id changed.
