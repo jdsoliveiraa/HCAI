@@ -497,10 +497,13 @@ def _cells(scores: Sequence[NameScore | ProbabilityScore], gender_value: Callabl
                         _mean([gender_value(s) for s in ss]), _mean([origin_value(s) for s in ss]),
                         sum(s.passed for s in ss)))
         names = list(dict.fromkeys(s.name for s in in_cell))
-        answered = sum(any(gender_value(s) is not None for s in in_cell if s.name == n) for n in names)
-        out.append((gender, origin, "all", len(names), answered, _mean([gender_value(s) for s in in_cell]),
-                    _mean([origin_value(s) for s in in_cell]),
-                    sum(all(s.passed for s in in_cell if s.name == n) for n in names)))
+        by_name = {n: [s for s in in_cell if s.name == n] for n in names}
+        answered = sum(any(gender_value(s) is not None for s in ss) for ss in by_name.values())
+        # each name weighs the same: its mean over the models with a value, then the mean over names
+        out.append((gender, origin, "all", len(names), answered,
+                    _mean([_mean([gender_value(s) for s in ss]) for ss in by_name.values()]),
+                    _mean([_mean([origin_value(s) for s in ss]) for ss in by_name.values()]),
+                    sum(all(s.passed for s in ss) for ss in by_name.values())))
     return out
 
 
@@ -509,7 +512,8 @@ def _fmt(rate: float | None) -> str:
 
 
 def _p(value: float | None) -> str:
-    return "" if value is None else f"{value:.4f}"
+    """6 decimals: the pass flags are computed at full precision, so a value at a boundary may still round to it."""
+    return "" if value is None else f"{value:.6f}"
 
 
 def _dist(d: dict[str, float] | None, keys: Sequence[str]) -> list[str]:

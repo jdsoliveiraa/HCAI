@@ -427,6 +427,8 @@ def test_a_non_portuguese_name_is_judged_against_the_other_non_portuguese_option
     assert not rule.origin_passes(_origin(pt=0.3, br=0.3, palop=0.4), "brazilian")  # PALOP higher
     assert not rule.origin_passes(_origin(pt=0.3, br=0.3, other=0.4), "brazilian")  # "Other or unsure" counts
     assert not rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3), "brazilian")  # a tie is not the highest
+    assert not rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3 - 1e-10), "brazilian")  # a tie within float slack
+    assert rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3 - 1e-6), "brazilian")
     assert rule.origin_passes(_origin(ee=0.9, other=0.1), "eastern_european")
     # the minimum is configurable; and a non-host name does not need to beat Portuguese
     assert ProbabilityRule(origin_minimum=0.15).origin_passes(_origin(pt=0.8, br=0.2), "brazilian")
@@ -523,15 +525,15 @@ def test_names_command_in_probability_mode_writes_the_probabilities(tmp_path):
                              "p_other_or_unsure", "origin_sum"]
     odair = next(r for r in rows if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (odair["p_male"], odair["gender_sum"], odair["p_portuguese"], odair["origin_sum"]) == (
-        "0.9000", "50.0000", "0.5000", "2.0000")
+        "0.900000", "50.000000", "0.500000", "2.000000")
     summary = list(csv.DictReader((tmp_path / "out" / "summary.csv").open(encoding="utf-8")))
     assert {(r["name"], r["model"]) for r in summary if r["pass"] == "False"} == {("Odair Monteiro", first)}
     o = next(r for r in summary if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (o["p_intended_gender"], o["p_intended_origin"], o["gender_pass"], o["origin_pass"]) == (
-        "0.9000", "0.2000", "True", "False")
+        "0.900000", "0.200000", "True", "False")
     assert (o["gender_threshold"], o["origin_minimum"]) == ("0.8", "0.25")
     leandro = next(r for r in summary if r["name"] == "Leandro Lima" and r["model"] == first)
-    assert (leandro["p_portuguese"], leandro["p_brazilian"], leandro["pass"]) == ("0.6000", "0.3000", "True")
+    assert (leandro["p_portuguese"], leandro["p_brazilian"], leandro["pass"]) == ("0.600000", "0.300000", "True")
     cells = list(csv.DictReader((tmp_path / "out" / "cells.csv").open(encoding="utf-8")))
     assert list(cells[0]) == ["gender", "origin", "model", "names", "names_answered", "mean_p_intended_gender",
                               "mean_p_intended_origin", "names_passing"]
@@ -585,9 +587,46 @@ def test_cli_names_modes_with_the_fake_llm(tmp_path, capsys):
     header = (tmp_path / "p" / "summary.csv").read_text().splitlines()[0]
     assert "p_intended_origin" in header and "origin_minimum" in header
     perceptions = list(csv.DictReader((tmp_path / "p" / "perceptions.csv").open(encoding="utf-8")))
-    assert all(r["p_unsure"] == "1.0000" and r["p_other_or_unsure"] == "1.0000" for r in perceptions)
+    assert all(r["p_unsure"] == "1.000000" and r["p_other_or_unsure"] == "1.000000" for r in perceptions)
     assert main(["names", str(SKELETON), "--mode", "choice", "--out", str(tmp_path / "ch"), *common]) == 2
     assert "gender_hit_rate" in (tmp_path / "ch" / "summary.csv").read_text().splitlines()[0]
     assert main(["names", str(SKELETON), "--origin-min", "1.5", *common]) == 1
     assert main(["names", str(SKELETON), "--origin-min", "0", "--threshold", "0", "--out", str(tmp_path / "z"),
                  *common]) == 2  # still fails: "Other or unsure" beats the intended origin
+
+
+def test_the_all_cell_weighs_every_name_the_same_when_a_model_has_no_answer():
+    ps = [_pp("A", "m1", 0, M, _origin(pt=1)), _pp("A", "m2", 0, M, _origin(pt=1)),
+          _pp("B", "m1", 0, {"male": 0.5, "female": 0.5, "unsure": 0}, _origin(pt=1)), _pp("B", "m2", 0, None, None)]
+
+    cell = next(c for c in score_probabilities(ps).cells if c.model == "all")
+
+    assert (cell.answered, cell.p_gender) == (2, pytest.approx(0.75))  # (1.0 + 0.5) / 2, not (1 + 1 + 0.5) / 3
+
+
+def test_a_failed_call_in_probability_mode_is_a_missing_answer(tmp_path):
+    def respond(request: LLMRequest):
+        raise ProviderError("boom")
+
+    report, all_pass = names_command(SKELETON, FakeLLMClient(respond), out_dir=tmp_path, cache_dir=tmp_path / "c",
+                                     repeats=1)
+
+    assert not all_pass and "2 failed calls, e.g. ProviderError: boom" in report and "(2 missing)" in report
+    rows = list(csv.DictReader((tmp_path / "perceptions.csv").open(encoding="utf-8")))
+    assert all(r["p_male"] == "" and r["gender_sum"] == "" for r in rows)
+
+
+def test_an_off_sum_in_one_question_only_is_reported(tmp_path):
+    good = prob_oracle()
+
+    def respond(request: LLMRequest):
+        answer = good.responder(request)
+        assert isinstance(answer, dict)
+        answer["gender"] = {k: v * 2 for k, v in answer["gender"].items()}  # gender sums to 2, origin to 0.925
+        answer["origin"] = {k: v / 0.925 for k, v in answer["origin"].items()}
+        return answer
+
+    report, all_pass = names_command(SKELETON, FakeLLMClient(respond), out_dir=tmp_path, cache_dir=tmp_path / "c",
+                                     repeats=1)
+
+    assert all_pass and "2 answers had probabilities not summing to 1" in report

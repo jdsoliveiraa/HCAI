@@ -36,8 +36,10 @@ check unchanged.
 - **Outputs.** `perceptions.csv` has the normalised probabilities and raw sums per answer; `summary.csv` the mean
   distribution, mean p(intended gender) and p(intended origin), the rule's parameters and the gender, origin and
   overall pass flags per name x model; `cells.csv` the mean p(intended) per gender x origin cell, per model and over
-  all. The printed report lists the failing names with p(intended gender), the whole origin distribution and what
-  they fail on, and counts answers whose raw sums were off 1 by more than 0.01.
+  all (each name weighs the same: its mean over the models with a value, then the mean over names). Probabilities
+  are written with 6 decimals; the pass flags are computed at full precision, so a value printed at a boundary may
+  still fail it. The printed report lists the failing names with p(intended gender), the whole origin
+  distribution and what they fail on, and counts answers whose raw sums were off 1 by more than 0.01.
 
 ## Consequences
 
@@ -49,4 +51,8 @@ check unchanged.
   on a low bar.
 - Self-reported probabilities from an LLM are not calibrated likelihoods; they are a graded perception score. At
   temperature 0 the repeats still mainly vary the option order, as in ADR 0009.
+- The schema uses the option labels (with spaces) as property keys. OpenAI-style strict structured outputs accept
+  that; a backend that restricts property names or reorders keys would fail the calls (and the check would stop
+  after 10 in a row) or undo the option shuffle in what the model writes. Switch to slug keys if a pipeline model
+  moves to such a backend.
 - The minimum (0.25) and the threshold are researcher choices, recorded in `summary.csv` with every result.
