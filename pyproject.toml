@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "crewai>=1.15.39",
     "httpx>=0.28.1",
+    "markdown>=3.11.3",
     "pandas>=3.1.1",
     "patsy>=1.0.3",
     "scipy>=1.18.1",
@@ -25,7 +26,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "markdown>=3.11.3",
     "pandas-stubs>=3.1.0.261029",
     "pyright>=1.1.414",
     "pytest>=9.2.0",

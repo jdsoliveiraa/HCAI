@@ -20,8 +20,10 @@ committed to `docs/pilot/`. This module fixes what is reviewed and what the reco
    quality level, in the last design language. Each is `rng.choice` over the candidates, sorted by id. A role with no
    such non-borderline CV takes any non-borderline one (else any); a role without borderline CVs takes another base CV
    instead. With a single language both are in it. So 3 roles cover every quality level and every role a borderline.
-4. Identities: the k-th CV variant (counting over all roles) takes origin `origins[k % len(origins)]` and is female
-   for even k, male for odd k. So 4 or more CVs cover every origin, and the genders alternate.
+4. Identities: the k-th CV variant (counting over all roles, from 0) takes origin `origins[k % len(origins)]`; its
+   gender alternates per role and flips from one role to the next: female, male (first role), male, female (second),
+   female, male (third), ... (female when `k // 2 + k % 2` is even). So 4 or more CVs cover every origin, the genders
+   balance, and with 2 or more roles each language gets both genders (PT-PT gender agreement is reviewed both ways).
 """
 
 from __future__ import annotations
@@ -139,7 +141,8 @@ def review_sample(
             picks.append((rng.choice(borderline), languages[-1]))
     if origins:
         for k, (cv, language) in enumerate(picks):
-            identity = _identity(identities, origins[k % len(origins)], "female" if k % 2 == 0 else "male")
+            female = (k // 2 + k % 2) % 2 == 0
+            identity = _identity(identities, origins[k % len(origins)], "female" if female else "male")
             items.append(ReviewItem(
                 id=f"{cv.id}/{identity.id}/{language}", kind="cv", role=cv.role, language=language, base_cv=cv.id,
                 quality=cv.quality, borderline=cv.borderline, identity=identity.id, gender=identity.gender,
@@ -177,7 +180,9 @@ def check_review(review: Any, meta: dict[str, Any], items: Sequence[dict[str, An
     for key in ("corpus_version", "seed"):
         if review.get(key) != meta[key]:
             return f"it reviews {key.replace('_', ' ')} {review.get(key)!r}, this sample is {meta[key]!r}"
-    got = [i.get("id") for i in review.get("items", []) if isinstance(i, dict)]
+    if not isinstance(review.get("items"), list):
+        return "its items differ from this sample's"
+    got = [i.get("id") for i in review["items"] if isinstance(i, dict)]
     want = [i["id"] for i in items]
     if sorted(map(str, got)) != sorted(want):
         return "its items differ from this sample's"

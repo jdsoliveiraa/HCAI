@@ -305,7 +305,8 @@ def test_review_sample_is_deterministic_and_stratified():
     assert [i.language for i in picked] == ["en", "pt"] * 3
     assert [i.borderline for i in picked] == [False, True] * 3
     assert [i.quality for i in picked[::2]] == ["strong", "average", "weak"]
-    assert [i.gender for i in picked] == ["female", "male"] * 3
+    assert [i.gender for i in picked] == ["female", "male", "male", "female", "female", "male"]
+    assert {(i.language, i.gender) for i in picked} == {(lang, g) for lang in ("en", "pt") for g in ("male", "female")}
     assert {i.origin for i in picked} == {"pt", "br", "palop", "ee"}
     others = {tuple(i.id for i in review_sample(*args, seed=s).cvs) for s in range(10)}
     assert len(others) > 1  # the seed matters
@@ -382,6 +383,7 @@ def test_check_review_refuses_another_sample(project: Path, tmp_path: Path):
     assert "corpus version" in str(check_review(good | {"corpus_version": "v2"}, meta, items))
     assert "seed" in str(check_review(good | {"seed": 8}, meta, items))
     assert check_review(good | {"items": good["items"][1:]}, meta, items) == "its items differ from this sample's"
+    assert check_review(good | {"items": None}, meta, items) == "its items differ from this sample's"
 
 
 def node_run(script: str) -> str:
@@ -455,3 +457,35 @@ def test_review_page_is_an_accessible_form(project: Path, tmp_path: Path):
     blob = re.search(r'<script type="application/json" id="review-data">(.*?)</script>', page, re.S)
     assert blob is not None
     assert len(json.loads(blob.group(1))["items"]) == 8
+
+
+def test_generated_text_cannot_inject_markup_links_or_break_the_review_data(tmp_path: Path):
+    config = write_project(tmp_path / "project")
+    ad = tmp_path / "project" / "data" / "corpus" / "v1" / "nurse" / "job_ad.en.md"
+    ad.write_text(ad.read_text() + "\nNote <!-- <script>alert(1)</script> [click](javascript:alert(1)) "
+                  "![t](https://evil.example/t.png) `a & b <c>`\n")
+    out = tmp_path / "site"
+    build_site(config, out)
+    for page in ("corpus/nurse.html", "review.html"):
+        text = (out / page).read_text()
+        assert "<script>alert" not in text and 'href="javascript:' not in text and "<img" not in text, page
+        assert "<code>a &amp; b &lt;c&gt;</code>" in text, page
+    review = (out / "review.html").read_text()
+    blob = re.search(r'<script type="application/json" id="review-data">(.*?)</script>', review, re.S)
+    assert blob is not None and "<" not in blob.group(1)
+    assert "alert(1)" in json.dumps(json.loads(blob.group(1)))
+    assert review.rstrip().endswith("</html>") and 'src="assets/review.js"' in review
+
+
+def test_bad_inputs_are_reported_not_fatal(tmp_path: Path):
+    config = write_project(tmp_path / "project")
+    root = tmp_path / "project"
+    (root / "results" / "names" / "summary.csv").write_text("")
+    (root / "docs" / "pilot" / "cv-realism-review.json").write_text('{"format": "hcai-realism-review", "items": null}')
+    for cv in (root / "data" / "corpus" / "v1").rglob("cv0*.pt.md"):  # a slot error in every PT template
+        cv.write_text(cv.read_text() + "\nO engenheiro.\n")
+    out = tmp_path / "site"
+    build_site(config, out)
+    review = (out / "review.html").read_text()
+    assert "Left out of the sample" in review and "unsupported format version" in review
+    assert "does not match the current sample" in (out / "index.html").read_text()

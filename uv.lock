@@ -1083,6 +1083,7 @@ source = { editable = "." }
 dependencies = [
     { name = "crewai" },
     { name = "httpx" },
+    { name = "markdown" },
     { name = "pandas" },
     { name = "patsy" },
     { name = "scipy" },
@@ -1091,7 +1092,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "markdown" },
     { name = "pandas-stubs" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1102,6 +1102,7 @@ dev = [
 requires-dist = [
     { name = "crewai", specifier = ">=1.15.39" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "markdown", specifier = ">=3.11.3" },
     { name = "pandas", specifier = ">=3.1.1" },
     { name = "patsy", specifier = ">=1.0.3" },
     { name = "scipy", specifier = ">=1.18.1" },
@@ -1110,7 +1111,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "markdown", specifier = ">=3.11.3" },
     { name = "pandas-stubs", specifier = ">=3.1.0.261029" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2.0" },

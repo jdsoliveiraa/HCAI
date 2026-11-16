@@ -115,21 +115,34 @@
 
     function status(message) { statusEl.textContent = message; }
 
+    var staleKey = "";
     function loadDraft() {
       try {
         var raw = window.localStorage.getItem(storageKey);
         if (!raw) { return null; }
-        var parsed = JSON.parse(raw);
-        return checkReview(parsed, data) ? null : normalize(parsed, data);
+        var parsed;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+        if (parsed && !checkReview(parsed, data)) { return normalize(parsed, data); }
+        // another sample's draft (or an unreadable one): keep it under its own key instead of overwriting it
+        staleKey = storageKey + ":set-aside:" + new Date().toISOString();
+        window.localStorage.setItem(staleKey, raw);
+        window.localStorage.removeItem(storageKey);
+        return null;
       } catch (e) { return null; }
     }
+    var saved = false;
     function save() {
       try {
         window.localStorage.setItem(storageKey, JSON.stringify(state));
-        status(t("review.saved"));
+        if (!saved) { status(t("review.saved")); }  // announced once, not on every keystroke
+        saved = true;
       } catch (e) {
-        status(t("review.nosave"));
+        if (saved !== null) { status(t("review.nosave")); }
+        saved = null;
       }
+    }
+    function startingState() {
+      return data.committed ? normalize(data.committed, data) : normalize(null, data);
     }
 
     function articleFor(id) {
@@ -187,17 +200,18 @@
     function exportJson() { read(); download(base + ".json", JSON.stringify(state, null, 2) + "\n", "application/json"); }
 
     var draft = loadDraft();
+    var messages = [];
     if (draft) {
       state = draft;
-    } else if (data.committed) {
-      state = normalize(data.committed, data);
-      status(t("review.committed"));
     } else {
-      state = normalize(null, data);
+      state = startingState();
+      if (data.committed) { messages.push(t("review.committed")); }
     }
+    if (staleKey) { messages.push(t("review.stale") + " " + staleKey + ")."); }
     if (data.committed_mismatch) {
-      status(t("review.committed.mismatch") + ": " + data.committed_mismatch);
+      messages.push(t("review.committed.mismatch") + ": " + data.committed_mismatch);
     }
+    status(messages.join(" "));
     fill();
 
     form.addEventListener("submit", function (e) { e.preventDefault(); });
@@ -226,9 +240,10 @@
     document.getElementById("clear").addEventListener("click", function () {
       if (!window.confirm(t("review.clear.confirm"))) { return; }
       try { window.localStorage.removeItem(storageKey); } catch (e) { /* nothing stored */ }
-      state = normalize(null, data);
+      state = startingState();
+      saved = false;
       fill();
-      status("");
+      status(data.committed ? t("review.committed") : "");
     });
 
     var fileInput = document.getElementById("import-file");
