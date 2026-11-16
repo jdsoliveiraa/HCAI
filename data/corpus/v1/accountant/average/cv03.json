@@ -1,0 +1,76 @@
+{
+  "headline": "Certified Accountant (OCC) | Corporate Accounting & Tax Compliance",
+  "summary": "Certified Accountant registered with the Ordem dos Contabilistas Certificados (OCC) with 4 years of professional experience in general accounting and tax compliance within the retail and distribution sectors. Proven track record in executing monthly and annual closing routines, preparing financial statements under the Sistema de Normalização Contabilística (SNC), and submitting statutory tax declarations (VAT, IRC, IRS, IES). Proficient user of PHC Corporate ERP and experienced in managing internal financial reporting for medium-sized enterprises.",
+  "experience": [
+    {
+      "title": "In-House Accountant",
+      "employer": "Valente & Filhos – Distribuição Alimentar, Lda.",
+      "location": "Vila Nova de Gaia, Portugal",
+      "start": "Sep 2022",
+      "end": "Present",
+      "bullets": [
+        "Execute full-cycle general accounting under SNC standards for a regional food distribution company with an annual turnover of €4.5M.",
+        "Prepare and submit periodic tax obligations, including monthly VAT declarations, withholding taxes (IRS/IRC), Modelo 22, and the annual IES.",
+        "Manage monthly bank reconciliations across 5 corporate accounts and oversee fixed asset depreciation schedules using PHC Corporate software.",
+        "Streamlined the monthly expense reporting process, reducing closing time from 12 to 9 working days.",
+        "Liaise with external statutory auditors during year-end financial audits and prepare monthly balance sheet analyses for the board."
+      ]
+    },
+    {
+      "title": "Junior Accountant",
+      "employer": "Têxteis do Ave – Indústria de Confecções, S.A.",
+      "location": "Famalicão, Portugal",
+      "start": "Mar 2020",
+      "end": "Aug 2022",
+      "bullets": [
+        "Recorded daily accounting transactions, including domestic and intra-community supplier invoices, customer receipts, and staff payroll journals in PHC.",
+        "Assisted the Senior Accountant in preparing quarterly trial balances and verifying VAT deductibility in accordance with the CIVA.",
+        "Reconciled over 150 supplier current accounts monthly and resolved billing discrepancies with procurement teams.",
+        "Prepared statistical declarations for Intrastat and Bank of Portugal (COPE) compliance."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Public Administration and Management",
+      "institution": "Escola Superior de Tecnologia e Gestão – Instituto Politécnico do Porto (ESTG-IPP)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "PHC Corporate ERP",
+    "Corporate Tax Compliance (IRC, VAT, IES)",
+    "Personal Income Tax Withholdings (IRS)",
+    "Account & Bank Reconciliations",
+    "Financial Statement Preparation",
+    "Fixed Assets Management",
+    "Microsoft Excel (Pivot Tables, VLOOKUP)"
+  ],
+  "certifications": [
+    "Active member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Public Administration and Management"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Active member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "with 4 years of professional experience in general accounting and tax compliance"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2
+  ],
+  "borderline_note": "Mandatory requirement 1 is borderline: the candidate holds a Licenciatura in Public Administration and Management (Administração Pública e Gestão) rather than a standard Management, Accounting, Finance, or Economics degree, though it includes management coursework and allowed OCC entry. Furthermore, while the candidate has 4 years of solid in-house accounting experience and PHC skills, they lack multi-client consultancy experience (Desirable 3) and a postgraduate degree in Taxation (Desirable 4)."
+}

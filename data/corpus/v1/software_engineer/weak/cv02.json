@@ -1,0 +1,74 @@
+{
+  "headline": "Full-Stack Software Engineer",
+  "summary": "Full-Stack Software Engineer with just over three years of professional experience developing web applications and backend services. Background in building production systems using Java, MySQL, and frontend components with React. Seeking a software engineering position in Lisbon.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "employer": "Alvalade Digital Systems, Lda.",
+      "location": "Lisbon, Portugal",
+      "start": "June 2023",
+      "end": "Present",
+      "bullets": [
+        "Develop and maintain backend features in Java for internal corporate portals and client-facing applications.",
+        "Write SQL queries, views, and database migrations for production MySQL databases.",
+        "Build and update user interface components using React and standard CSS.",
+        "Investigate bug reports submitted by the support team and apply fixes to the codebase."
+      ]
+    },
+    {
+      "title": "Junior Full-Stack Software Engineer",
+      "employer": "Ribatejo Software & Consultoria",
+      "location": "Santarém, Portugal",
+      "start": "February 2022",
+      "end": "May 2023",
+      "bullets": [
+        "Participated in the development of web applications using Java on the backend and MySQL for data storage.",
+        "Assisted with the maintenance of existing REST APIs and legacy Java modules.",
+        "Implemented basic frontend screens using React, HTML, and JavaScript based on mockups.",
+        "Wrote technical documentation for internal software modules and database schemas."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Engineering)",
+      "institution": "Instituto Politécnico de Setúbal",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Java",
+    "MySQL",
+    "SQL",
+    "REST APIs",
+    "React",
+    "JavaScript",
+    "HTML & CSS",
+    "Git",
+    "Maven",
+    "Linux"
+  ],
+  "certifications": [],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Full-Stack Software Engineer with just over three years of professional experience developing web applications and backend services."
+    },
+    {
+      "requirement": 3,
+      "evidence": "Background in building production systems using Java, MySQL, and frontend components with React."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3
+  ],
+  "borderline_note": ""
+}

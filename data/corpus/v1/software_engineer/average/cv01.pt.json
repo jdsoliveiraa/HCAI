@@ -1,0 +1,55 @@
+{
+  "headline": "{{Engenheiro de Software|Engenheira de Software}} Full-Stack | Python, PostgreSQL & React",
+  "summary": "{{Engenheiro de Software|Engenheira de Software}} Backend e Full-Stack com 4 anos de experiência profissional no desenvolvimento de aplicações web e APIs. Sólido percurso em Python (Django, FastAPI) e bases de dados relacionais como PostgreSQL e MySQL. Experiência de trabalho em equipas Agile/Scrum, manutenção de fluxos de trabalho de CI/CD e contribuição para interfaces frontend baseadas em React.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software|Engenheira de Software}}",
+      "employer": "Alfacinha Digital Lda.",
+      "location": "Lisboa, Portugal",
+      "start": "Maio de 2022",
+      "end": "Presente",
+      "bullets": [
+        "Desenvolvimento e manutenção de serviços backend em Python (FastAPI e Django) ligados a bases de dados PostgreSQL para portais de clientes B2B.",
+        "Otimização de queries SQL lentas e adição de indexação adequada em PostgreSQL, reduzindo os tempos médios de resposta da API em 20%.",
+        "Construção e atualização de componentes responsivos da interface de utilizador utilizando React e TypeScript em colaboração com a equipa de design de produto.",
+        "Configuração e manutenção de pipelines de testes automatizados e implementação utilizando GitLab CI/CD.",
+        "Participação ativa em sprints quinzenais de Agile/Scrum, incluindo refinamento de backlog, planeamento de sprints e revisões de código entre pares."
+      ]
+    },
+    {
+      "title": "{{Programador|Programadora}} Backend & Full-Stack Júnior",
+      "employer": "SintraSoft Sistemas",
+      "location": "Sintra, Portugal",
+      "start": "Março de 2020",
+      "end": "Abril de 2022",
+      "bullets": [
+        "Contribuição para o desenvolvimento de aplicações web de gestão interna utilizando Python e MySQL.",
+        "Implementação de endpoints RESTful para módulos de acompanhamento de inventário e relatórios, servindo mais de 50 {{utilizadores|utilizadores}} empresariais diários.",
+        "Elaboração de testes unitários e de integração utilizando pytest, aumentando a cobertura de testes de backend de 45% para 68%.",
+        "Apoio na correção de erros de frontend e na implementação de funcionalidades utilizando JavaScript e React."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Engenharia Informática",
+      "institution": "Instituto Superior de Engenharia de Lisboa (ISEL)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Python (Django, FastAPI)",
+    "PostgreSQL",
+    "MySQL",
+    "React",
+    "TypeScript",
+    "APIs RESTful",
+    "Git & GitLab CI/CD",
+    "Agile / Scrum",
+    "pytest",
+    "Linux"
+  ],
+  "certifications": [
+    "Professional Scrum Developer I (PSD I) – Scrum.org"
+  ]
+}

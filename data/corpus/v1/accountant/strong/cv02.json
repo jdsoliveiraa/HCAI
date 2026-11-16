@@ -1,0 +1,102 @@
+{
+  "headline": "Senior Certified Accountant (OCC) | Multi-Client Tax Advisory & Financial Reporting",
+  "summary": "Results-oriented Certified Accountant registered with the Ordem dos Contabilistas Certificados (OCC), bringing over 7 years of progressive experience in multi-client accounting firms and corporate consultancy across northern Portugal. Proven expertise in full-cycle accounting under the Sistema de Normalização Contabilística (SNC), statutory tax compliance (VAT, IRC, IRS, IES), and international client advisory. Adept at optimizing closing workflows using Primavera ERP and PHC, holding a Mestrado (master's degree) in Taxation.",
+  "experience": [
+    {
+      "title": "Senior Certified Accountant",
+      "employer": "Azevedo & Valente – Sociedade de Contabilistas, Lda.",
+      "location": "Vila Nova de Gaia, Portugal",
+      "start": "March 2021",
+      "end": "Present",
+      "bullets": [
+        "Act as lead Certified Accountant for a diversified portfolio of 38 SME and mid-market clients, including 12 foreign-owned subsidiaries operating in the technology, retail, and manufacturing sectors.",
+        "Oversee all statutory tax filings, including monthly/quarterly VAT declarations, Modelo 22 (IRC), IES/DA, and Modelo 10, maintaining a 100% on-time submission record and zero compliance penalties across 3 fiscal years.",
+        "Prepare monthly and quarterly management reporting packages in English for international stakeholders, translating SNC financial statements into IFRS-aligned reporting templates.",
+        "Spearheaded the migration of 25 client accounts from legacy systems to Primavera ERP v10, reducing monthly bank reconciliation and data entry times by 35%.",
+        "Identify and implement tax efficiency opportunities, including R&D tax credits (SIFIDE II) and investment incentives (RFAI), generating over €180,000 in combined tax savings for clients in 2023.",
+        "Supervise and mentor a team of 3 junior accountants, conducting technical reviews of general ledger entries and year-end closing procedures."
+      ]
+    },
+    {
+      "title": "Certified Accountant",
+      "employer": "NorteFisco – Consultoria Fiscal e Contabilidade, S.A.",
+      "location": "Braga, Portugal",
+      "start": "September 2018",
+      "end": "February 2021",
+      "bullets": [
+        "Managed end-to-end general accounting and tax compliance for 28 national corporate clients using PHC Corporate CS.",
+        "Executed monthly account reconciliations, fixed asset depreciation schedules, and payroll accounting integration for companies with up to 80 employees.",
+        "Prepared annual financial statements (Balance Sheet, Income Statement, Cash Flow Statement, and Notes to the Accounts) in strict accordance with Portuguese accounting standards (SNC).",
+        "Represented clients during 6 Autoridade Tributária (Portuguese Tax Authority) inspections, successfully resolving VAT refund audits totaling €95,000 without adjustments.",
+        "Automated standard tax calendar reminders and client document collection workflows, cutting late document submissions from clients by 40%."
+      ]
+    },
+    {
+      "title": "Junior Accountant",
+      "employer": "Ribeiro & Associados – Gabinete de Contabilidade",
+      "location": "Matosinhos, Portugal",
+      "start": "October 2016",
+      "end": "August 2018",
+      "bullets": [
+        "Processed and classified daily accounting documents (invoices, receipts, bank statements, and expense reports) in Primavera ERP for over 20 small business clients.",
+        "Assisted senior accountants in preparing periodic VAT returns, DMR (monthly remuneration declarations), and Social Security contributions.",
+        "Completed the professional internship required by the Ordem dos Contabilistas Certificados (OCC), achieving a final examination score of 17/20."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Mestrado (master's degree) in Taxation (Fiscalidade)",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2019"
+    },
+    {
+      "degree": "Licenciatura (bachelor's degree) in Accounting and Administration",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Corporate Income Tax (IRC - Modelo 22)",
+    "Value Added Tax (VAT / IVA) & Intrastat",
+    "Personal Income Tax (IRS) & Withholding Taxes",
+    "Annual Simplified Business Information (IES/DA)",
+    "Primavera ERP (Logistics, Accounting, Reporting)",
+    "PHC Corporate CS",
+    "Financial Statement Preparation & Analysis",
+    "International Client Reporting",
+    "Tax Incentives (RFAI, DLRR, SIFIDE)",
+    "Advanced Microsoft Excel (Power Query, Pivot Tables)"
+  ],
+  "certifications": [
+    "Active Member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association), admitted in 2018",
+    "Advanced Training Certificate in International VAT & Cross-Border Transactions – Ordem dos Contabilistas Certificados (2022)",
+    "Specialist Course in Year-End Closing and Tax Consolidation – APECA (2020)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Accounting and Administration"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Active Member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association), admitted in 2018"
+    },
+    {
+      "requirement": 3,
+      "evidence": "bringing over 7 years of progressive experience in multi-client accounting firms and corporate consultancy across northern Portugal."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

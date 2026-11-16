@@ -1,0 +1,74 @@
+{
+  "headline": "Registered Nurse (Enfermeiro/a) | Inpatient & Acute Care",
+  "summary": "Registered Nurse with over 3 years of experience in hospital inpatient settings across the Lisbon metropolitan area. Solid practical background in medical-surgical wards, patient monitoring, and medication management. Experienced in documenting care plans via SClínico and collaborating with multidisciplinary medical teams to ensure safe and steady patient recovery.",
+  "experience": [
+    {
+      "title": "Registered Nurse - Medical-Surgical Inpatient Ward",
+      "employer": "Clínica Hospitalar do Tejo (Fictitious)",
+      "location": "Almada, Portugal",
+      "start": "March 2022",
+      "end": "Present",
+      "bullets": [
+        "Deliver direct nursing care to an average of 7 to 9 inpatient beds per shift in a 32-bed medical-surgical unit.",
+        "Prepare and administer intravenous, oral, and subcutaneous medications, maintaining daily clinical records in the SClínico electronic health system.",
+        "Perform post-operative wound care, surgical drain management, and vital signs monitoring, escalating acute changes to the medical team.",
+        "Participated in a ward initiative to update patient fall-prevention checklists, which helped reduce minor inpatient falls by 12% over six months."
+      ]
+    },
+    {
+      "title": "General Care Nurse - Internal Medicine Ward",
+      "employer": "Hospital Distrital da Estremadura (Fictitious)",
+      "location": "Vila Franca de Xira, Portugal",
+      "start": "October 2020",
+      "end": "February 2022",
+      "bullets": [
+        "Provided acute inpatient nursing care for adult patients admitted with respiratory, metabolic, and cardiovascular conditions.",
+        "Executed venipunctures, urinary catheterizations, and nasogastric tube placements according to hospital infection control protocols.",
+        "Assisted patients and families with discharge preparation and home medication guidance.",
+        "Maintained accurate shift handovers and nursing notes using SClínico."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Enfermagem (Bachelor's Degree in Nursing)",
+      "institution": "Escola Superior de Saúde de Setúbal - Instituto Politécnico de Setúbal",
+      "year": "2020"
+    }
+  ],
+  "skills": [
+    "Inpatient Nursing Care",
+    "SClínico Electronic Health Records",
+    "Medication Administration & IV Therapy",
+    "Post-Operative Wound Care",
+    "Vital Signs Monitoring",
+    "Clinical Handover (ISBAR)",
+    "Infection Control Protocols"
+  ],
+  "certifications": [
+    "Cédula Profissional da Ordem dos Enfermeiros (Active and valid professional license)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura em Enfermagem (Bachelor's Degree in Nursing)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Cédula Profissional da Ordem dos Enfermeiros (Active and valid professional license)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Registered Nurse with over 3 years of experience in hospital inpatient settings"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

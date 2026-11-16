@@ -1,0 +1,86 @@
+{
+  "headline": "Specialist Registered Nurse (Enfermeiro/a Especialista em Enfermagem Médico-Cirúrgica) | 6+ Years in Acute & Inpatient Care",
+  "summary": "Dedicated Registered Nurse with over 6 years of progressive clinical experience in high-acuity medical-surgical inpatient wards and post-operative recovery units across public and private hospitals in Portugal. Holder of a Postgraduate Specialization in Medical-Surgical Nursing and active registration with the Ordem dos Enfermeiros. Proven track record in shift coordination, clinical preceptorship, and reducing ward-level adverse events through evidence-based care protocols. Highly proficient in Glintt HS and SClínico electronic health record systems.",
+  "experience": [
+    {
+      "title": "Senior Inpatient Nurse & Shift Coordinator (Enfermeiro/a Chefe de Equipa)",
+      "employer": "Hospital Privado da Tejo Saúde (Fictitious Unit)",
+      "location": "Almada, Portugal",
+      "start": "May 2021",
+      "end": "Present",
+      "bullets": [
+        "Coordinate nursing shifts for a 34-bed Medical-Surgical Inpatient Department, overseeing a team of 8 nurses and 6 healthcare assistants per shift.",
+        "Deliver comprehensive, patient-centred care to high-dependency surgical and internal medicine patients, managing complex intravenous therapies, central venous catheters, and surgical drains.",
+        "Spearheaded a ward-wide pressure ulcer prevention initiative in 2022, achieving a 28% reduction in hospital-acquired pressure injuries over 12 months.",
+        "Utilize Glintt HS daily for clinical documentation, care plan updates, medication administration tracking, and multidisciplinary discharge planning.",
+        "Serve as primary clinical preceptor for 12 newly hired nurses and final-year nursing students, standardizing onboarding checklists and cutting orientation time by 20%."
+      ]
+    },
+    {
+      "title": "Registered Nurse - Acute Medical & Surgical Ward (Enfermeiro/a de Cuidados Gerais)",
+      "employer": "Unidade Hospitalar do Oeste Sul (Fictitious Unit)",
+      "location": "Sintra, Portugal",
+      "start": "September 2018",
+      "end": "April 2021",
+      "bullets": [
+        "Provided direct inpatient nursing care in a fast-paced 40-bed acute medical-surgical unit with an average occupancy rate of 95%.",
+        "Administered prescribed medications, monitored vital signs, and responded rapidly to acute patient deteriorations as part of the internal emergency response team.",
+        "Managed comprehensive patient records and nursing handovers using the SClínico electronic health record platform, improving handover audit compliance from 82% to 96%.",
+        "Co-authored the department's revised protocol for post-operative pain management in collaboration with the anaesthesiology team, resulting in a 15% improvement in patient satisfaction scores."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Pós-Graduação e Especialidade em Enfermagem Médico-Cirúrgica (Postgraduate Specialization in Medical-Surgical Nursing)",
+      "institution": "Escola Superior de Saúde da Cruz Vermelha Portuguesa - Lisboa",
+      "year": "2021"
+    },
+    {
+      "degree": "Licenciatura em Enfermagem (Bachelor's Degree in Nursing)",
+      "institution": "Escola Superior de Saúde do Instituto Politécnico de Setúbal (ESS-IPS)",
+      "year": "2018"
+    }
+  ],
+  "skills": [
+    "Medical-Surgical Inpatient Care",
+    "Glintt HS & SClínico Electronic Health Records",
+    "Shift Coordination & Team Leadership",
+    "Post-Operative Monitoring & Pain Management",
+    "Complex Wound Care & Tissue Viability",
+    "Central Venous Catheter (CVC) Management",
+    "Emergency Triage & Acute Deterioration Response",
+    "Clinical Preceptorship & Auditing"
+  ],
+  "certifications": [
+    "Cédula Profissional da Ordem dos Enfermeiros (Active Professional License & Specialist Title in Medical-Surgical Nursing)",
+    "Suporte Avançado de Vida (SAV / Advanced Life Support) - European Resuscitation Council / Conselho Português de Ressuscitação (Valid until 2026)",
+    "Suporte Intermédio de Vida (SIV / Intermediate Life Support) - INEM Certified",
+    "Advanced Course in Complex Wound Management and Tissue Viability (2022)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura em Enfermagem (Bachelor's Degree in Nursing)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Cédula Profissional da Ordem dos Enfermeiros (Active Professional License & Specialist Title in Medical-Surgical Nursing)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Dedicated Registered Nurse with over 6 years of progressive clinical experience in high-acuity medical-surgical inpatient wards"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

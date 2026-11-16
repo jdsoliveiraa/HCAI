@@ -1,0 +1,72 @@
+{
+  "headline": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}} (OCC) | Especialista em Gestão de Carteiras Multicliente e Cumprimento Fiscal",
+  "summary": "{{Contabilista Certificado orientado|Contabilista Certificada orientada}} para resultados, com mais de 7 anos de experiência progressiva em gabinetes de contabilidade e consultoria multicliente no norte de Portugal. Membro {{inscrito|inscrita}} na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), com {{Mestrado|Mestrado}} em Fiscalidade. Percurso comprovado na gestão de carteiras diversificadas de PME nacionais e de capital estrangeiro, assegurando o pleno cumprimento do Sistema de Normalização Contabilística (SNC) e da legislação fiscal portuguesa. Elevada competência em Primavera ERP e PHC CS, elaboração de demonstrações financeiras e consultoria a clientes internacionais.",
+  "experience": [
+    {
+      "title": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}}",
+      "employer": "NorteFiscal — Sociedade de Contabilidade e Consultoria, Lda.",
+      "location": "Matosinhos, Portugal",
+      "start": "Março de 2021",
+      "end": "Presente",
+      "bullets": [
+        "Atuação como {{Contabilista Certificado nomeado|Contabilista Certificada nomeada}} para uma carteira de 38 clientes PME nacionais e internacionais dos setores da tecnologia, retalho e imobiliário, com um volume de negócios anual combinado superior a 25M€.",
+        "Liderança na preparação e submissão atempada de todas as declarações fiscais obrigatórias, incluindo IVA periódico, Imposto sobre o Rendimento das Pessoas Coletivas (Modelo 22 / IRC), IES/DA e Imposto sobre o Rendimento das Pessoas Singulares (IRS), mantendo um registo de 100% de entregas dentro do prazo.",
+        "Produção de pacotes mensais e trimestrais de reporte de gestão e análises de balanço em inglês para 12 sucursais e filiais de capital estrangeiro, apresentando o desempenho financeiro diretamente aos {{diretores|diretores}} internacionais.",
+        "Condução da migração de 25 contas de clientes de sistemas antigos para o Primavera ERP v10, automatizando reconciliações bancárias e importações de SAF-T (PT), o que reduziu os tempos de fecho mensal em 28%.",
+        "Supervisão e revisão do trabalho diário de escrituração contabilística de 3 {{técnicos|técnicos}} de contabilidade juniores, realizando sessões mensais de formação {{técnica|técnica}} sobre atualizações da legislação fiscal."
+      ]
+    },
+    {
+      "title": "{{Contabilista Certificado|Contabilista Certificada}}",
+      "employer": "Valente & Braga — Gabinete de Contabilidade",
+      "location": "Braga, Portugal",
+      "start": "Setembro de 2018",
+      "end": "Fevereiro de 2021",
+      "bullets": [
+        "Gestão integral da contabilidade geral e do cumprimento fiscal de 22 pequenas e médias empresas ao abrigo do Sistema de Normalização Contabilística (SNC), recorrendo ao software PHC CS.",
+        "Execução dos procedimentos de encerramento anual de contas, incluindo acréscimos e diferimentos fiscais, mapas de depreciações e amortizações, cálculo de impostos diferidos e elaboração das demonstrações financeiras anuais e do Dossier Fiscal.",
+        "Acompanhamento de clientes durante 6 inspeções da Autoridade Tributária e auditorias de reembolso de IVA, garantindo com sucesso mais de 180.000€ em reembolsos de IVA com zero coimas.",
+        "Implementação de fluxos de trabalho normalizados de arquivo digital para faturas de fornecedores através da integração com o e-Fatura, reduzindo os erros de introdução manual de dados em 35%."
+      ]
+    },
+    {
+      "title": "{{Contabilista Júnior|Contabilista Júnior}}",
+      "employer": "ContaMinho — Serviços de Gestão e Fiscalidade",
+      "location": "Guimarães, Portugal",
+      "start": "Outubro de 2016",
+      "end": "Agosto de 2018",
+      "bullets": [
+        "Realização da classificação e lançamento diário de documentos contabilísticos, reconciliações bancárias e manutenção do registo de ativos fixos tangíveis para uma carteira de 15 empresas locais.",
+        "Preparação do processamento salarial mensal, Declarações de Remunerações da Segurança Social e submissão mensal de retenções na fonte de IRS/IRC.",
+        "Conclusão do estágio profissional exigido para admissão na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), obtendo a classificação de 16/20 no exame final."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "{{Mestrado|Mestrado}} em Fiscalidade",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2019"
+    },
+    {
+      "degree": "Licenciatura em Contabilidade",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Cumprimento Fiscal Societário e Pessoal (IRC, IVA, IRS, IES)",
+    "Primavera ERP (Logística, Contabilidade e Reporte)",
+    "Software de Contabilidade PHC CS",
+    "Reporte de Gestão Mensal e Análise Financeira",
+    "Integração SAF-T (PT) e e-Fatura",
+    "Consultoria a Clientes Internacionais",
+    "Microsoft Excel Avançado (Power Query, Tabelas Dinâmicas)"
+  ],
+  "certifications": [
+    "Inscrição Ativa na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC) — Membro desde 2018",
+    "{{Certificado|Certificado}} de Formação Avançada em Encerramento de Contas e IRC, OCC (2023)",
+    "Curso {{Especializado|Especializado}} em Regras de IVA Internacional e Transações Transfronteiriças, APECA (2021)"
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "headline": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}} (OCC) | Especialista em Carteiras Multicliente e Cumprimento Fiscal",
+  "summary": "{{Contabilista Certificado orientado|Contabilista Certificada orientada}} para resultados, {{inscrito|inscrita}} na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), com mais de 6 anos de experiência progressiva em gabinetes de contabilidade multicliente e consultoria fiscal no norte de Portugal. Competência comprovada no ciclo contabilístico completo ao abrigo do Sistema de Normalização Contabilística (SNC), preparação de demonstrações financeiras e rigoroso cumprimento fiscal (IRC, IRS, IVA). {{Apto|Apta}} a rentabilizar os sistemas Primavera ERP e PHC para otimizar fluxos de reporte e apoiar tanto PME nacionais como sucursais internacionais.",
+  "experience": [
+    {
+      "title": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}}",
+      "employer": "Valente, Sousa & Associados – Sociedade de Contabilidade, Lda.",
+      "location": "Porto, Portugal",
+      "start": "2021-03",
+      "end": "Presente",
+      "bullets": [
+        "Gestão direta de uma carteira ativa de 38 PME de capital nacional e estrangeiro nos setores do retalho, TI e indústria transformadora, com volumes de negócios anuais entre 500k € e 8M €.",
+        "Garantia do pleno cumprimento das normas contabilísticas portuguesas (SNC) e obrigações fiscais, incluindo declarações mensais e trimestrais de IVA, Modelo 22 (IRC), IES/DA e declarações de IRS.",
+        "Preparação de pacotes mensais de reporte de gestão em inglês para 9 clientes internacionais, realizando análise de desvios e previsões de fluxos de caixa (cash-flow).",
+        "Liderança da migração de 25 contas de clientes de sistemas antigos para o Primavera ERP v10, reduzindo os tempos de fecho mensal em 22% através da automatização de reconciliações bancárias e integração de faturação digital.",
+        "Supervisão e revisão do trabalho diário de escrituração de 2 {{técnicos de contabilidade juniores|técnicos de contabilidade juniores}}, prestando mentoria sobre atualizações da legislação fiscal."
+      ]
+    },
+    {
+      "title": "{{Contabilista Certificado|Contabilista Certificada}}",
+      "employer": "ContaNorte – Gabinete de Contabilidade e Fiscalidade, Lda.",
+      "location": "Vila Nova de Gaia, Portugal",
+      "start": "2019-06",
+      "end": "2021-02",
+      "bullets": [
+        "Assunção da responsabilidade estatutária como {{Contabilista Certificado|Contabilista Certificada}} por uma carteira de 24 clientes societários e 15 empresários em nome individual (regime simplificado e contabilidade {{organizada|organizada}}).",
+        "Execução de reconciliações mensais de contas, mapas de depreciação de ativos fixos tangíveis, integração do processamento salarial e estimativas de imposto de fim de exercício utilizando o software PHC Corporate.",
+        "Acompanhamento de clientes durante 6 inspeções da Autoridade Tributária e auditorias de reembolso de IVA, alcançando uma taxa de aprovação de 100% em 180k € de reembolsos de IVA solicitados.",
+        "Preparação das demonstrações financeiras legais (Balanço, Demonstração dos Resultados, Demonstração dos Fluxos de Caixa e Anexo às Contas) e do Dossier Fiscal."
+      ]
+    },
+    {
+      "title": "{{Contabilista Júnior e Estagiário da OCC|Contabilista Júnior e Estagiária da OCC}}",
+      "employer": "Ribeiro & Castro Consultores, Lda.",
+      "location": "Maia, Portugal",
+      "start": "2018-01",
+      "end": "2019-05",
+      "bullets": [
+        "Conclusão do estágio profissional exigido para admissão na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}}, prestando apoio a {{contabilistas seniores|contabilistas seniores}} numa carteira de mais de 40 clientes.",
+        "Classificação e lançamento de documentos contabilísticos, reconciliação de contas bancárias e contas correntes de fornecedores, e preparação de declarações fiscais mensais (DMR, Declaração Periódica de IVA, Retenções na Fonte) em Primavera ERP.",
+        "Implementação de um sistema de arquivo digital normalizado para faturas de clientes (validação no e-Fatura e importação de SAF-T), diminuindo os erros de introdução de dados em 30%."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "{{Mestrado|Mestrado}} em Fiscalidade",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2020"
+    },
+    {
+      "degree": "Licenciatura em Contabilidade e Administração",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2017"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Primavera ERP (v9 & v10)",
+    "PHC Corporate CS",
+    "Cumprimento Fiscal Societário (IRC, Modelo 22, IES/DA)",
+    "IVA e Reporte Intracomunitário",
+    "Imposto sobre o Rendimento das Pessoas Singulares (IRS & DMR)",
+    "Preparação de Demonstrações Financeiras e Reporte",
+    "SAF-T (PT) & Portal das Finanças",
+    "Microsoft Excel Avançado (Tabelas Dinâmicas, Power Query)"
+  ],
+  "certifications": [
+    "Membro ativo da Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC) desde 2019",
+    "Formação Avançada em Fiscalidade Internacional e Preços de Transferência – OCC (2022)",
+    "Seminários Anuais de Orçamento do Estado e Atualização Fiscal – OCC (2019–2024)"
+  ]
+}

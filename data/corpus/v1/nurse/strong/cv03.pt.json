@@ -1,0 +1,61 @@
+{
+  "headline": "{{Enfermeiro Especialista|Enfermeira Especialista}} em Enfermagem Médico-Cirúrgica | Mais de 6 Anos em Cuidados Agudos e Internamento",
+  "summary": "{{Enfermeiro dedicado|Enfermeira dedicada}} com mais de 6 anos de experiência {{clínica|clínica}} progressiva em serviços de internamento médico-cirúrgico de elevada complexidade e unidades de recobro pós-operatório em hospitais públicos e privados em Portugal. Detentor de Pós-Graduação e Especialidade em Enfermagem Médico-Cirúrgica e inscrição ativa na Ordem dos {{Enfermeiros|Enfermeiros}}. Histórico comprovado em coordenação de turnos, orientação em ensino clínico e redução de eventos adversos no serviço através de protocolos de cuidados baseados na evidência. Elevada proficiência nos sistemas de registo de saúde eletrónico Glintt HS e SClínico.",
+  "experience": [
+    {
+      "title": "{{Enfermeiro Sénior|Enfermeira Sénior}} de Internamento e {{Coordenador|Coordenadora}} de Turno ({{Enfermeiro|Enfermeira}} Chefe de Equipa)",
+      "employer": "Hospital Privado da Tejo Saúde (Unidade Fictícia)",
+      "location": "Almada, Portugal",
+      "start": "Maio de 2021",
+      "end": "Presente",
+      "bullets": [
+        "Coordenação de turnos de enfermagem num Serviço de Internamento Médico-Cirúrgico de 34 camas, supervisionando uma equipa de 8 {{enfermeiros|enfermeiros}} e 6 assistentes operacionais por turno.",
+        "Prestação de cuidados abrangentes e centrados no utente a doentes cirúrgicos e de medicina interna de elevada dependência, gerindo terapêuticas intravenosas complexas, cateteres venosos centrais e drenos cirúrgicos.",
+        "Liderança de uma iniciativa de prevenção de úlceras por pressão em todo o serviço em 2022, alcançando uma redução de 28% nas lesões por pressão adquiridas no hospital ao longo de 12 meses.",
+        "Utilização diária do Glintt HS para documentação {{clínica|clínica}}, atualização de planos de cuidados, registo de administração de terapêutica e planeamento multidisciplinar de altas.",
+        "Atuação como {{orientador|orientadora}} principal de ensino clínico para 12 {{enfermeiros|enfermeiros}} recém-contratados e estudantes de enfermagem do último ano, padronizando listas de verificação de integração e reduzindo o tempo de integração em 20%."
+      ]
+    },
+    {
+      "title": "{{Enfermeiro|Enfermeira}} - Serviço de Internamento Médico-Cirúrgico de Agudos ({{Enfermeiro|Enfermeira}} de Cuidados Gerais)",
+      "employer": "Unidade Hospitalar do Oeste Sul (Unidade Fictícia)",
+      "location": "Sintra, Portugal",
+      "start": "Setembro de 2018",
+      "end": "Abril de 2021",
+      "bullets": [
+        "Prestação de cuidados diretos de enfermagem em regime de internamento numa unidade médico-cirúrgica de agudos dinâmica de 40 camas, com uma taxa média de ocupação de 95%.",
+        "Administração de terapêutica prescrita, monitorização de sinais vitais e resposta rápida a situações de deterioração aguda de utentes enquanto elemento da equipa interna de emergência médica.",
+        "Gestão de registos clínicos abrangentes de utentes e passagens de turno de enfermagem utilizando a plataforma de registo de saúde eletrónico SClínico, melhorando a conformidade nas auditorias de passagem de turno de 82% para 96%.",
+        "Coautoria da revisão do protocolo do serviço para a gestão da dor pós-operatória em colaboração com a equipa de anestesiologia, resultando numa melhoria de 15% nos índices de satisfação dos utentes."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Pós-Graduação e Especialidade em Enfermagem Médico-Cirúrgica",
+      "institution": "Escola Superior de Saúde da Cruz Vermelha Portuguesa - Lisboa",
+      "year": "2021"
+    },
+    {
+      "degree": "Licenciatura em Enfermagem",
+      "institution": "Escola Superior de Saúde do Instituto Politécnico de Setúbal (ESS-IPS)",
+      "year": "2018"
+    }
+  ],
+  "skills": [
+    "Cuidados de Internamento Médico-Cirúrgico",
+    "Registos de Saúde Eletrónicos Glintt HS e SClínico",
+    "Coordenação de Turnos e Liderança de Equipa",
+    "Monitorização Pós-Operatória e Gestão da Dor",
+    "Tratamento de Feridas Complexas e Viabilidade Tecidular",
+    "Gestão de Cateter Venoso Central (CVC)",
+    "Triagem de Emergência e Resposta à Deterioração Aguda",
+    "Orientação em Ensino Clínico e Auditoria"
+  ],
+  "certifications": [
+    "Cédula Profissional da Ordem dos {{Enfermeiros|Enfermeiros}} (Inscrição Ativa e Título de {{Enfermeiro Especialista|Enfermeira Especialista}} em Enfermagem Médico-Cirúrgica)",
+    "Suporte Avançado de Vida (SAV) - European Resuscitation Council / Conselho Português de Ressuscitação (Válido até 2026)",
+    "Suporte Intermédio de Vida (SIV) - Acreditado pelo INEM",
+    "Curso Avançado em Tratamento de Feridas Complexas e Viabilidade Tecidular (2022)"
+  ]
+}

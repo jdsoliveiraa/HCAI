@@ -1,0 +1,70 @@
+{
+  "headline": "Backend Software Engineer",
+  "summary": "Backend Software Engineer with over three years of experience developing and maintaining web applications and internal tools. Experienced in Java and Python backend development alongside relational databases such as PostgreSQL and MySQL. Looking for an opportunity to contribute to backend systems at a technology company in Lisbon.",
+  "experience": [
+    {
+      "title": "Backend Software Engineer",
+      "employer": "Lusitano Digital Lda.",
+      "location": "Lisbon, Portugal",
+      "start": "Jan 2023",
+      "end": "Present",
+      "bullets": [
+        "Develop and maintain backend modules in Java and Python for production client portals and internal management systems.",
+        "Write SQL queries, stored procedures, and schema updates for PostgreSQL production databases.",
+        "Fix software bugs reported by the support team and assist in routine maintenance of legacy services.",
+        "Document REST API endpoints and participate in weekly team status meetings."
+      ]
+    },
+    {
+      "title": "Junior Full-Stack Software Engineer",
+      "employer": "AlgarveSoft Sistemas",
+      "location": "Faro, Portugal",
+      "start": "Sep 2021",
+      "end": "Dec 2022",
+      "bullets": [
+        "Assisted in the development of web applications using Python on the backend and standard HTML, CSS, and jQuery on the frontend.",
+        "Maintained tables and wrote daily data extraction queries for MySQL production databases.",
+        "Performed manual testing of new software features before release to production servers.",
+        "Provided technical support for internal users and updated system configuration files."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)",
+      "institution": "Instituto Politécnico de Setúbal",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Java",
+    "Python",
+    "PostgreSQL",
+    "MySQL",
+    "REST APIs",
+    "Git",
+    "HTML/CSS",
+    "Linux"
+  ],
+  "certifications": [],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Backend Software Engineer with over three years of experience developing and maintaining web applications"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Develop and maintain backend modules in Java and Python for production client portals and internal management systems."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [],
+  "borderline_note": ""
+}

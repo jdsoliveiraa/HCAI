@@ -1,0 +1,72 @@
+{
+  "headline": "Registered Nurse (Enfermeiro/a)",
+  "summary": "Registered Nurse with an active Cédula Profissional da Ordem dos Enfermeiros and 2 years of clinical experience in a hospital inpatient setting. Responsible for routine patient care, administering medication, and monitoring vital signs in general medical wards.",
+  "experience": [
+    {
+      "title": "Registered Nurse (Enfermeiro/a) - Inpatient Ward",
+      "employer": "Hospital Distrital de Santarém (Unidade Fictícia)",
+      "location": "Santarém, Portugal",
+      "start": "2022-03",
+      "end": "2024-04",
+      "bullets": [
+        "Provided daily nursing care to patients admitted to the general medicine inpatient ward.",
+        "Prepared and administered prescribed oral and intravenous medications according to medical charts.",
+        "Monitored and recorded patient vital signs at scheduled intervals during shifts.",
+        "Assisted patients with personal hygiene, mobility, and feeding.",
+        "Communicated patient status updates to doctors and other nurses during shift handovers."
+      ]
+    },
+    {
+      "title": "Outpatient Clinic Nurse",
+      "employer": "Clínica Médica do Ribatejo",
+      "location": "Cartaxo, Portugal",
+      "start": "2021-09",
+      "end": "2022-02",
+      "bullets": [
+        "Performed routine wound dressings and suture removals in an outpatient clinic.",
+        "Collected blood and urine samples for laboratory testing.",
+        "Managed nursing supplies and restocked consultation rooms."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Bachelor's degree in Nursing (Licenciatura em Enfermagem)",
+      "institution": "Escola Superior de Saúde de Santarém",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Inpatient Nursing Care",
+    "Medication Administration",
+    "Vital Signs Monitoring",
+    "Wound Care",
+    "Venipuncture",
+    "Patient Hygiene Assistance"
+  ],
+  "certifications": [
+    "Valid and active Cédula Profissional da Ordem dos Enfermeiros"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Bachelor's degree in Nursing (Licenciatura em Enfermagem)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Valid and active Cédula Profissional da Ordem dos Enfermeiros"
+    },
+    {
+      "requirement": 3,
+      "evidence": "2 years of clinical experience in a hospital inpatient setting"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3
+  ],
+  "borderline_note": ""
+}

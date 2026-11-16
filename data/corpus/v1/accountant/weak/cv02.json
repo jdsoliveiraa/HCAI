@@ -1,0 +1,70 @@
+{
+  "headline": "Certified Accountant (OCC)",
+  "summary": "Accountant with an active registration with the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association) and three years of professional experience in general accounting and tax compliance within an industrial company. Experienced in recording routine accounting transactions, performing bank reconciliations, and preparing periodic tax declarations under the Sistema de Normalização Contabilística (SNC - Portuguese accounting standards).",
+  "experience": [
+    {
+      "title": "General Accountant",
+      "employer": "Metalúrgica do Vale do Ave, Lda.",
+      "location": "Vila Nova de Famalicão",
+      "start": "2023-01",
+      "end": "Present",
+      "bullets": [
+        "Record and classify daily accounting documents, including supplier invoices, customer receipts, and staff expense reports.",
+        "Prepare and submit periodic VAT declarations, monthly withholding tax statements, and social security declarations.",
+        "Assist in the preparation of annual IRC (corporate income tax) declarations and the IES (simplified business information) filing.",
+        "Perform monthly bank reconciliations and verify current account balances for suppliers and customers."
+      ]
+    },
+    {
+      "title": "Junior Accountant",
+      "employer": "Metalúrgica do Vale do Ave, Lda.",
+      "location": "Vila Nova de Famalicão",
+      "start": "2021-04",
+      "end": "2022-12",
+      "bullets": [
+        "Organized, checked, and archived physical and digital accounting documentation in compliance with statutory rules.",
+        "Entered purchase and sales invoices into the internal SAGE accounting system.",
+        "Supported the finance team during monthly and annual account closing procedures.",
+        "Maintained the fixed assets register and processed monthly depreciation entries."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Management",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2020"
+    }
+  ],
+  "skills": [
+    "General Accounting (SNC)",
+    "Tax Compliance (VAT, IRC, IRS)",
+    "Bank Reconciliations",
+    "Accounts Payable and Receivable",
+    "SAGE Accounting Software",
+    "Microsoft Excel"
+  ],
+  "certifications": [],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Management"
+    },
+    {
+      "requirement": 2,
+      "evidence": "active registration with the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "three years of professional experience in general accounting and tax compliance"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1
+  ],
+  "borderline_note": ""
+}

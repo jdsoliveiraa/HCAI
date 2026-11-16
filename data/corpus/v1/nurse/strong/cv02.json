@@ -1,0 +1,99 @@
+{
+  "headline": "Registered Nurse | Specialist in Medical-Surgical & Acute Inpatient Care",
+  "summary": "Registered Nurse with over 6 years of clinical experience in high-acuity hospital inpatient wards and post-operative surgical care across Portugal. Holder of a Postgraduate Specialization in Medical-Surgical Nursing and valid Advanced Life Support (SAV) certification. Proven track record in shift coordination, clinical audit implementation, and mentoring junior nursing staff, with extensive daily proficiency in Glintt and SClínico electronic health record systems.",
+  "experience": [
+    {
+      "title": "Senior Registered Nurse (Enfermeiro/a Chefe de Turno - Internamento Cirúrgico)",
+      "employer": "Hospital Privado da Estrela (Fictitious)",
+      "location": "Lisbon, Portugal",
+      "start": "2021-03",
+      "end": "Present",
+      "bullets": [
+        "Coordinate nursing care across a 34-bed Medical-Surgical inpatient unit, acting as Shift Leader for a multidisciplinary team of 8 nurses and 6 healthcare assistants.",
+        "Manage complex post-operative patients (orthopaedic, gastrointestinal, and vascular surgery), administering IV therapies, managing central venous catheters, and monitoring vital parameters.",
+        "Led a clinical quality initiative on surgical site infection prevention that reduced ward post-op wound complications by 22% over 14 months.",
+        "Record and audit all clinical nursing documentation, care plans, and medication reconciliation using the Glintt HS electronic health record platform.",
+        "Precepted and onboarded 12 newly graduated nurses and nursing students over the past 3 years, standardising handover protocols using the ISBAR methodology."
+      ]
+    },
+    {
+      "title": "Registered Nurse - Internal Medicine & Acute Inpatient Ward",
+      "employer": "Centro Hospitalar do Tejo Ocidental (Fictitious)",
+      "location": "Amadora, Portugal",
+      "start": "2018-09",
+      "end": "2021-02",
+      "bullets": [
+        "Delivered direct patient-centred nursing care in a fast-paced 40-bed acute Internal Medicine inpatient ward with an average nurse-to-patient ratio of 1:7.",
+        "Performed comprehensive patient assessments on admission, executed complex wound dressings, managed pain protocols, and responded to inpatient clinical emergencies.",
+        "Utilised SClínico Hospitalar daily to document nursing diagnoses (CIPE/ICNP classification), vital signs, and discharge planning notes.",
+        "Collaborated in the redesign of the ward's pressure ulcer prevention protocol, achieving a 30% reduction in hospital-acquired pressure injuries within one year."
+      ]
+    },
+    {
+      "title": "General Care Nurse (Enfermeiro/a de Cuidados Gerais)",
+      "employer": "Clínica Médica e Cirúrgica de Setúbal (Fictitious)",
+      "location": "Setúbal, Portugal",
+      "start": "2017-10",
+      "end": "2018-08",
+      "bullets": [
+        "Provided peri-operative and inpatient nursing care for short-stay surgical patients in a 16-bed recovery and inpatient unit.",
+        "Administered prescribed therapeutics, performed phlebotomy, and educated patients and families on post-discharge surgical wound care."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Postgraduate Specialization in Medical-Surgical Nursing (Pós-Graduação em Enfermagem Médico-Cirúrgica)",
+      "institution": "Escola Superior de Saúde da Cruz Vermelha Portuguesa - Lisboa",
+      "year": "2021"
+    },
+    {
+      "degree": "Bachelor's Degree in Nursing (Licenciatura em Enfermagem)",
+      "institution": "Escola Superior de Saúde do Instituto Politécnico de Setúbal",
+      "year": "2017"
+    }
+  ],
+  "skills": [
+    "Medical-Surgical Inpatient Care",
+    "SClínico Hospitalar",
+    "Glintt HS",
+    "Advanced Life Support (SAV)",
+    "Complex Wound & Ostomy Care",
+    "Central Venous Catheter Management",
+    "ISBAR Clinical Handover",
+    "CIPE / ICNP Nursing Diagnostics",
+    "Shift Coordination & Clinical Preceptorship",
+    "Post-Operative Pain Management"
+  ],
+  "certifications": [
+    "Valid and Active Professional License - Cédula Profissional da Ordem dos Enfermeiros (Portugal)",
+    "Advanced Life Support (Suporte Avançado de Vida - SAV) Certification - Conselho Português de Ressuscitação (Valid until 2026)",
+    "Intermediate Life Support (Suporte Intermédio de Vida - SIV) - INEM Accredited Course",
+    "Advanced Course in Complex Wound Care and Tissue Viability (35 hours)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Bachelor's Degree in Nursing (Licenciatura em Enfermagem)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Valid and Active Professional License - Cédula Profissional da Ordem dos Enfermeiros (Portugal)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Registered Nurse with over 6 years of clinical experience in high-acuity hospital inpatient wards and post-operative surgical care across Portugal."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

@@ -1,0 +1,52 @@
+{
+  "headline": "{{Engenheiro de Software Full-Stack|Engenheira de Software Full-Stack}}",
+  "summary": "{{Engenheiro de Software|Engenheira de Software}} com três anos de experiência profissional no desenvolvimento de aplicações web backend e full-stack. Percurso na construção de módulos empresariais recorrendo a Python, C# e MySQL. Formação académica em Matemática e Ciências da Computação.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software Backend|Engenheira de Software Backend}}",
+      "employer": "Valongo Digital Lda.",
+      "location": "Braga, Portugal",
+      "start": "Abril de 2023",
+      "end": "Março de 2025",
+      "bullets": [
+        "Responsável pelo desenvolvimento e manutenção de aplicações web backend utilizando Python e Flask em ambiente de produção.",
+        "Criação e atualização de esquemas de bases de dados relacionais e escrita de consultas SQL para bases de dados MySQL.",
+        "Correção de erros (bugs) e realização de tarefas de manutenção geral em serviços de produção existentes.",
+        "Participação em revisões regulares de código e sessões de planeamento de equipa."
+      ]
+    },
+    {
+      "title": "{{Engenheiro de Software Full-Stack Júnior|Engenheira de Software Full-Stack Júnior}}",
+      "employer": "Soluciones Informáticas do Cávado",
+      "location": "Barcelos, Portugal",
+      "start": "Abril de 2022",
+      "end": "Março de 2023",
+      "bullets": [
+        "Apoio no desenvolvimento de portais de gestão interna utilizando C#, .NET e SQL Server.",
+        "Construção de vistas de interface de utilizador recorrendo a React e folhas de estilo CSS padrão.",
+        "Redação de documentação {{técnica|técnica}} para módulos de software e manuais de utilizador.",
+        "Tratamento de pedidos diários de suporte e resolução de erros de rotina nas aplicações reportados pelos utilizadores."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Matemática e Ciências da Computação",
+      "institution": "Universidade do Minho",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Python",
+    "Flask",
+    "MySQL",
+    "C#",
+    ".NET",
+    "SQL Server",
+    "React",
+    "HTML/CSS",
+    "Git",
+    "APIs REST"
+  ],
+  "certifications": []
+}

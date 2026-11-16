@@ -1,0 +1,74 @@
+{
+  "headline": "Registered Nurse (Enfermeiro/a) | General & Inpatient Care",
+  "summary": "Registered Nurse holding a Licenciatura em Enfermagem and an active Cédula Profissional da Ordem dos Enfermeiros. Over 3 years of overall nursing experience across outpatient clinics and hospital inpatient wards. Currently transitioning back to acute care after 24 months of earlier hospital inpatient experience, bringing steady clinical competence in patient monitoring, medication administration, and electronic record management using Glintt.",
+  "experience": [
+    {
+      "title": "Outpatient Clinic Nurse (Enfermeiro/a de Consulta Externa)",
+      "employer": "Clínica Médica São Bento (Fictitious)",
+      "location": "Lisbon, Portugal",
+      "start": "June 2023",
+      "end": "Present",
+      "bullets": [
+        "Manage daily nursing consultations, performing wound dressings, suture removals, and routine vaccinations for an average of 25 patients per shift.",
+        "Conduct pre-operative nursing assessments and patient education for minor ambulatory surgeries.",
+        "Assist physicians during diagnostic procedures in gastroenterology and dermatology.",
+        "Maintain accurate clinical documentation and inventory control of medical supplies."
+      ]
+    },
+    {
+      "title": "Registered Nurse - Internal Medicine Ward (Serviço de Medicina Interna)",
+      "employer": "Hospital Distrital da Beira Serra (Fictitious)",
+      "location": "Covilhã, Portugal",
+      "start": "May 2021",
+      "end": "May 2023",
+      "bullets": [
+        "Delivered direct nursing care in a 28-bed hospital inpatient Internal Medicine setting for exactly 24 months.",
+        "Administered oral, IV, and subcutaneous medications, and monitored vital signs for up to 7 acute patients per shift.",
+        "Utilized the Glintt electronic health record system to document nursing care plans, clinical notes, and discharge preparations.",
+        "Collaborated with physicians and auxiliary staff to reduce ward medication administration delays by 10% through reorganized shift handover checklists."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Bachelor's degree in Nursing (Licenciatura em Enfermagem)",
+      "institution": "Escola Superior de Saúde Dr. Lopes Dias - Instituto Politécnico de Castelo Branco",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Inpatient Nursing Care",
+    "Glintt EHR System",
+    "IV Therapy & Venipuncture",
+    "Wound Care Management",
+    "Vital Signs Monitoring",
+    "Medication Administration",
+    "Patient Education"
+  ],
+  "certifications": [
+    "Valid and active Cédula Profissional da Ordem dos Enfermeiros (Registered Nurse License)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Bachelor's degree in Nursing (Licenciatura em Enfermagem)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Valid and active Cédula Profissional da Ordem dos Enfermeiros (Registered Nurse License)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Delivered direct nursing care in a 28-bed hospital inpatient Internal Medicine setting for exactly 24 months."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3,
+    4
+  ],
+  "borderline_note": "Mandatory requirement 3 (Minimum of 2 years of clinical experience in a hospital inpatient or acute care setting) is borderline: although the candidate has over 3.5 years of total nursing experience, their hospital inpatient role lasted exactly 24 months (May 2021 to May 2023), while their most recent experience since June 2023 is in an outpatient clinic rather than an inpatient or acute care setting."
+}

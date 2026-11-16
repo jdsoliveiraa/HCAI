@@ -1,0 +1,54 @@
+{
+  "headline": "{{Engenheiro de Software|Engenheira de Software}} Full-Stack (Java / React)",
+  "summary": "{{Engenheiro de Software|Engenheira de Software}} Full-Stack de confiança com 4 anos de experiência profissional no desenvolvimento de serviços backend e aplicações web voltadas para o cliente. Sólida experiência em Java (Spring Boot), MySQL e PostgreSQL, aliada a competências práticas de frontend em React e TypeScript. Experiente na entrega de código limpo e testado em equipas Agile Scrum e na manutenção de fluxos de trabalho automatizados de CI/CD.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software|Engenheira de Software}} Full-Stack",
+      "employer": "Olisipo Digital Systems",
+      "location": "Lisboa, Portugal",
+      "start": "Maio de 2022",
+      "end": "Presente",
+      "bullets": [
+        "Desenvolvimento e manutenção de APIs REST principais de backend em Java 17 (Spring Boot) suportadas por bases de dados PostgreSQL para uma plataforma de logística B2B.",
+        "Criação e atualização de módulos de interface de utilizador responsivos utilizando React e TypeScript, reduzindo os erros de UI reportados pelos clientes em 20%.",
+        "Configuração e manutenção de pipelines de GitLab CI/CD para testes unitários automatizados, análise estática de código e implementações em ambiente de staging.",
+        "Colaboração estreita com Product Owners e {{engenheiros|engenheiros}} de QA em sprints quinzenais de Agile/Scrum, participando no refinamento do backlog e em revisões de código."
+      ]
+    },
+    {
+      "title": "{{Programador|Programadora}} Backend Júnior",
+      "employer": "AlgarveTech Consulting",
+      "location": "Faro, Portugal",
+      "start": "Março de 2020",
+      "end": "Abril de 2022",
+      "bullets": [
+        "Implementação da lógica de negócio de backend em Java 11 e gestão de modelos de dados relacionais em MySQL para portais regionais de turismo e reservas.",
+        "Otimização de consultas SQL lentas e estratégias de indexação em MySQL, melhorando os tempos médios de carregamento das páginas de relatórios em 15%.",
+        "Elaboração de testes unitários e de integração utilizando JUnit e Mockito para suportar lançamentos mensais fiáveis.",
+        "Participação em reuniões diárias de Scrum e apoio a {{programadores|programadores}} seniores na resolução de erros em produção e na documentação de APIs."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Engenharia Informática",
+      "institution": "Instituto Superior de Engenharia de Lisboa (ISEL)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Java (11 / 17)",
+    "Spring Boot",
+    "PostgreSQL",
+    "MySQL",
+    "React",
+    "TypeScript",
+    "APIs RESTful",
+    "Git & GitLab CI/CD",
+    "JUnit & Mockito",
+    "Agile / Scrum"
+  ],
+  "certifications": [
+    "Professional Scrum Developer I (PSD I) – Scrum.org"
+  ]
+}

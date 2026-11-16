@@ -1,0 +1,50 @@
+{
+  "headline": "{{Enfermeiro|Enfermeira}}",
+  "summary": "{{Enfermeiro|Enfermeira}} com Cédula Profissional ativa da Ordem {{dos Enfermeiros|dos Enfermeiros}} e 2 anos de experiência clínica em contexto de internamento hospitalar. Responsável pela prestação de cuidados de rotina aos utentes, administração de medicação e monitorização de sinais vitais em enfermarias de medicina geral.",
+  "experience": [
+    {
+      "title": "{{Enfermeiro|Enfermeira}} - Serviço de Internamento",
+      "employer": "Hospital Distrital de Santarém (Unidade Fictícia)",
+      "location": "Santarém, Portugal",
+      "start": "2022-03",
+      "end": "2024-04",
+      "bullets": [
+        "Prestou cuidados diários de enfermagem a utentes {{internados|internados}} no serviço de internamento de medicina geral.",
+        "Preparou e administrou medicação oral e endovenosa prescrita de acordo com as fichas clínicas.",
+        "Monitorizou e registou os sinais vitais dos utentes em intervalos programados durante os turnos.",
+        "Apoiou os utentes nos cuidados de higiene pessoal, mobilidade e alimentação.",
+        "Comunicou atualizações sobre o estado dos utentes {{aos médicos|aos médicos}} e à restante equipa de enfermagem durante as passagens de turno."
+      ]
+    },
+    {
+      "title": "{{Enfermeiro|Enfermeira}} de Consultas Externas",
+      "employer": "Clínica Médica do Ribatejo",
+      "location": "Cartaxo, Portugal",
+      "start": "2021-09",
+      "end": "2022-02",
+      "bullets": [
+        "Realizou pensos de rotina e remoção de suturas em contexto de clínica de ambulatório.",
+        "Efetuou a colheita de amostras de sangue e urina para análises laboratoriais.",
+        "Geriu o material de enfermagem e repôs o stock dos gabinetes de consulta."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Enfermagem",
+      "institution": "Escola Superior de Saúde de Santarém",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Cuidados de Enfermagem em Internamento",
+    "Administração de Medicação",
+    "Monitorização de Sinais Vitais",
+    "Tratamento de Feridas",
+    "Punção Venosa",
+    "Apoio na Higiene de Utentes"
+  ],
+  "certifications": [
+    "Cédula Profissional da Ordem {{dos Enfermeiros|dos Enfermeiros}} válida e ativa"
+  ]
+}

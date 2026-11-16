@@ -1,0 +1,78 @@
+{
+  "headline": "Full-Stack Software Engineer | Python, PostgreSQL & React",
+  "summary": "Backend and Full-Stack Software Engineer with 4 years of professional experience developing web applications and APIs. Solid background in Python (Django, FastAPI) and relational databases such as PostgreSQL and MySQL. Experienced in working within Agile/Scrum teams, maintaining CI/CD workflows, and contributing to React-based frontend interfaces.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "employer": "Alfacinha Digital Lda.",
+      "location": "Lisbon, Portugal",
+      "start": "May 2022",
+      "end": "Present",
+      "bullets": [
+        "Develop and maintain backend services in Python (FastAPI and Django) connected to PostgreSQL databases for B2B client portals.",
+        "Optimized slow-running SQL queries and added appropriate indexing in PostgreSQL, reducing average API response times by 20%.",
+        "Build and update responsive user interface components using React and TypeScript in collaboration with the product design team.",
+        "Configure and maintain automated testing and deployment pipelines using GitLab CI/CD.",
+        "Participate actively in bi-weekly Agile/Scrum sprints, including backlog refinement, sprint planning, and peer code reviews."
+      ]
+    },
+    {
+      "title": "Junior Backend & Full-Stack Developer",
+      "employer": "SintraSoft Sistemas",
+      "location": "Sintra, Portugal",
+      "start": "March 2020",
+      "end": "April 2022",
+      "bullets": [
+        "Contributed to the development of internal management web applications using Python and MySQL.",
+        "Implemented RESTful endpoints for inventory tracking and reporting modules, serving over 50 daily business users.",
+        "Wrote unit and integration tests using pytest, increasing backend test coverage from 45% to 68%.",
+        "Assisted in frontend bug fixing and feature implementation using JavaScript and React."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)",
+      "institution": "Instituto Superior de Engenharia de Lisboa (ISEL)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Python (Django, FastAPI)",
+    "PostgreSQL",
+    "MySQL",
+    "React",
+    "TypeScript",
+    "RESTful APIs",
+    "Git & GitLab CI/CD",
+    "Agile / Scrum",
+    "pytest",
+    "Linux"
+  ],
+  "certifications": [
+    "Professional Scrum Developer I (PSD I) – Scrum.org"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Backend and Full-Stack Software Engineer with 4 years of professional experience developing web applications and APIs."
+    },
+    {
+      "requirement": 3,
+      "evidence": "Develop and maintain backend services in Python (FastAPI and Django) connected to PostgreSQL databases for B2B client portals."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

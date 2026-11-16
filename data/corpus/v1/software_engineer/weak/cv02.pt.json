@@ -1,0 +1,52 @@
+{
+  "headline": "{{Engenheiro de Software Full-Stack|Engenheira de Software Full-Stack}}",
+  "summary": "{{Engenheiro de Software Full-Stack|Engenheira de Software Full-Stack}} com pouco mais de três anos de experiência profissional no desenvolvimento de aplicações web e serviços de backend. Experiência na construção de sistemas de produção utilizando Java, MySQL e componentes de frontend com React. À procura de uma posição em engenharia de software em Lisboa.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software|Engenheira de Software}}",
+      "employer": "Alvalade Digital Systems, Lda.",
+      "location": "Lisboa, Portugal",
+      "start": "Junho de 2023",
+      "end": "Presente",
+      "bullets": [
+        "Desenvolvimento e manutenção de funcionalidades de backend em Java para portais corporativos internos e aplicações destinadas a clientes.",
+        "Escrita de consultas SQL, vistas e migrações de bases de dados para bases de dados MySQL de produção.",
+        "Construção e atualização de componentes de interface de utilizador utilizando React e CSS padrão.",
+        "Investigação de relatórios de erros submetidos pela equipa de suporte e aplicação de correções no código-fonte."
+      ]
+    },
+    {
+      "title": "{{Engenheiro de Software Full-Stack Júnior|Engenheira de Software Full-Stack Júnior}}",
+      "employer": "Ribatejo Software & Consultoria",
+      "location": "Santarém, Portugal",
+      "start": "Fevereiro de 2022",
+      "end": "Maio de 2023",
+      "bullets": [
+        "Participação no desenvolvimento de aplicações web utilizando Java no backend e MySQL para armazenamento de dados.",
+        "Apoio na manutenção de APIs REST existentes e módulos legados em Java.",
+        "Implementação de ecrãs básicos de frontend utilizando React, HTML e JavaScript com base em maquetas.",
+        "Redação de documentação {{técnica|técnica}} para módulos internos de software e esquemas de bases de dados."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Engenharia Informática",
+      "institution": "Instituto Politécnico de Setúbal",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Java",
+    "MySQL",
+    "SQL",
+    "APIs REST",
+    "React",
+    "JavaScript",
+    "HTML & CSS",
+    "Git",
+    "Maven",
+    "Linux"
+  ],
+  "certifications": []
+}

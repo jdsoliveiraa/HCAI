@@ -1,0 +1,51 @@
+{
+  "headline": "{{Contabilista Certificado|Contabilista Certificada}} (OCC) | Contabilidade Empresarial e Cumprimento Fiscal",
+  "summary": "{{Contabilista Certificado|Contabilista Certificada}} {{inscrito|inscrita}} na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC) com 4,5 anos de experiência interna em contabilidade e cumprimento fiscal nos setores da indústria transformadora e comércio por grosso. Sólido domínio das normas contabilísticas portuguesas (SNC), entrega de declarações fiscais periódicas e procedimentos de fecho financeiro utilizando o software PHC.",
+  "experience": [
+    {
+      "title": "{{Contabilista Certificado|Contabilista Certificada}}",
+      "employer": "Têxteis Vale do Ave S.A.",
+      "location": "Famalicão, Portugal",
+      "start": "Maio de 2022",
+      "end": "Presente",
+      "bullets": [
+        "Executar o ciclo completo de contabilidade geral em conformidade com o Sistema de Normalização Contabilística (SNC) para uma empresa industrial com 8M€ de volume de negócios anual.",
+        "Preparar e submeter declarações fiscais mensais e anuais, incluindo IVA, Imposto sobre o Rendimento das Pessoas Coletivas (IRC - Modelo 22), IES e retenções na fonte.",
+        "Gerir reconciliações bancárias mensais, o registo de ativos fixos tangíveis e acréscimos e diferimentos utilizando o PHC Enterprise.",
+        "Otimizou a lista de verificação do fecho mensal, reduzindo o tempo de entrega de relatórios de 12 para 9 dias úteis."
+      ]
+    },
+    {
+      "title": "{{Contabilista Geral|Contabilista Geral}}",
+      "employer": "ElectroNorte Lda.",
+      "location": "Maia, Portugal",
+      "start": "Setembro de 2019",
+      "end": "Abril de 2022",
+      "bullets": [
+        "Processou e classificou documentos contabilísticos diários, incluindo faturas de fornecedores, relatórios de despesas e movimentos de tesouraria em PHC.",
+        "Auxiliou na preparação das declarações periódicas de IVA, DMR e declarações da Segurança Social.",
+        "Manteve o controlo sobre contas a pagar e contas a receber, reconciliando trimestralmente mais de 150 contas de fornecedores.",
+        "Apoiou {{os auditores externos|os auditores externos}} durante as auditorias anuais de revisão legal de contas, preparando os balancetes solicitados e mapas de suporte."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Gestão",
+      "institution": "Universidade do Minho",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Software PHC (Contabilidade e Gestão)",
+    "Cumprimento Fiscal (IVA, IRC, IRS, IES)",
+    "Fecho Mensal e Anual de Contas",
+    "Reconciliações Bancárias e de Contas Correntes",
+    "Gestão de Ativos Fixos",
+    "Microsoft Excel (Tabelas Dinâmicas, PROCV)"
+  ],
+  "certifications": [
+    "{{Membro efetivo|Membro efetivo}} da Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC)"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "headline": "{{Enfermeiro|Enfermeira}} | Especialista em Internamento Médico-Cirúrgico | +5 Anos de Experiência Hospitalar em Cuidados Agudos",
+  "summary": "{{Enfermeiro|Enfermeira}} {{dedicado|dedicada}} com mais de 5 anos de experiência clínica progressiva em serviços de internamento médico-cirúrgico de elevada complexidade e cuidados de urgência em grandes unidades hospitalares na área metropolitana de Lisboa. Detém Licenciatura em Enfermagem e Pós-Graduação em Enfermagem Médico-Cirúrgica, bem como cédula profissional ativa na Ordem dos {{Enfermeiros|Enfermeiros}}. Percurso comprovado na gestão de doentes pós-operatórios complexos, na dinamização de protocolos de segurança clínica que reduziram os erros de medicação no serviço em 22% e na integração e tutoria de {{enfermeiros recém-admitidos|enfermeiros recém-admitidos}}. Proficiente nos sistemas de registo de saúde eletrónico Glintt e SClínico.",
+  "experience": [
+    {
+      "title": "{{Enfermeiro Sénior|Enfermeira Sénior}} de Internamento - Unidade Médico-Cirúrgica",
+      "employer": "Hospital Privado da Estrela (Unidade Fictícia)",
+      "location": "Lisboa, Portugal",
+      "start": "Set 2021",
+      "end": "Presente",
+      "bullets": [
+        "Prestação de cuidados de enfermagem globais e centrados no utente num serviço de internamento Médico-Cirúrgico de 36 camas, gerindo em média 6 a 8 doentes agudos pós-operatórios e de medicina interna por turno.",
+        "Desempenho de funções como {{Enfermeiro Chefe de Equipa|Enfermeira Chefe de Equipa}} (Coordenação de Turno) de uma equipa multidisciplinar de 7 {{enfermeiros|enfermeiros}} e 4 assistentes operacionais, supervisionando a gestão de camas, passagens de turno clínicas e ativação de respostas de emergência.",
+        "Liderança na implementação de um protocolo de dupla verificação para medicação endovenosa de alto risco através do sistema de registo de saúde eletrónico Glintt HS, reduzindo os erros de administração no serviço em 22% ao longo de 12 meses.",
+        "Orientação e avaliação de 9 {{enfermeiros recém-contratados|enfermeiros recém-contratados}} e estudantes de enfermagem do último ano, uniformizando os procedimentos de integração para o tratamento de feridas complexas e manutenção de cateteres venosos centrais.",
+        "Colaboração diária com {{cirurgiões|cirurgiões}}, internistas e fisioterapeutas na execução de planos individualizados de mobilização precoce, contribuindo para uma redução de 15% na demora média de internamento de doentes de cirurgia ortopédica e abdominal."
+      ]
+    },
+    {
+      "title": "{{Enfermeiro|Enfermeira}} - Serviço de Internamento de Medicina Aguda e Cirurgia",
+      "employer": "Centro Hospitalar do Tejo Ocidental (Unidade Fictícia)",
+      "location": "Amadora, Portugal",
+      "start": "Out 2018",
+      "end": "Ago 2021",
+      "bullets": [
+        "Prestação de cuidados clínicos diretos numa unidade de internamento de agudos de 42 camas de elevado ritmo, realizando monitorização contínua de sinais vitais, execução de pensos cirúrgicos complexos, gestão da dor e administração de transfusões sanguíneas.",
+        "Registo rigoroso de avaliações iniciais de enfermagem, planos de cuidados (taxonomia CIPE) e intervenções clínicas no sistema SClínico, assegurando 100% de conformidade durante as auditorias internas de qualidade.",
+        "Atuação como Elo de Ligação PPCIRA ({{Enfermeiro|Enfermeira}} Elo de Ligação em Controlo de Infeção) do serviço, conduzindo auditorias mensais à higiene das mãos que contribuíram para diminuir em 18% as infeções do trato urinário associadas a cateter vesical em 2020.",
+        "Identificação rápida de sinais de deterioração clínica através da escala de alerta precoce NEWS2 e início imediato de protocolos de Suporte Avançado de Vida em articulação com a equipa de emergência médica intra-hospitalar."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Pós-Graduação em Enfermagem Médico-Cirúrgica",
+      "institution": "Escola Superior de Enfermagem de Lisboa (ESEL)",
+      "year": "2022"
+    },
+    {
+      "degree": "Licenciatura em Enfermagem (240 ECTS)",
+      "institution": "Escola Superior de Saúde da Cruz Vermelha Portuguesa - Lisboa",
+      "year": "2018"
+    }
+  ],
+  "skills": [
+    "Cuidados de Enfermagem em Internamento Médico-Cirúrgico",
+    "Monitorização Pós-Operatória e Gestão da Dor",
+    "Glintt HS e SClínico (Sistemas de Registo Clínico Eletrónico)",
+    "Suporte Avançado e Intermédio de Vida (SAV / SIV)",
+    "Manutenção de Cateter Venoso Central e Tratamento de Feridas Complexas",
+    "Terapêutica Endovenosa e Administração de Componentes Sanguíneos",
+    "Coordenação de Turno e Orientação Clínica de Pares",
+    "Diagnósticos de Enfermagem em Linguagem CIPE",
+    "Prevenção e Controlo de Infeção (PPCIRA)"
+  ],
+  "certifications": [
+    "Cédula Profissional da Ordem dos {{Enfermeiros|Enfermeiros}} (Licença Profissional Válida e Ativa - OE Portugal)",
+    "Suporte Avançado de Vida (SAV) - European Resuscitation Council / Conselho Português de Ressuscitação (Válido até 2026)",
+    "Suporte Intermédio de Vida (SIV) - Formação Acreditada pelo INEM",
+    "Curso Avançado em Tratamento de Feridas Complexas e Viabilidade Tecidular (35 horas)"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "headline": "{{Enfermeiro|Enfermeira}} | Cuidados Gerais de Enfermagem",
+  "summary": "{{Enfermeiro|Enfermeira}} com Licenciatura em Enfermagem e Cédula Profissional ativa da Ordem dos {{Enfermeiros|Enfermeiros}}. Possui exatamente 2 anos de experiência clínica em contexto de internamento hospitalar, a par de experiência em clínicas comunitárias de ambulatório. Responsável pela execução de rotinas diárias de enfermagem, administração de medicação prescrita e registo de observações de utentes.",
+  "experience": [
+    {
+      "title": "{{Enfermeiro de Consulta Externa|Enfermeira de Consulta Externa}}",
+      "employer": "Clínica Médica São Bento (clínica fictícia)",
+      "location": "Sintra, Portugal",
+      "start": "Abr 2024",
+      "end": "Presente",
+      "bullets": [
+        "Realização de procedimentos básicos de enfermagem, tais como colheitas de sangue, vacinação e pensos simples de feridas durante consultas externas programadas.",
+        "Medição e registo da tensão arterial, peso e níveis de glicemia capilar antes das consultas médicas.",
+        "Organização de consumíveis clínicos e verificação dos prazos de validade do material clínico nas salas de tratamentos."
+      ]
+    },
+    {
+      "title": "{{Enfermeiro de Internamento|Enfermeira de Internamento}}",
+      "employer": "Hospital Privado do Ribatejo (hospital fictício)",
+      "location": "Santarém, Portugal",
+      "start": "Mar 2022",
+      "end": "Mar 2024",
+      "bullets": [
+        "Prestação de cuidados gerais de enfermagem a doentes adultos admitidos no serviço de internamento de medicina geral.",
+        "Preparação e administração de medicação por via oral, intramuscular e endovenosa de acordo com as prescrições médicas.",
+        "Monitorização de sinais vitais durante as rondas de turno e comunicação de atualizações do estado clínico dos utentes ao médico de serviço.",
+        "Apoio aos doentes nas tarefas diárias de higiene, alimentação e mobilidade na enfermaria.",
+        "Preenchimento de registos diários de enfermagem utilizando as ferramentas internas de registo em papel e folhas de cálculo locais."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Enfermagem",
+      "institution": "Escola Superior de Saúde de Santarém",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Monitorização de Sinais Vitais",
+    "Administração de Terapêutica",
+    "Tratamento de Feridas e Pensos",
+    "Apoio na Higiene do Utente",
+    "Punção Venosa",
+    "Trabalho em Equipa"
+  ],
+  "certifications": []
+}

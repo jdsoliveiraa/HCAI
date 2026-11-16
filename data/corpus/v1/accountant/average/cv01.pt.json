@@ -1,0 +1,53 @@
+{
+  "headline": "{{Contabilista Certificado|Contabilista Certificada}} (OCC) | Contabilidade Empresarial e Cumprimento Fiscal",
+  "summary": "{{Contabilista Certificado|Contabilista Certificada}} {{inscrito|inscrita}} na Ordem {{dos Contabilistas Certificados|dos Contabilistas Certificados}} (OCC) com mais de 4 anos de experiência profissional em contabilidade empresarial e cumprimento fiscal nos setores industrial e comercial. Sólidos conhecimentos no Sistema de Normalização Contabilística (SNC), preparação de demonstrações financeiras e submissão de declarações fiscais periódicas (IVA, IRC, IRS e IES). {{Utilizador|Utilizadora}} experiente do ERP Primavera, com uma abordagem metódica ao fecho mensal de contas e reconciliação de contas.",
+  "experience": [
+    {
+      "title": "{{Contabilista Certificado|Contabilista Certificada}}",
+      "employer": "Têxteis Vale do Ave, Lda.",
+      "location": "Famalicão, Portugal",
+      "start": "2022-03",
+      "end": "Presente",
+      "bullets": [
+        "Execução do ciclo completo de contabilidade geral em conformidade com o Sistema de Normalização Contabilística (SNC) para uma empresa industrial transformadora com 6M€ de volume de negócios anual.",
+        "Preparação e submissão de todas as obrigações fiscais legais, incluindo declarações mensais de IVA, Modelo 22 (IRC), IES e envio mensal de DMR/DRI.",
+        "Gestão de lançamentos contabilísticos diários, registo de ativos fixos tangíveis e operações de fecho mensal utilizando o ERP Primavera.",
+        "Coordenação da transição para o arquivo digital de documentos no Primavera, reduzindo o tempo de processamento de faturas em aproximadamente 15%.",
+        "Articulação com {{Revisores Oficiais de Contas|Revisores Oficiais de Contas}} (ROC) externos durante as auditorias financeiras anuais e preparação das demonstrações financeiras anuais."
+      ]
+    },
+    {
+      "title": "Contabilista Júnior",
+      "employer": "Metalúrgica do Tâmega, S.A.",
+      "location": "Penafiel, Portugal",
+      "start": "2019-10",
+      "end": "2022-02",
+      "bullets": [
+        "Processamento e classificação de contas a pagar, contas a receber e lançamentos no razão geral no ERP Primavera.",
+        "Realização de reconciliações bancárias mensais em 5 contas empresariais e monitorização de saldos de fornecedores.",
+        "Apoio {{ao Contabilista Certificado Sénior|ao Contabilista Certificado Sénior}} no cálculo de estimativas de imposto, impostos diferidos e preparação de declarações periódicas de IVA.",
+        "Validação e exportação mensal de ficheiros SAF-T (PT) de faturação e contabilidade para o Portal das Finanças."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Contabilidade e Administração",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Primavera ERP",
+    "Fiscalidade Empresarial (IRC, IVA, IES)",
+    "Fecho Mensal de Contas e Reporte",
+    "Reconciliações de Contas e Bancárias",
+    "Conformidade SAF-T (PT)",
+    "Gestão de Ativos Fixos",
+    "Microsoft Excel"
+  ],
+  "certifications": [
+    "Membro efetivo da Ordem {{dos Contabilistas Certificados|dos Contabilistas Certificados}} (OCC)"
+  ]
+}

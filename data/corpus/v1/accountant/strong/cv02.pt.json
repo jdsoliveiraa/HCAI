@@ -1,0 +1,77 @@
+{
+  "headline": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}} (OCC) | Consultoria Fiscal Multicliente e Relato Financeiro",
+  "summary": "{{Contabilista Certificado orientado|Contabilista Certificada orientada}} para resultados, {{inscrito|inscrita}} na Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), com mais de 7 anos de experiência progressiva em gabinetes de contabilidade multicliente e consultoria empresarial no norte de Portugal. Competência comprovada no ciclo contabilístico completo ao abrigo do Sistema de Normalização Contabilística (SNC), cumprimento de obrigações fiscais estatutárias (IVA, IRC, IRS, IES) e assessoria a clientes internacionais. Especialista na otimização de fluxos de fecho de contas utilizando o Primavera ERP e PHC, {{detentor|detentora}} de um {{Mestrado|Mestrado}} em Fiscalidade.",
+  "experience": [
+    {
+      "title": "{{Contabilista Certificado Sénior|Contabilista Certificada Sénior}}",
+      "employer": "Azevedo & Valente – Sociedade de Contabilistas, Lda.",
+      "location": "Vila Nova de Gaia, Portugal",
+      "start": "Março de 2021",
+      "end": "Presente",
+      "bullets": [
+        "Atuação como {{Contabilista Certificado|Contabilista Certificada}} principal para uma carteira diversificada de 38 clientes PME e de média dimensão, incluindo 12 sucursais e subsidiárias de capital estrangeiro a operar nos setores da tecnologia, retalho e indústria transformadora.",
+        "Supervisão de todas as declarações fiscais obrigatórias, incluindo declarações periódicas de IVA mensais/trimestrais, Modelo 22 (IRC), IES/DA e Modelo 10, mantendo um registo de 100% de submissões dentro do prazo e zero coimas de incumprimento ao longo de 3 exercícios fiscais.",
+        "Preparação de pacotes de relato de gestão mensais e trimestrais em inglês para partes interessadas internacionais, convertendo demonstrações financeiras em SNC para modelos de relato alinhados com as IFRS.",
+        "Liderança da migração de 25 contas de clientes de sistemas antigos para o Primavera ERP v10, reduzindo os tempos mensais de reconciliação bancária e introdução de dados em 35%.",
+        "Identificação e implementação de oportunidades de eficiência fiscal, incluindo benefícios fiscais à I&D (SIFIDE II) e incentivos ao investimento (RFAI), gerando mais de 180.000 € em poupanças fiscais combinadas para os clientes em 2023.",
+        "Supervisão e mentoria de uma equipa de 3 {{contabilistas juniores|contabilistas juniores}}, realizando revisões técnicas de lançamentos no razão geral e procedimentos de encerramento de exercício."
+      ]
+    },
+    {
+      "title": "{{Contabilista Certificado|Contabilista Certificada}}",
+      "employer": "NorteFisco – Consultoria Fiscal e Contabilidade, S.A.",
+      "location": "Braga, Portugal",
+      "start": "Setembro de 2018",
+      "end": "Fevereiro de 2021",
+      "bullets": [
+        "Gestão integral da contabilidade geral e do cumprimento fiscal para 28 clientes empresariais nacionais utilizando o software PHC Corporate CS.",
+        "Execução de reconciliações de contas mensais, mapas de depreciação e amortização de ativos fixos tangíveis e integração contabilística do processamento salarial para empresas até 80 trabalhadores.",
+        "Preparação das demonstrações financeiras anuais (Balanço, Demonstração dos Resultados, Demonstração dos Fluxos de Caixa e Anexo) em estrita conformidade com as normas contabilísticas portuguesas (SNC).",
+        "Representação de clientes durante 6 inspeções da Autoridade Tributária, resolvendo com sucesso auditorias de reembolso de IVA no valor total de 95.000 € sem correções.",
+        "Automatização de alertas padrão do calendário fiscal e dos fluxos de recolha de documentação de clientes, reduzindo a entrega tardia de documentos por parte dos clientes em 40%."
+      ]
+    },
+    {
+      "title": "{{Contabilista Júnior|Contabilista Júnior}}",
+      "employer": "Ribeiro & Associados – Gabinete de Contabilidade",
+      "location": "Matosinhos, Portugal",
+      "start": "Outubro de 2016",
+      "end": "Agosto de 2018",
+      "bullets": [
+        "Processamento e classificação de documentos contabilísticos diários (faturas, recibos, extratos bancários e relatórios de despesas) em Primavera ERP para mais de 20 clientes de pequenas empresas.",
+        "Apoio aos {{contabilistas seniores|contabilistas seniores}} na preparação de declarações periódicas de IVA, DMR (Declaração Mensal de Remunerações) e contribuições para a Segurança Social.",
+        "Conclusão do estágio profissional exigido pela Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), obtendo a classificação final de exame de 17/20."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "{{Mestrado|Mestrado}} em Fiscalidade",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2019"
+    },
+    {
+      "degree": "Licenciatura em Contabilidade e Administração",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Imposto sobre o Rendimento das Pessoas Coletivas (IRC - Modelo 22)",
+    "Imposto sobre o Valor Acrescentado (IVA) e Intrastat",
+    "Imposto sobre o Rendimento das Pessoas Singulares (IRS) e Retenções na Fonte",
+    "Informação Empresarial Simplificada / Declaração Anual (IES/DA)",
+    "Primavera ERP (Logística, Contabilidade, Relato)",
+    "PHC Corporate CS",
+    "Preparação e Análise de Demonstrações Financeiras",
+    "Relato Financeiro para Clientes Internacionais",
+    "Benefícios e Incentivos Fiscais (RFAI, DLRR, SIFIDE)",
+    "Microsoft Excel Avançado (Power Query, Tabelas Dinâmicas)"
+  ],
+  "certifications": [
+    "Membro Efetivo da Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (OCC), {{admitido|admitida}} em 2018",
+    "{{Certificado|Certificado}} de Formação Avançada em IVA Internacional e Transações Transfronteiriças – Ordem dos {{Contabilistas Certificados|Contabilistas Certificados}} (2022)",
+    "Curso de Especialização em Encerramento de Contas e Consolidação Fiscal – APECA (2020)"
+  ]
+}

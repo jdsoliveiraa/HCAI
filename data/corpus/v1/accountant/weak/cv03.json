@@ -1,0 +1,72 @@
+{
+  "headline": "Certified Accountant (OCC)",
+  "summary": "Accountant with an active registration with the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association) and three years of professional experience in internal company accounting. Experienced in booking routine accounting documents under the Sistema de Normalização Contabilística (SNC), performing bank reconciliations, and submitting standard tax declarations for a single-entity retail business.",
+  "experience": [
+    {
+      "title": "In-House Accountant",
+      "employer": "Comércio Têxtil do Ave, Lda.",
+      "location": "Vila Nova de Famalicão",
+      "start": "2022-09",
+      "end": "Present",
+      "bullets": [
+        "Responsible for the general accounting of the company in accordance with SNC rules.",
+        "Classify and record supplier invoices, sales receipts, and staff expense reports in Sage.",
+        "Perform monthly bank reconciliations and check petty cash balances.",
+        "Prepare and submit periodic VAT declarations and monthly DMR and Social Security statements.",
+        "Support the closing of annual accounts and submission of Modelo 22 and IES."
+      ]
+    },
+    {
+      "title": "Junior Accounting Clerk",
+      "employer": "Cerâmicas do Cávado, S.A.",
+      "location": "Barcelos",
+      "start": "2021-03",
+      "end": "2022-08",
+      "bullets": [
+        "Organized, sorted, and archived physical and digital accounting documentation.",
+        "Entered purchase invoices and credit notes into the internal accounting software.",
+        "Verified supplier account statements and prepared routine payment lists for management.",
+        "Assisted the head accountant with administrative tasks during tax reporting deadlines."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Public Administration and Management (Administração Pública e Gestão)",
+      "institution": "Instituto Politécnico do Cávado e do Ave (IPCA)",
+      "year": "2020"
+    }
+  ],
+  "skills": [
+    "General Accounting (SNC)",
+    "Active membership in the Ordem dos Contabilistas Certificados (OCC)",
+    "VAT, IRS, and IRC Compliance",
+    "Bank Reconciliations",
+    "Sage Accounting Software",
+    "Microsoft Excel",
+    "Portal das Finanças"
+  ],
+  "certifications": [],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Public Administration and Management (Administração Pública e Gestão)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "active registration with the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "three years of professional experience in internal company accounting"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1
+  ],
+  "borderline_note": "Mandatory requirement 1 is borderline because the candidate holds a combined degree in Public Administration and Management (Administração Pública e Gestão) rather than a pure Accounting, Finance, Management, or Economics degree; additionally, for requirement 3, their 3 years of experience includes 1.5 years as a Junior Accounting Clerk focused mostly on basic data entry rather than full general accounting."
+}

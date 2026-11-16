@@ -1,0 +1,74 @@
+{
+  "headline": "{{Engenheiro|Engenheira}} de Software Sénior Backend & Full-Stack | Python, Java, Microsserviços Cloud-Native",
+  "summary": "{{Engenheiro|Engenheira}} de Software {{orientado|orientada}} para resultados, com mais de 5 anos de experiência profissional no desenho, desenvolvimento e escalabilidade de aplicações web backend e full-stack. Experiência comprovada em ambientes de produção utilizando Python, Java e PostgreSQL, a par de infraestruturas cloud modernas em Azure e AWS com Docker e Kubernetes. Histórico sólido na otimização de microsserviços de elevado débito, implementação de pipelines de CI/CD automatizadas e entrega de soluções empresariais complexas em equipas Agile/Scrum.",
+  "experience": [
+    {
+      "title": "{{Engenheiro|Engenheira}} de Software Sénior",
+      "employer": "Lusitano Cloud Systems",
+      "location": "Coimbra / Lisboa (Híbrido)",
+      "start": "2022-03",
+      "end": "Presente",
+      "bullets": [
+        "Concebeu a arquitetura e assegurou a manutenção de 15+ microsserviços backend cloud-native em Python (FastAPI) e Java (Spring Boot) suportados por bases de dados PostgreSQL e MySQL, servindo mais de 500.000 utilizadores ativos diários.",
+        "Liderou a migração de cargas de trabalho monolíticas legadas para Azure Kubernetes Service (AKS) recorrendo a Docker e Helm, reduzindo os custos de infraestrutura em 28% e melhorando a fiabilidade de implementação.",
+        "Desenvolveu e manteve painéis de administração internos e módulos de analítica voltados para o cliente utilizando React e TypeScript.",
+        "Desenhou e implementou pipelines de CI/CD automatizadas em GitLab CI e GitHub Actions, reduzindo o tempo médio de implementação de versões de 45 minutos para 8 minutos.",
+        "Atuou como responsável {{técnico|técnica}} numa equipa Agile/Scrum de 6 {{engenheiros|engenheiros}}, conduzindo revisões de código, planeamento de sprints e mentoria de 3 {{programadores|programadores}} juniores."
+      ]
+    },
+    {
+      "title": "{{Engenheiro|Engenheira}} de Software Full-Stack",
+      "employer": "Mondego Digital Ware",
+      "location": "Coimbra, Portugal",
+      "start": "2019-09",
+      "end": "2022-02",
+      "bullets": [
+        "Desenvolveu e manteve APIs RESTful centrais em Python (Django) e Java, gerindo esquemas de dados relacionais de grande escala em PostgreSQL com mais de 50 milhões de registos.",
+        "Otimizou consultas SQL complexas e implementou camadas de cache em Redis, diminuindo a latência média de resposta p95 das APIs em 42%.",
+        "Implementou interfaces frontend responsivas utilizando React e TypeScript em estreita colaboração com designers de UX/UI.",
+        "Contentorizou aplicações com Docker e implementou ambientes de testes e produção na AWS (ECS e EKS) num ciclo de lançamentos Scrum quinzenal."
+      ]
+    },
+    {
+      "title": "{{Programador|Programadora}} Backend Júnior",
+      "employer": "Bairrada Tech Lab",
+      "location": "Aveiro, Portugal",
+      "start": "2018-09",
+      "end": "2019-08",
+      "bullets": [
+        "Contribuiu para o desenvolvimento de funcionalidades backend em Java e MySQL para software de logística B2B.",
+        "Escreveu testes unitários e de integração utilizando JUnit e Pytest, aumentando a cobertura global de testes de backend de 55% para 84%.",
+        "Participou nas reuniões diárias de acompanhamento Agile, no refinamento de backlog e na configuração de builds automatizadas com Jenkins."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "{{Mestrado|Mestrado}} em Engenharia Informática (especialização em Engenharia de Software e Sistemas Distribuídos)",
+      "institution": "Universidade de Coimbra (FCTUC)",
+      "year": "2018"
+    },
+    {
+      "degree": "Licenciatura em Engenharia Informática",
+      "institution": "Universidade de Coimbra (FCTUC)",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Python (FastAPI, Django)",
+    "Java (Spring Boot)",
+    "PostgreSQL & MySQL",
+    "Docker & Kubernetes",
+    "Microsoft Azure (AKS) & AWS (EKS, RDS)",
+    "React & TypeScript",
+    "CI/CD (GitLab CI, GitHub Actions, Jenkins)",
+    "Arquitetura de Microsserviços & APIs REST",
+    "Metodologias Agile / Scrum",
+    "Redis & RabbitMQ"
+  ],
+  "certifications": [
+    "Microsoft Certified: Azure Developer Associate (AZ-204)",
+    "Certified Kubernetes Application Developer (CKAD) - Cloud Native Computing Foundation",
+    "Professional Scrum Developer I (PSD I) - Scrum.org"
+  ]
+}

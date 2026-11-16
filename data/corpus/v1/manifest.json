@@ -1,0 +1,455 @@
+{
+  "version": "v1",
+  "generator": {
+    "model": "gemini-4-argon",
+    "temperature": 0.7,
+    "borderline": {
+      "average": 1,
+      "weak": 1
+    }
+  },
+  "seed": 42,
+  "quality_levels": [
+    "strong",
+    "average",
+    "weak"
+  ],
+  "base_cvs_per_role": 3,
+  "job_ads": {
+    "software_engineer": {
+      "role": "software_engineer",
+      "title": "Software Engineer",
+      "location": "Lisbon, Portugal (Hybrid)",
+      "summary": "TejoTech Solutions, a fast-growing technology company based in Lisbon, is seeking a skilled Software Engineer to join our core platform team. You will be responsible for designing, building, and maintaining scalable cloud-native microservices for our European enterprise clients.",
+      "mandatory": [
+        "Licenciatura (bachelor's degree) in Computer Science, Software Engineering (Engenharia Informática), or a closely related field",
+        "At least 3 years of professional work experience as a backend or full-stack Software Engineer",
+        "Minimum of 2 years of hands-on production experience with Python or Java and relational databases (PostgreSQL or MySQL)",
+        "Full professional fluency in both Portuguese and English (minimum C1 level)"
+      ],
+      "desirable": [
+        "Mestrado (master's degree) in Software Engineering or Distributed Systems",
+        "Experience deploying and managing applications on AWS or Azure using Docker and Kubernetes",
+        "Familiarity with frontend development frameworks such as React or TypeScript",
+        "Prior experience working in Agile/Scrum environments and setting up CI/CD pipelines"
+      ],
+      "language": "en"
+    },
+    "nurse": {
+      "role": "nurse",
+      "title": "Registered Nurse (Enfermeiro/a) - Inpatient Care",
+      "location": "Lisbon, Portugal",
+      "summary": "Hospital Lusíadas Alvalade (fictitious unit) is seeking a dedicated Registered Nurse to join our Medical-Surgical Inpatient Department. The successful candidate will provide high-quality, patient-centred nursing care, administer medication, monitor vital signs, and collaborate closely with a multidisciplinary healthcare team in a fast-paced hospital environment.",
+      "mandatory": [
+        "Bachelor's degree in Nursing (Licenciatura em Enfermagem) recognized in Portugal.",
+        "Valid and active professional license issued by the Portuguese Order of Nurses (Cédula Profissional da Ordem dos Enfermeiros).",
+        "Minimum of 2 years of clinical experience in a hospital inpatient or acute care setting.",
+        "Fluent proficiency in Portuguese (minimum C1 level, both spoken and written)."
+      ],
+      "desirable": [
+        "Valid Intermediate Life Support (Suporte Intermédio de Vida - SIV) or Advanced Life Support (SAV) certification.",
+        "Postgraduate specialization in Medical-Surgical Nursing (Pós-Graduação ou Especialidade em Enfermagem Médico-Cirúrgica).",
+        "Working knowledge of English or Spanish (B1 level or higher) to assist international patients.",
+        "Previous experience using hospital electronic health record systems such as SClínico or Glintt."
+      ],
+      "language": "en"
+    },
+    "accountant": {
+      "role": "accountant",
+      "title": "Certified Accountant",
+      "location": "Porto, Portugal",
+      "summary": "Luz & Monteiro Consultores, a well-established accounting and tax advisory firm based in Porto, is seeking a qualified Certified Accountant to join our corporate services department. The selected candidate will manage a portfolio of national and international clients, ensuring full compliance with Portuguese accounting standards (SNC) and tax obligations, including periodic VAT, IRC, and IRS declarations, as well as preparing financial statements and monthly reporting.",
+      "mandatory": [
+        "Licenciatura (bachelor's degree) in Accounting, Finance, Management, or Economics.",
+        "Active registration with the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association).",
+        "Minimum of 3 years of professional experience in a general accounting or tax compliance role.",
+        "Fluent proficiency in Portuguese (minimum C1 level, spoken and written)."
+      ],
+      "desirable": [
+        "Working proficiency in English (minimum B2 level) for communication with international clients.",
+        "Hands-on experience with Primavera ERP or PHC accounting software.",
+        "Previous work experience in a multi-client accounting firm or consultancy.",
+        "Postgraduate qualification or Mestrado (master's degree) in Taxation."
+      ],
+      "language": "en"
+    }
+  },
+  "base_cvs": [
+    {
+      "id": "software_engineer/strong/cv01",
+      "role": "software_engineer",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/strong/cv02",
+      "role": "software_engineer",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/strong/cv03",
+      "role": "software_engineer",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/average/cv01",
+      "role": "software_engineer",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/average/cv02",
+      "role": "software_engineer",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/average/cv03",
+      "role": "software_engineer",
+      "quality": "average",
+      "borderline": true,
+      "borderline_note": "Mandatory requirements 1 and 3 are both borderline: the degree is in Engenharia Eletrotécnica e de Computadores (a closely related degree rather than Computer Science or Engenharia Informática), and hands-on production experience with Python and PostgreSQL is at the 2-year mark (May 2024 to Apr 2026), as the earlier 2022-2024 role used Node.js and MongoDB.",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "software_engineer/weak/cv01",
+      "role": "software_engineer",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": []
+    },
+    {
+      "id": "software_engineer/weak/cv02",
+      "role": "software_engineer",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3
+      ]
+    },
+    {
+      "id": "software_engineer/weak/cv03",
+      "role": "software_engineer",
+      "quality": "weak",
+      "borderline": true,
+      "borderline_note": "Borderline on requirements 1, 2, and 3: holds a closely related degree (Mathematics and Computer Science rather than pure Computer Science or Software Engineering), has exactly 3.0 years of total software engineering experience (April 2022 to March 2025), and has exactly 2.0 years of production experience with Python and MySQL (April 2023 to March 2025, having used C# and SQL Server in the prior role).",
+      "desirable_met": [
+        3
+      ]
+    },
+    {
+      "id": "nurse/strong/cv01",
+      "role": "nurse",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/strong/cv02",
+      "role": "nurse",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/strong/cv03",
+      "role": "nurse",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/average/cv01",
+      "role": "nurse",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/average/cv02",
+      "role": "nurse",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/average/cv03",
+      "role": "nurse",
+      "quality": "average",
+      "borderline": true,
+      "borderline_note": "Mandatory requirement 3 (Minimum of 2 years of clinical experience in a hospital inpatient or acute care setting) is borderline: although the candidate has over 3.5 years of total nursing experience, their hospital inpatient role lasted exactly 24 months (May 2021 to May 2023), while their most recent experience since June 2023 is in an outpatient clinic rather than an inpatient or acute care setting.",
+      "desirable_met": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "nurse/weak/cv01",
+      "role": "nurse",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3
+      ]
+    },
+    {
+      "id": "nurse/weak/cv02",
+      "role": "nurse",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        3
+      ]
+    },
+    {
+      "id": "nurse/weak/cv03",
+      "role": "nurse",
+      "quality": "weak",
+      "borderline": true,
+      "borderline_note": "Borderline on mandatory requirement 3 (minimum of 2 years of clinical experience in a hospital inpatient or acute care setting): the candidate worked in a hospital inpatient ward from March 2022 to March 2024, meeting the 2-year minimum on the dot, while their current role since April 2024 is in a routine outpatient clinic rather than an inpatient or acute care environment.",
+      "desirable_met": [
+        3
+      ]
+    },
+    {
+      "id": "accountant/strong/cv01",
+      "role": "accountant",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "accountant/strong/cv02",
+      "role": "accountant",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "accountant/strong/cv03",
+      "role": "accountant",
+      "quality": "strong",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "accountant/average/cv01",
+      "role": "accountant",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "accountant/average/cv02",
+      "role": "accountant",
+      "quality": "average",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "accountant/average/cv03",
+      "role": "accountant",
+      "quality": "average",
+      "borderline": true,
+      "borderline_note": "Mandatory requirement 1 is borderline: the candidate holds a Licenciatura in Public Administration and Management (Administração Pública e Gestão) rather than a standard Management, Accounting, Finance, or Economics degree, though it includes management coursework and allowed OCC entry. Furthermore, while the candidate has 4 years of solid in-house accounting experience and PHC skills, they lack multi-client consultancy experience (Desirable 3) and a postgraduate degree in Taxation (Desirable 4).",
+      "desirable_met": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "accountant/weak/cv01",
+      "role": "accountant",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1
+      ]
+    },
+    {
+      "id": "accountant/weak/cv02",
+      "role": "accountant",
+      "quality": "weak",
+      "borderline": false,
+      "borderline_note": "",
+      "desirable_met": [
+        1
+      ]
+    },
+    {
+      "id": "accountant/weak/cv03",
+      "role": "accountant",
+      "quality": "weak",
+      "borderline": true,
+      "borderline_note": "Mandatory requirement 1 is borderline because the candidate holds a combined degree in Public Administration and Management (Administração Pública e Gestão) rather than a pure Accounting, Finance, Management, or Economics degree; additionally, for requirement 3, their 3 years of experience includes 1.5 years as a Junior Accounting Clerk focused mostly on basic data entry rather than full general accounting.",
+      "desirable_met": [
+        1
+      ]
+    }
+  ],
+  "languages": [
+    "en",
+    "pt"
+  ],
+  "translated_job_ads": {
+    "pt": {
+      "software_engineer": {
+        "role": "software_engineer",
+        "title": "Engenheiro de Software (Software Engineer)",
+        "location": "Lisboa, Portugal (Híbrido)",
+        "summary": "A TejoTech Solutions, uma empresa de tecnologia em rápido crescimento sediada em Lisboa, procura um Engenheiro de Software qualificado para integrar a nossa equipa da plataforma principal. Será responsável por desenhar, construir e manter microsserviços nativos na cloud escaláveis para os nossos clientes empresariais europeus.",
+        "mandatory": [
+          "Licenciatura em Ciência de Computadores, Engenharia de Software (Engenharia Informática) ou numa área estritamente relacionada",
+          "Pelo menos 3 anos de experiência profissional como Engenheiro de Software backend ou full-stack",
+          "Mínimo de 2 anos de experiência prática em ambiente de produção com Python ou Java e bases de dados relacionais (PostgreSQL ou MySQL)",
+          "Fluência profissional completa em Português e Inglês (nível mínimo C1)"
+        ],
+        "desirable": [
+          "Mestrado em Engenharia de Software ou Sistemas Distribuídos",
+          "Experiência na implementação e gestão de aplicações em AWS ou Azure utilizando Docker e Kubernetes",
+          "Familiaridade com frameworks de desenvolvimento frontend como React ou TypeScript",
+          "Experiência prévia a trabalhar em ambientes Agile/Scrum e na configuração de pipelines de CI/CD"
+        ],
+        "language": "pt"
+      },
+      "nurse": {
+        "role": "nurse",
+        "title": "Enfermeiro/a - Internamento",
+        "location": "Lisboa, Portugal",
+        "summary": "O Hospital Lusíadas Alvalade (unidade fictícia) procura um/a Enfermeiro/a dedicado/a para integrar o nosso Serviço de Internamento Médico-Cirúrgico. O/A candidato/a selecionado/a irá prestar cuidados de enfermagem de elevada qualidade e centrados no utente, administrar terapêutica, monitorizar sinais vitais e colaborar estreitamente com uma equipa multidisciplinar de saúde num ambiente hospitalar dinâmico.",
+        "mandatory": [
+          "Licenciatura em Enfermagem reconhecida em Portugal.",
+          "Cédula Profissional válida e ativa emitida pela Ordem dos Enfermeiros de Portugal.",
+          "Mínimo de 2 anos de experiência clínica em contexto de internamento hospitalar ou cuidados agudos.",
+          "Domínio fluente da língua portuguesa (nível mínimo C1, falado e escrito)."
+        ],
+        "desirable": [
+          "Certificação válida em Suporte Intermédio de Vida (SIV) ou Suporte Avançado de Vida (SAV).",
+          "Pós-Graduação ou Especialidade em Enfermagem Médico-Cirúrgica.",
+          "Conhecimentos práticos de Inglês ou Espanhol (nível B1 ou superior) para acompanhar utentes internacionais.",
+          "Experiência prévia na utilização de sistemas informáticos de registo clínico hospitalar, tais como SClínico ou Glintt."
+        ],
+        "language": "pt"
+      },
+      "accountant": {
+        "role": "accountant",
+        "title": "Contabilista Certificado",
+        "location": "Porto, Portugal",
+        "summary": "A Luz & Monteiro Consultores, uma conceituada empresa de contabilidade e consultoria fiscal sediada no Porto, procura um Contabilista Certificado qualificado para integrar o nosso departamento de serviços empresariais. O candidato selecionado irá gerir uma carteira de clientes nacionais e internacionais, assegurando o total cumprimento das normas contabilísticas portuguesas (SNC) e das obrigações fiscais, incluindo as declarações periódicas de IVA, IRC e IRS, bem como a preparação de demonstrações financeiras e relatórios mensais.",
+        "mandatory": [
+          "Licenciatura em Contabilidade, Finanças, Gestão ou Economia.",
+          "Inscrição ativa na Ordem dos Contabilistas Certificados (OCC).",
+          "Mínimo de 3 anos de experiência profissional em funções de contabilidade geral ou cumprimento de obrigações fiscais.",
+          "Fluência na língua portuguesa (nível mínimo C1, falado e escrito)."
+        ],
+        "desirable": [
+          "Proficiência profissional em Inglês (nível mínimo B2) para comunicação com clientes internacionais.",
+          "Experiência prática com o software de contabilidade Primavera ERP ou PHC.",
+          "Experiência profissional anterior num gabinete de contabilidade multicliente ou consultora.",
+          "Pós-graduação ou Mestrado em Fiscalidade."
+        ],
+        "language": "pt"
+      }
+    }
+  },
+  "translated_by": {
+    "pt": {
+      "model": "gemini-4-argon",
+      "temperature": 0.0,
+      "borderline": {}
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "headline": "{{Engenheiro de Software Backend|Engenheira de Software Backend}}",
+  "summary": "{{Engenheiro de Software Backend|Engenheira de Software Backend}} com mais de três anos de experiência no desenvolvimento e manutenção de aplicações web e ferramentas internas. Com experiência em desenvolvimento backend em Java e Python, bem como em bases de dados relacionais como PostgreSQL e MySQL. À procura de uma oportunidade para contribuir para sistemas backend numa empresa de tecnologia em Lisboa.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software Backend|Engenheira de Software Backend}}",
+      "employer": "Lusitano Digital Lda.",
+      "location": "Lisboa, Portugal",
+      "start": "Jan 2023",
+      "end": "Presente",
+      "bullets": [
+        "Desenvolvimento e manutenção de módulos backend em Java e Python para portais de clientes em produção e sistemas internos de gestão.",
+        "Escrita de consultas SQL, procedimentos armazenados e atualizações de esquemas para bases de dados PostgreSQL em produção.",
+        "Correção de erros de software reportados pela equipa de suporte e apoio na manutenção de rotina de serviços legados.",
+        "Documentação de endpoints de APIs REST e participação em reuniões semanais de ponto de situação da equipa."
+      ]
+    },
+    {
+      "title": "{{Engenheiro de Software Full-Stack Júnior|Engenheira de Software Full-Stack Júnior}}",
+      "employer": "AlgarveSoft Sistemas",
+      "location": "Faro, Portugal",
+      "start": "Set 2021",
+      "end": "Dez 2022",
+      "bullets": [
+        "Apoio no desenvolvimento de aplicações web utilizando Python no backend e HTML, CSS e jQuery no frontend.",
+        "Manutenção de tabelas e escrita de consultas diárias de extração de dados para bases de dados MySQL em produção.",
+        "Realização de testes manuais a novas funcionalidades de software antes do lançamento para servidores de produção.",
+        "Prestação de suporte {{técnico|técnico}} a utilizadores internos e atualização de ficheiros de configuração do sistema."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura em Engenharia Informática",
+      "institution": "Instituto Politécnico de Setúbal",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Java",
+    "Python",
+    "PostgreSQL",
+    "MySQL",
+    "APIs REST",
+    "Git",
+    "HTML/CSS",
+    "Linux"
+  ],
+  "certifications": []
+}

@@ -1,0 +1,76 @@
+{
+  "headline": "Certified Accountant (OCC) | Corporate Accounting & Tax Compliance",
+  "summary": "Certified Accountant registered with the Ordem dos Contabilistas Certificados (OCC) with over 4 years of professional experience in corporate accounting and tax compliance within the industrial and commercial sectors. Solid background in the Portuguese Accounting Standards System (SNC), preparation of financial statements, and submission of periodic tax declarations (VAT, IRC, IRS, and IES). Experienced user of Primavera ERP with a methodical approach to month-end closing and account reconciliation.",
+  "experience": [
+    {
+      "title": "Certified Accountant",
+      "employer": "Têxteis Vale do Ave, Lda.",
+      "location": "Famalicão, Portugal",
+      "start": "2022-03",
+      "end": "Present",
+      "bullets": [
+        "Execute full-cycle general accounting in compliance with the Portuguese Accounting Standards System (SNC) for an industrial manufacturing company with €6M in annual turnover.",
+        "Prepare and submit all mandatory tax obligations, including monthly VAT declarations, Modelo 22 (IRC), IES, and monthly DMR/DRI filings.",
+        "Manage daily bookkeeping, fixed assets ledger, and month-end closing operations using Primavera ERP.",
+        "Coordinate the transition to digital document archiving in Primavera, reducing invoice processing time by approximately 15%.",
+        "Liaise with external statutory auditors (ROC) during annual financial audits and prepare yearly financial statements."
+      ]
+    },
+    {
+      "title": "Junior Accountant",
+      "employer": "Metalúrgica do Tâmega, S.A.",
+      "location": "Penafiel, Portugal",
+      "start": "2019-10",
+      "end": "2022-02",
+      "bullets": [
+        "Processed and classified accounts payable, accounts receivable, and general ledger entries in Primavera ERP.",
+        "Performed monthly bank reconciliations across 5 corporate accounts and monitored supplier balances.",
+        "Assisted the Senior Certified Accountant in the calculation of tax estimates, deferred taxes, and preparation of periodic VAT returns.",
+        "Validated and exported monthly SAF-T (PT) billing and accounting files to the Portal das Finanças."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Accounting and Administration",
+      "institution": "Instituto Superior de Contabilidade e Administração do Porto (ISCAP)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Sistema de Normalização Contabilística (SNC)",
+    "Primavera ERP",
+    "Corporate Taxation (IRC, VAT, IES)",
+    "Month-End Closing & Reporting",
+    "Account & Bank Reconciliations",
+    "SAF-T (PT) Compliance",
+    "Fixed Assets Management",
+    "Microsoft Excel"
+  ],
+  "certifications": [
+    "Active member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Accounting and Administration"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Active member of the Ordem dos Contabilistas Certificados (OCC - Portuguese Chartered Accountants Association)"
+    },
+    {
+      "requirement": 3,
+      "evidence": "over 4 years of professional experience in corporate accounting and tax compliance"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2
+  ],
+  "borderline_note": ""
+}

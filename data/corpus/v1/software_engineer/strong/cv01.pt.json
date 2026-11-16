@@ -1,0 +1,71 @@
+{
+  "headline": "{{Engenheiro de Software Sénior|Engenheira de Software Sénior}} Backend & Full-Stack | Python, Java, Microsserviços Cloud-Native",
+  "summary": "{{Engenheiro de Software orientado|Engenheira de Software orientada}} para resultados com mais de 5 anos de experiência profissional a desenhar, construir e escalar sistemas empresariais backend e full-stack. Detém uma {{Licenciatura|Licenciatura}} e um {{Mestrado|Mestrado}} em Engenharia Informática, com sólida experiência em produção em Python, Java, PostgreSQL e infraestrutura cloud-native na AWS utilizando Docker e Kubernetes. Percurso comprovado na melhoria do débito de sistemas, liderança de equipas de entrega Agile e automatização de fluxos de trabalho CI/CD.",
+  "experience": [
+    {
+      "title": "{{Engenheiro de Software Backend Sénior|Engenheira de Software Backend Sénior}}",
+      "employer": "LusitanoCloud Systems",
+      "location": "Lisboa, Portugal",
+      "start": "Março de 2022",
+      "end": "Presente",
+      "bullets": [
+        "Arquitetou e manteve mais de 15 microsserviços cloud-native em Python (FastAPI) e Java (Spring Boot) suportados por PostgreSQL, servindo mais de 400.000 utilizadores empresariais ativos diários.",
+        "Liderou a migração de sistemas monolíticos legados para AWS EKS utilizando Docker e Kubernetes, reduzindo os custos operacionais de infraestrutura em 28% e melhorando a disponibilidade do sistema para 99,95%.",
+        "Otimizou consultas complexas em PostgreSQL, estratégias de indexação e pooling de ligações, reduzindo os tempos de resposta da API no percentil 95 de 620ms para 180ms.",
+        "Desenhou e manteve pipelines de CI/CD automatizadas utilizando GitHub Actions e ArgoCD numa equipa Agile/Scrum, diminuindo o tempo de entrega de implementações em 65%."
+      ]
+    },
+    {
+      "title": "{{Engenheiro de Software Full-Stack|Engenheira de Software Full-Stack}}",
+      "employer": "Alfacinha Digital Labs",
+      "location": "Lisboa, Portugal",
+      "start": "Setembro de 2019",
+      "end": "Fevereiro de 2022",
+      "bullets": [
+        "Desenvolveu APIs RESTful principais de backend em Python (Django) e modelos de dados relacionais em PostgreSQL e MySQL para plataformas de relato financeiro B2B.",
+        "Construiu painéis interativos de cliente utilizando React e TypeScript, reduzindo o tempo de integração de clientes em 35% em mais de 40 contas empresariais.",
+        "Implementou baterias de testes unitários e de integração automatizados em pipelines GitLab CI/CD, aumentando a cobertura de código de backend de 52% para 88%.",
+        "Atuou como {{facilitador|facilitadora}} Scrum durante ciclos de sprint de duas semanas, colaborando de perto com product owners e equipas de garantia de qualidade (QA) para entregar funcionalidades do roadmap dentro do prazo."
+      ]
+    },
+    {
+      "title": "{{Engenheiro de Software Júnior|Engenheira de Software Júnior}}",
+      "employer": "TagusSoft Consultoria",
+      "location": "Oeiras, Portugal",
+      "start": "Setembro de 2018",
+      "end": "Agosto de 2019",
+      "bullets": [
+        "Contribuiu para o desenvolvimento de serviços de backend em Java 11 e MySQL para clientes nacionais de logística, resolvendo mais de 90 defeitos em produção durante o primeiro ano.",
+        "Contentorizou ambientes de desenvolvimento local com Docker, reduzindo o tempo de configuração para novos elementos da equipa de desenvolvimento de dois dias para menos de duas horas."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "{{Mestrado|Mestrado}} em Engenharia Informática e de Computadores (especialização em Sistemas Distribuídos e Engenharia de Software)",
+      "institution": "Instituto Superior {{Técnico|Técnico}} - Universidade de Lisboa",
+      "year": "2018"
+    },
+    {
+      "degree": "{{Licenciatura|Licenciatura}} em Engenharia Informática e de Computadores",
+      "institution": "Instituto Superior {{Técnico|Técnico}} - Universidade de Lisboa",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Python (FastAPI, Django, Flask)",
+    "Java (Spring Boot, Hibernate)",
+    "PostgreSQL & MySQL",
+    "Docker & Kubernetes (AWS EKS)",
+    "Amazon Web Services (EC2, RDS, S3, Lambda)",
+    "React & TypeScript",
+    "CI/CD (GitHub Actions, GitLab CI, ArgoCD)",
+    "Arquitetura de Microsserviços & APIs REST/gRPC",
+    "Metodologias Agile / Scrum"
+  ],
+  "certifications": [
+    "AWS Certified Solutions Architect – Associate (2023)",
+    "Certified Kubernetes Application Developer (CKAD) – Cloud Native Computing Foundation (2022)",
+    "Professional Scrum Developer I (PSD I) – Scrum.org (2020)"
+  ]
+}

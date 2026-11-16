@@ -1,0 +1,87 @@
+{
+  "headline": "Senior Software Engineer | Python, Java, Cloud-Native Microservices & Distributed Systems",
+  "summary": "Results-oriented Software Engineer with over 5 years of professional experience designing, developing, and scaling backend and full-stack applications for fintech and enterprise platforms. Proven expertise in building production microservices using Python and Java backed by PostgreSQL and MySQL databases. Strong track record in cloud infrastructure orchestration on AWS using Docker and Kubernetes, alongside building modern web interfaces in React and TypeScript.",
+  "experience": [
+    {
+      "title": "Senior Backend Software Engineer",
+      "employer": "Alvalade FinTech Labs",
+      "location": "Lisbon, Portugal",
+      "start": "2022-03",
+      "end": "Present",
+      "bullets": [
+        "Architected and maintained 15+ high-throughput backend microservices in Python (FastAPI) and Java (Spring Boot), processing over 1.2 million daily financial transactions.",
+        "Optimized complex PostgreSQL queries and implemented connection pooling and partitioning, reducing average API response latency by 42%.",
+        "Orchestrated containerized workloads on AWS (EKS, RDS, S3) using Docker and Kubernetes, achieving 99.98% service availability across European production environments.",
+        "Designed and maintained automated CI/CD pipelines with GitHub Actions and ArgoCD within an Agile/Scrum team, cutting deployment lead times from 2 hours to 15 minutes.",
+        "Mentored 4 junior software engineers through code reviews, pair programming, and architectural design sessions."
+      ]
+    },
+    {
+      "title": "Full-Stack Software Engineer",
+      "employer": "Estrela Digital Systems",
+      "location": "Coimbra, Portugal",
+      "start": "2019-09",
+      "end": "2022-02",
+      "bullets": [
+        "Developed core backend services in Java 11 and Python, managing persistent client data across MySQL and PostgreSQL relational databases.",
+        "Built responsive client-facing administrative dashboards using React and TypeScript, reducing customer support ticket volume by 28%.",
+        "Migrated legacy monolithic modules to Dockerized microservices deployed on Azure Kubernetes Service (AKS) with automated CI/CD workflows in GitLab CI.",
+        "Collaborated in cross-functional Scrum sprints, leading backlog refinement and increasing sprint delivery predictability by 35%."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Mestrado (master's degree) in Engenharia Informática (Software Engineering and Distributed Systems)",
+      "institution": "Faculdade de Ciências e Tecnologia da Universidade de Coimbra (FCTUC)",
+      "year": "2019"
+    },
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)",
+      "institution": "Faculdade de Ciências e Tecnologia da Universidade de Coimbra (FCTUC)",
+      "year": "2017"
+    }
+  ],
+  "skills": [
+    "Python (FastAPI, Django)",
+    "Java (Spring Boot, Hibernate)",
+    "PostgreSQL & MySQL",
+    "Docker & Kubernetes",
+    "AWS (EKS, EC2, RDS, S3) & Azure (AKS)",
+    "React & TypeScript",
+    "CI/CD (GitHub Actions, GitLab CI, ArgoCD)",
+    "Microservices Architecture & REST/gRPC APIs",
+    "Agile & Scrum Methodologies",
+    "Automated Testing (PyTest, JUnit)"
+  ],
+  "certifications": [
+    "AWS Certified Solutions Architect – Associate (2023)",
+    "Certified Kubernetes Application Developer – CKAD (2022)",
+    "Professional Scrum Developer I – PSD I (2021)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Software Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Results-oriented Software Engineer with over 5 years of professional experience designing, developing, and scaling backend and full-stack applications"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Developed core backend services in Java 11 and Python, managing persistent client data across MySQL and PostgreSQL relational databases."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

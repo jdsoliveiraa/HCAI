@@ -1,0 +1,74 @@
+{
+  "headline": "Full-Stack Software Engineer",
+  "summary": "Software Engineer with three years of professional experience in backend and full-stack web application development. Background in building enterprise modules using Python, C#, and MySQL. Academic degree in Mathematics and Computer Science.",
+  "experience": [
+    {
+      "title": "Backend Software Engineer",
+      "employer": "Valongo Digital Lda.",
+      "location": "Braga, Portugal",
+      "start": "April 2023",
+      "end": "March 2025",
+      "bullets": [
+        "Responsible for developing and maintaining backend web applications using Python and Flask in a production environment.",
+        "Created and updated relational database schemas and wrote SQL queries for MySQL databases.",
+        "Performed bug fixes and general maintenance tasks on existing production services.",
+        "Participated in regular code reviews and team planning sessions."
+      ]
+    },
+    {
+      "title": "Junior Full-Stack Software Engineer",
+      "employer": "Soluciones Informáticas do Cávado",
+      "location": "Barcelos, Portugal",
+      "start": "April 2022",
+      "end": "March 2023",
+      "bullets": [
+        "Assisted in the development of internal management portals using C#, .NET, and SQL Server.",
+        "Built user interface views using React and standard CSS stylesheets.",
+        "Wrote technical documentation for software modules and user manuals.",
+        "Handled daily support tickets and resolved routine application errors reported by users."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Matemática e Ciências da Computação (Mathematics and Computer Science)",
+      "institution": "Universidade do Minho",
+      "year": "2021"
+    }
+  ],
+  "skills": [
+    "Python",
+    "Flask",
+    "MySQL",
+    "C#",
+    ".NET",
+    "SQL Server",
+    "React",
+    "HTML/CSS",
+    "Git",
+    "REST APIs"
+  ],
+  "certifications": [],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Matemática e Ciências da Computação (Mathematics and Computer Science)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Software Engineer with three years of professional experience in backend and full-stack web application development."
+    },
+    {
+      "requirement": 3,
+      "evidence": "Responsible for developing and maintaining backend web applications using Python and Flask in a production environment."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3
+  ],
+  "borderline_note": "Borderline on requirements 1, 2, and 3: holds a closely related degree (Mathematics and Computer Science rather than pure Computer Science or Software Engineering), has exactly 3.0 years of total software engineering experience (April 2022 to March 2025), and has exactly 2.0 years of production experience with Python and MySQL (April 2023 to March 2025, having used C# and SQL Server in the prior role)."
+}

@@ -1,0 +1,78 @@
+{
+  "headline": "Full-Stack Software Engineer | Python, React, Node.js",
+  "summary": "Software Engineer with nearly 4 years of professional experience developing web applications and backend services for retail and financial clients. Holds a Licenciatura in Engenharia Eletrotécnica e de Computadores with a focus on software systems. Experienced in Python, PostgreSQL, and React within Agile Scrum teams.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "employer": "IberiaSoft Sistemas",
+      "location": "Coimbra, Portugal",
+      "start": "May 2024",
+      "end": "Apr 2026",
+      "bullets": [
+        "Developed and maintained backend microservices in Python (FastAPI and Django) connected to PostgreSQL databases for an order-management platform.",
+        "Built customer-facing dashboard components using React and TypeScript, reducing page load times by 18%.",
+        "Configured automated testing and CI/CD deployment workflows using GitLab CI.",
+        "Participated in two-week Agile Scrum sprints, daily stand-ups, and peer code reviews."
+      ]
+    },
+    {
+      "title": "Junior Full-Stack Developer",
+      "employer": "Mondego Digital Lda.",
+      "location": "Coimbra, Portugal",
+      "start": "Jun 2022",
+      "end": "Apr 2024",
+      "bullets": [
+        "Implemented RESTful APIs using Node.js (Express) and MongoDB for internal fleet-tracking web applications.",
+        "Developed responsive frontend interfaces in React and maintained legacy internal tools.",
+        "Assisted in setting up automated build pipelines in GitHub Actions across 4 repository projects."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Eletrotécnica e de Computadores (Electrical and Computer Engineering)",
+      "institution": "Faculdade de Ciências e Tecnologia da Universidade de Coimbra (FCTUC)",
+      "year": "2022"
+    }
+  ],
+  "skills": [
+    "Python",
+    "FastAPI",
+    "Django",
+    "PostgreSQL",
+    "React",
+    "TypeScript",
+    "Node.js",
+    "MongoDB",
+    "GitLab CI",
+    "GitHub Actions",
+    "Agile / Scrum",
+    "REST APIs"
+  ],
+  "certifications": [
+    "Professional Scrum Developer I (PSD I)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Eletrotécnica e de Computadores (Electrical and Computer Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Software Engineer with nearly 4 years of professional experience developing web applications and backend services"
+    },
+    {
+      "requirement": 3,
+      "evidence": "Developed and maintained backend microservices in Python (FastAPI and Django) connected to PostgreSQL databases"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3,
+    4
+  ],
+  "borderline_note": "Mandatory requirements 1 and 3 are both borderline: the degree is in Engenharia Eletrotécnica e de Computadores (a closely related degree rather than Computer Science or Engenharia Informática), and hands-on production experience with Python and PostgreSQL is at the 2-year mark (May 2024 to Apr 2026), as the earlier 2022-2024 role used Node.js and MongoDB."
+}

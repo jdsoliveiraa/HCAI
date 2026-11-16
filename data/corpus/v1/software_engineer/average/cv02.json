@@ -1,0 +1,77 @@
+{
+  "headline": "Full-Stack Software Engineer (Java / React)",
+  "summary": "Dependable Full-Stack Software Engineer with 4 years of professional experience developing backend services and client-facing web applications. Solid background in Java (Spring Boot), MySQL, andPostgreSQL, paired with practical frontend expertise in React and TypeScript. Experienced in delivering clean, tested code within Agile Scrum teams and maintaining automated CI/CD workflows.",
+  "experience": [
+    {
+      "title": "Full-Stack Software Engineer",
+      "employer": "Olisipo Digital Systems",
+      "location": "Lisbon, Portugal",
+      "start": "May 2022",
+      "end": "Present",
+      "bullets": [
+        "Develop and maintain core backend REST APIs in Java 17 (Spring Boot) backed by PostgreSQL databases for a B2B logistics platform.",
+        "Build and update responsive user interface modules using React and TypeScript, reducing customer-reported UI bugs by 20%.",
+        "Configure and maintain GitLab CI/CD pipelines for automated unit testing, static code analysis, and staging deployments.",
+        "Collaborate closely with product owners and QA engineers in bi-weekly Agile/Scrum sprints, participating in backlog refinement and code reviews."
+      ]
+    },
+    {
+      "title": "Junior Backend Developer",
+      "employer": "AlgarveTech Consulting",
+      "location": "Faro, Portugal",
+      "start": "March 2020",
+      "end": "April 2022",
+      "bullets": [
+        "Implemented backend business logic in Java 11 and managed relational data models in MySQL for regional tourism and booking portals.",
+        "Optimised slow SQL queries and indexing strategies in MySQL, improving average reporting page load times by 15%.",
+        "Wrote unit and integration tests using JUnit and Mockito to support reliable monthly releases.",
+        "Participated in daily Scrum stand-ups and assisted senior developers with production bug troubleshooting and API documentation."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Engineering)",
+      "institution": "Instituto Superior de Engenharia de Lisboa (ISEL)",
+      "year": "2019"
+    }
+  ],
+  "skills": [
+    "Java (11 / 17)",
+    "Spring Boot",
+    "PostgreSQL",
+    "MySQL",
+    "React",
+    "TypeScript",
+    "RESTful APIs",
+    "Git & GitLab CI/CD",
+    "JUnit & Mockito",
+    "Agile / Scrum"
+  ],
+  "certifications": [
+    "Professional Scrum Developer I (PSD I) – Scrum.org"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática (Computer Science and Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Dependable Full-Stack Software Engineer with 4 years of professional experience developing backend services and client-facing web applications."
+    },
+    {
+      "requirement": 3,
+      "evidence": "Develop and maintain core backend REST APIs in Java 17 (Spring Boot) backed by PostgreSQL databases for a B2B logistics platform."
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    3,
+    4
+  ],
+  "borderline_note": ""
+}

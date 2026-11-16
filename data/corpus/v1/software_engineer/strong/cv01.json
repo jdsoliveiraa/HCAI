@@ -1,0 +1,96 @@
+{
+  "headline": "Senior Backend & Full-Stack Software Engineer | Python, Java, Cloud-Native Microservices",
+  "summary": "Results-driven Software Engineer with over 5 years of professional experience designing, building, and scaling backend and full-stack enterprise systems. Holds both a Licenciatura and a Mestrado in Engenharia Informática, with deep production expertise in Python, Java, PostgreSQL, and cloud-native infrastructure on AWS using Docker and Kubernetes. Proven track record of improving system throughput, leading Agile delivery teams, and automating CI/CD workflows.",
+  "experience": [
+    {
+      "title": "Senior Backend Software Engineer",
+      "employer": "LusitanoCloud Systems",
+      "location": "Lisbon, Portugal",
+      "start": "March 2022",
+      "end": "Present",
+      "bullets": [
+        "Architected and maintained 15+ cloud-native microservices in Python (FastAPI) and Java (Spring Boot) backed by PostgreSQL, serving over 400,000 daily active enterprise users.",
+        "Led the migration of legacy monolithic workloads to AWS EKS using Docker and Kubernetes, reducing infrastructure operating costs by 28% and improving system availability to 99.95%.",
+        "Optimized complex PostgreSQL queries, indexing strategies, and connection pooling, cutting 95th-percentile API response times from 620ms to 180ms.",
+        "Designed and maintained automated CI/CD pipelines using GitHub Actions and ArgoCD within an Agile/Scrum team, decreasing deployment lead time by 65%."
+      ]
+    },
+    {
+      "title": "Full-Stack Software Engineer",
+      "employer": "Alfacinha Digital Labs",
+      "location": "Lisbon, Portugal",
+      "start": "September 2019",
+      "end": "February 2022",
+      "bullets": [
+        "Developed core backend RESTful APIs in Python (Django) and relational data models in PostgreSQL and MySQL for B2B financial reporting platforms.",
+        "Built interactive client dashboards using React and TypeScript, reducing customer onboarding time by 35% across 40+ corporate client accounts.",
+        "Implemented automated unit and integration test suites within GitLab CI/CD pipelines, raising backend code coverage from 52% to 88%.",
+        "Acted as Scrum facilitator during two-week sprint cycles, collaborating closely with product owners and QA engineers to deliver roadmap features on schedule."
+      ]
+    },
+    {
+      "title": "Junior Software Engineer",
+      "employer": "TagusSoft Consultoria",
+      "location": "Oeiras, Portugal",
+      "start": "September 2018",
+      "end": "August 2019",
+      "bullets": [
+        "Contributed to backend service development in Java 11 and MySQL for national logistics clients, resolving over 90 production defects during the first year.",
+        "Containerized local development environments with Docker, cutting new developer setup time from two days to under two hours."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Mestrado (master's degree) in Engenharia Informática e de Computadores (specialization in Distributed Systems and Software Engineering)",
+      "institution": "Instituto Superior Técnico - Universidade de Lisboa",
+      "year": "2018"
+    },
+    {
+      "degree": "Licenciatura (bachelor's degree) in Engenharia Informática e de Computadores (Computer Science and Software Engineering)",
+      "institution": "Instituto Superior Técnico - Universidade de Lisboa",
+      "year": "2016"
+    }
+  ],
+  "skills": [
+    "Python (FastAPI, Django, Flask)",
+    "Java (Spring Boot, Hibernate)",
+    "PostgreSQL & MySQL",
+    "Docker & Kubernetes (AWS EKS)",
+    "Amazon Web Services (EC2, RDS, S3, Lambda)",
+    "React & TypeScript",
+    "CI/CD (GitHub Actions, GitLab CI, ArgoCD)",
+    "Microservices Architecture & REST/gRPC APIs",
+    "Agile / Scrum Methodologies"
+  ],
+  "certifications": [
+    "AWS Certified Solutions Architect – Associate (2023)",
+    "Certified Kubernetes Application Developer (CKAD) – Cloud Native Computing Foundation (2022)",
+    "Professional Scrum Developer I (PSD I) – Scrum.org (2020)"
+  ],
+  "mandatory_evidence": [
+    {
+      "requirement": 1,
+      "evidence": "Licenciatura (bachelor's degree) in Engenharia Informática e de Computadores (Computer Science and Software Engineering)"
+    },
+    {
+      "requirement": 2,
+      "evidence": "Software Engineer with over 5 years of professional experience designing, building, and scaling backend and full-stack enterprise systems."
+    },
+    {
+      "requirement": 3,
+      "evidence": "Architected and maintained 15+ cloud-native microservices in Python (FastAPI) and Java (Spring Boot) backed by PostgreSQL"
+    },
+    {
+      "requirement": 4,
+      "evidence": "header"
+    }
+  ],
+  "desirable_met": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "borderline_note": ""
+}
