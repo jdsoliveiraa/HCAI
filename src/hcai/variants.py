@@ -261,12 +261,26 @@ def gendered_forms(word: str, language: str) -> tuple[str, str] | None:
     return None
 
 
-def render_variant(template: str, *, name: str, nationality: str, gender: str, language: str) -> str:
-    """Fill a base-CV template's demographic slots for one identity in one language."""
+def render_variant(
+    template: str, *, name: str, nationality: str, gender: str, language: str, mark: tuple[str, str] | None = None,
+) -> str:
+    """Fill a base-CV template's demographic slots for one identity in one language.
+
+    With `mark = (open, close)`, every value that differs between identities (the name, the nationality and the
+    chosen form of each gendered slot whose forms differ) is wrapped in `open`...`close`; removing the markers gives
+    the unmarked text. The project site uses this to highlight the demographic differences.
+    """
     _validate_template(template, language)
-    text = _ALTERNATION.sub(lambda m: m.group(1 + _GENDER_INDEX[gender]), template)
+    o, c = mark or ("", "")
+
+    def fill(m: re.Match[str]) -> str:
+        form = m.group(1 + _GENDER_INDEX[gender])
+        return f"{o}{form}{c}" if form and m.group(1) != m.group(2) else form
+
+    text = _ALTERNATION.sub(fill, template)
     return Template(text).substitute(
-        name=name, nationality=nationality, work_eligibility="\n".join(WORK_ELIGIBILITY[language]),
+        name=f"{o}{name}{c}", nationality=f"{o}{nationality}{c}",
+        work_eligibility="\n".join(WORK_ELIGIBILITY[language]),
     )
 
 

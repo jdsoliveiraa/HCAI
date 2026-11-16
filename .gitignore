@@ -7,6 +7,8 @@ results/
 data/variants/
 data/corpus/*-fake/
 *.staging/
+# generated project site (hcai site)
+/site/
 
 # API keys: never commit
 .env
