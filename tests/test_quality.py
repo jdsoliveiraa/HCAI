@@ -154,10 +154,9 @@ def test_the_spearman_ci_is_centred_on_the_estimate_not_biased_by_resampling_the
 
 
 def test_the_core_design_builds_mixed_quality_pools_for_pairwise_accuracy():
-    from pathlib import Path
-
+    from conftest import core_config
     from hcai.config import load_design, pilot_design
 
-    core = load_design(Path(__file__).parent.parent / "configs" / "core.toml")
+    core = load_design(core_config())
 
     assert core.pools.mixed_quality > 0 and pilot_design(core).pools.mixed_quality > 0

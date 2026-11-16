@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import core_config
 from hcai.cli import main, names_command
 from hcai.config import load_design
 from hcai.llm import FakeLLMClient, LLMRequest, ProviderError, ProviderExhausted
@@ -16,7 +17,7 @@ from hcai.namecheck import (
 )
 
 CONFIGS = Path(__file__).parent.parent / "configs"
-CORE = CONFIGS / "core.toml"  # the full name bank, two pipeline models
+CORE = core_config()  # configs/core.toml with the fixture name bank (32 names), two pipeline models
 SKELETON = CONFIGS / "skeleton.toml"  # [[identities]]: Portuguese and Brazilian only
 
 
@@ -196,7 +197,7 @@ def test_names_command_writes_the_tables_and_a_second_run_makes_no_calls(tmp_pat
     design = load_design(CORE)
     first = list(design.models)[0]
     client = oracle({("Tiago Martins", first): ("male", "Brazilian"),
-                     ("Olena Melnyk", first): ("unsure", "Ukrainian or other Eastern European")})
+                     ("Olena Tkachenko", first): ("unsure", "Ukrainian or other Eastern European")})
 
     report, all_pass = names_command(CORE, client, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache", repeats=2,
                                     mode="choice")
@@ -204,8 +205,8 @@ def test_names_command_writes_the_tables_and_a_second_run_makes_no_calls(tmp_pat
     calls = len(client.calls)
     assert calls == 32 * len(design.models) * 2
     assert not all_pass
-    assert "2 of 32 names fail" in report and "Tiago Martins" in report and "Olena Melnyk" in report
-    assert "Inês Martins" not in report.split("names fail")[1]
+    assert "2 of 32 names fail" in report and "Tiago Martins" in report and "Olena Tkachenko" in report
+    assert "Inês Carvalho" not in report.split("names fail")[1]
     rows = list(csv.DictReader((tmp_path / "out" / "perceptions.csv").open(encoding="utf-8")))
     assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "perceived_gender",
                              "perceived_origin"]
@@ -214,8 +215,8 @@ def test_names_command_writes_the_tables_and_a_second_run_makes_no_calls(tmp_pat
     assert {(r["intended_origin"], r["perceived_origin"]) for r in tiago} == {("portuguese", "brazilian")}
     summary = list(csv.DictReader((tmp_path / "out" / "summary.csv").open(encoding="utf-8")))
     failing = {(r["name"], r["model"]) for r in summary if r["pass"] == "False"}
-    assert failing == {("Tiago Martins", first), ("Olena Melnyk", first)}
-    olena = next(r for r in summary if r["name"] == "Olena Melnyk" and r["model"] == first)
+    assert failing == {("Tiago Martins", first), ("Olena Tkachenko", first)}
+    olena = next(r for r in summary if r["name"] == "Olena Tkachenko" and r["model"] == first)
     assert (olena["gender_hit_rate"], olena["origin_hit_rate"]) == ("0.000", "1.000")
     cells = list(csv.DictReader((tmp_path / "out" / "cells.csv").open(encoding="utf-8")))
     pt_m = next(r for r in cells if (r["gender"], r["origin"], r["model"]) == ("male", "portuguese", first))
@@ -313,6 +314,11 @@ def _origin(pt=0.0, br=0.0, palop=0.0, ee=0.0, other=0.0) -> dict[str, float]:
     return {"portuguese": pt, "brazilian": br, "palop": palop, "eastern_european": ee, OTHER: other}
 
 
+def _scored(pt=0.0, br=0.0, palop=0.0, ee=0.0) -> dict[str, float]:
+    """A scored origin distribution: the four origins, no hedge."""
+    return {k: v for k, v in _origin(pt, br, palop, ee).items() if k != OTHER}
+
+
 def _labels(pt=0.0, br=0.0, palop=0.0, ee=0.0, other=0.0) -> dict[str, float]:
     return {ORIGIN_LABELS[k]: v for k, v in _origin(pt, br, palop, ee).items() if k != OTHER} | {OTHER_LABEL: other}
 
@@ -400,39 +406,45 @@ def test_parse_probabilities_rejects_non_objects():
 
 def test_gender_passes_at_the_threshold():
     rule = ProbabilityRule()
-    assert rule.gender_passes({"male": 0.8, "female": 0.1, "unsure": 0.1}, "male")
-    assert rule.gender_passes({"male": (0.7 + 0.9) / 2, "female": 0.1, "unsure": 0.1}, "male")  # 0.7999999999...
-    assert not rule.gender_passes({"male": 0.79, "female": 0.11, "unsure": 0.1}, "male")
-    assert not rule.gender_passes({"male": 0.1, "female": 0.85, "unsure": 0.05}, "male")
-    assert ProbabilityRule(gender_threshold=0.6).gender_passes({"male": 0.65, "female": 0.3, "unsure": 0.05}, "male")
+    assert rule.gender_passes({"male": 0.8, "female": 0.2}, "male")
+    assert rule.gender_passes({"male": (0.7 + 0.9) / 2, "female": 0.2}, "male")  # 0.7999999999...
+    assert not rule.gender_passes({"male": 0.79, "female": 0.21}, "male")
+    assert not rule.gender_passes({"male": 0.1, "female": 0.9}, "male")
+    assert ProbabilityRule(gender_threshold=0.6).gender_passes({"male": 0.65, "female": 0.35}, "male")
+
+
+def test_the_rule_takes_scored_distributions_only():
+    rule = ProbabilityRule()
+    with pytest.raises(ValueError, match="unsure"):
+        rule.gender_passes({"male": 0.9, "female": 0.05, "unsure": 0.05}, "male")
+    with pytest.raises(ValueError, match="Other or unsure"):
+        rule.origin_passes(_origin(pt=0.9, other=0.1), "portuguese")
 
 
 def test_a_portuguese_name_needs_portuguese_to_be_the_highest_of_all_origins():
     rule = ProbabilityRule()
-    assert rule.origin_passes(_origin(pt=0.6, br=0.3, other=0.1), "portuguese")
-    assert rule.origin_passes(_origin(pt=0.22, br=0.2, palop=0.2, ee=0.19, other=0.19), "portuguese")  # no minimum
-    assert not rule.origin_passes(_origin(pt=0.4, br=0.45, other=0.15), "portuguese")
-    assert not rule.origin_passes(_origin(pt=0.3, br=0.1, other=0.6), "portuguese")  # unsure beats it
-    assert not rule.origin_passes(_origin(pt=0.4, br=0.4, other=0.2), "portuguese")  # a tie is not the highest
+    assert rule.origin_passes(_scored(pt=0.6, br=0.3, palop=0.1), "portuguese")
+    assert rule.origin_passes(_scored(pt=0.26, br=0.25, palop=0.25, ee=0.24), "portuguese")  # no minimum
+    assert not rule.origin_passes(_scored(pt=0.4, br=0.45, ee=0.15), "portuguese")
+    assert not rule.origin_passes(_scored(pt=0.45, br=0.45, palop=0.1), "portuguese")  # a tie is not the highest
 
 
 def test_a_non_portuguese_name_is_judged_against_the_other_non_portuguese_options():
     rule = ProbabilityRule()
     # the motivating case: a name common in Portugal and Brazil, Portuguese the base-rate answer
-    assert rule.origin_passes(_origin(pt=0.6, br=0.3, palop=0.05, other=0.05), "brazilian")
-    assert rule.origin_passes(_origin(pt=0.55, palop=0.35, br=0.1), "palop")
-    assert rule.origin_passes(_origin(pt=0.75, br=0.25), "brazilian")  # at the minimum
-    assert rule.origin_passes(_origin(pt=0.75, br=(0.2 + 0.3) / 2), "brazilian")  # float slack at the minimum
-    assert not rule.origin_passes(_origin(pt=0.8, br=0.2), "brazilian")  # highest but below the minimum
-    assert not rule.origin_passes(_origin(pt=0.3, br=0.3, palop=0.4), "brazilian")  # PALOP higher
-    assert not rule.origin_passes(_origin(pt=0.3, br=0.3, other=0.4), "brazilian")  # "Other or unsure" counts
-    assert not rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3), "brazilian")  # a tie is not the highest
-    assert not rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3 - 1e-10), "brazilian")  # a tie within float slack
-    assert rule.origin_passes(_origin(pt=0.4, br=0.3, palop=0.3 - 1e-6), "brazilian")
-    assert rule.origin_passes(_origin(ee=0.9, other=0.1), "eastern_european")
+    assert rule.origin_passes(_scored(pt=0.6, br=0.3, palop=0.05, ee=0.05), "brazilian")
+    assert rule.origin_passes(_scored(pt=0.55, palop=0.35, br=0.1), "palop")
+    assert rule.origin_passes(_scored(pt=0.75, br=0.25), "brazilian")  # at the minimum
+    assert rule.origin_passes(_scored(pt=0.75, br=(0.2 + 0.3) / 2), "brazilian")  # float slack at the minimum
+    assert not rule.origin_passes(_scored(pt=0.8, br=0.2), "brazilian")  # highest but below the minimum
+    assert not rule.origin_passes(_scored(pt=0.3, br=0.3, palop=0.4), "brazilian")  # PALOP higher
+    assert not rule.origin_passes(_scored(pt=0.4, br=0.3, palop=0.3), "brazilian")  # a tie is not the highest
+    assert not rule.origin_passes(_scored(pt=0.4, br=0.3, palop=0.3 - 1e-10), "brazilian")  # a tie within float slack
+    assert rule.origin_passes(_scored(pt=0.4, br=0.3, palop=0.3 - 1e-6), "brazilian")
+    assert rule.origin_passes(_scored(ee=1.0), "eastern_european")
     # the minimum is configurable; and a non-host name does not need to beat Portuguese
-    assert ProbabilityRule(origin_minimum=0.15).origin_passes(_origin(pt=0.8, br=0.2), "brazilian")
-    assert not ProbabilityRule(origin_minimum=0.35).origin_passes(_origin(pt=0.7, br=0.3), "brazilian")
+    assert ProbabilityRule(origin_minimum=0.15).origin_passes(_scored(pt=0.8, br=0.2), "brazilian")
+    assert not ProbabilityRule(origin_minimum=0.35).origin_passes(_scored(pt=0.7, br=0.3), "brazilian")
 
 
 def test_the_rule_is_validated():
@@ -518,27 +530,37 @@ def test_names_command_in_probability_mode_writes_the_probabilities(tmp_path):
     assert "Leandro Lima" not in report.split("names fail")[1]
     assert "answers had probabilities not summing to 1" in report
     failing_line = next(line for line in report.splitlines() if line.startswith("Odair Monteiro"))
-    assert "0.900" in failing_line and "0.500" in failing_line and "0.300" in failing_line and "origin" in failing_line
+    # p(gender) 0.9 / 0.95 with "unsure" (0.05) left out; the scored origins 0.5, 0.3, 0.2; no origin hedge
+    assert all(x in failing_line for x in ("0.947", "0.050", "0.500", "0.300", "0.200", "origin"))
     rows = list(csv.DictReader((tmp_path / "out" / "perceptions.csv").open(encoding="utf-8")))
     assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "p_male", "p_female",
                              "p_unsure", "gender_sum", "p_portuguese", "p_brazilian", "p_palop", "p_eastern_european",
-                             "p_other_or_unsure", "origin_sum"]
+                             "p_other_or_unsure", "origin_sum", "gender_hedge", "origin_hedge", "scored_p_male",
+                             "scored_p_female", "scored_p_portuguese", "scored_p_brazilian", "scored_p_palop",
+                             "scored_p_eastern_european"]
     odair = next(r for r in rows if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (odair["p_male"], odair["gender_sum"], odair["p_portuguese"], odair["origin_sum"]) == (
         "0.900000", "50.000000", "0.500000", "2.000000")
+    assert (odair["gender_hedge"], odair["origin_hedge"], odair["scored_p_male"], odair["scored_p_palop"]) == (
+        "0.050000", "0.000000", "0.947368", "0.200000")
     summary = list(csv.DictReader((tmp_path / "out" / "summary.csv").open(encoding="utf-8")))
     assert {(r["name"], r["model"]) for r in summary if r["pass"] == "False"} == {("Odair Monteiro", first)}
     o = next(r for r in summary if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (o["p_intended_gender"], o["p_intended_origin"], o["gender_pass"], o["origin_pass"]) == (
-        "0.900000", "0.200000", "True", "False")
+        "0.947368", "0.200000", "True", "False")
+    assert (o["p_male"], o["gender_hedge"], o["origin_hedge"], o["gender_all_hedge"], o["origin_all_hedge"]) == (
+        "0.900000", "0.050000", "0.000000", "0", "0")
     assert (o["gender_threshold"], o["origin_minimum"]) == ("0.8", "0.25")
     leandro = next(r for r in summary if r["name"] == "Leandro Lima" and r["model"] == first)
-    assert (leandro["p_portuguese"], leandro["p_brazilian"], leandro["pass"]) == ("0.600000", "0.300000", "True")
+    assert (leandro["p_portuguese"], leandro["p_brazilian"], leandro["origin_hedge"], leandro["pass"]) == (
+        "0.600000", "0.300000", "0.050000", "True")
+    assert (leandro["scored_p_portuguese"], leandro["p_intended_origin"]) == ("0.631579", "0.315789")
     cells = list(csv.DictReader((tmp_path / "out" / "cells.csv").open(encoding="utf-8")))
     assert list(cells[0]) == ["gender", "origin", "model", "names", "names_answered", "mean_p_intended_gender",
-                              "mean_p_intended_origin", "names_passing"]
+                              "mean_p_intended_origin", "mean_gender_hedge", "mean_origin_hedge", "names_passing"]
     palop = next(r for r in cells if (r["gender"], r["origin"], r["model"]) == ("male", "palop", first))
-    assert palop["names_passing"] == "3"
+    assert (palop["names_passing"], palop["mean_gender_hedge"]) == ("3", "0.050000")
+    assert "hedge g" in report and "hedge o" in report
 
     again, _ = names_command(CORE, client, out_dir=tmp_path / "out2", cache_dir=tmp_path / "cache", repeats=2)
     assert len(client.calls) == calls and f"0 LLM calls, {calls} from cache" in again
@@ -588,11 +610,15 @@ def test_cli_names_modes_with_the_fake_llm(tmp_path, capsys):
     assert "p_intended_origin" in header and "origin_minimum" in header
     perceptions = list(csv.DictReader((tmp_path / "p" / "perceptions.csv").open(encoding="utf-8")))
     assert all(r["p_unsure"] == "1.000000" and r["p_other_or_unsure"] == "1.000000" for r in perceptions)
+    # the fake model answers all hedge: valid, but missing for both questions, so the scored columns are blank
+    assert all(r["gender_hedge"] == "1.000000" and r["scored_p_male"] == "" and r["scored_p_portuguese"] == ""
+               for r in perceptions)
+    assert "all-hedge" in out
     assert main(["names", str(SKELETON), "--mode", "choice", "--out", str(tmp_path / "ch"), *common]) == 2
     assert "gender_hit_rate" in (tmp_path / "ch" / "summary.csv").read_text().splitlines()[0]
     assert main(["names", str(SKELETON), "--origin-min", "1.5", *common]) == 1
     assert main(["names", str(SKELETON), "--origin-min", "0", "--threshold", "0", "--out", str(tmp_path / "z"),
-                 *common]) == 2  # still fails: "Other or unsure" beats the intended origin
+                 *common]) == 2  # still fails: every answer is all hedge, so missing for both questions
 
 
 def test_the_all_cell_weighs_every_name_the_same_when_a_model_has_no_answer():
@@ -630,3 +656,104 @@ def test_an_off_sum_in_one_question_only_is_reported(tmp_path):
                                      repeats=1)
 
     assert all_pass and "2 answers had probabilities not summing to 1" in report
+
+
+def test_the_hedge_options_are_left_out_and_reported_apart():
+    # m1 hedges a lot but leans the intended way; m2 hedges little: both are scored on the substantive options
+    hedgy_g = {"male": 0.5, "female": 0.0, "unsure": 0.5}
+    ps = [
+        _pp("A", "m1", 0, hedgy_g, _origin(pt=0.3, br=0.1, other=0.6)),  # Portuguese: Other or unsure no longer wins
+        _pp("A", "m1", 1, {"male": 0.4, "female": 0.1, "unsure": 0.5}, _origin(pt=0.2, other=0.8)),
+        _pp("A", "m2", 0, {"male": 0.9, "female": 0.0, "unsure": 0.1}, _origin(pt=0.9, other=0.1)),
+        # B (Brazilian): before, "Other or unsure" (0.5) beat Brazilian (0.3); now Brazilian leads the minority
+        _pp("B", "m1", 0, M, _origin(pt=0.2, br=0.3, other=0.5), BR),
+    ]
+
+    check = score_probabilities(ps)
+
+    by = {(s.name, s.model): s for s in check.scores}
+    a1 = by["A", "m1"]
+    assert a1.gender_scored == pytest.approx({"male": 0.9, "female": 0.1})  # (1.0 + 0.8) / 2
+    assert a1.origin_scored == pytest.approx(_scored(pt=0.875, br=0.125))  # (0.75 + 1.0) / 2
+    assert (a1.gender_hedge, a1.origin_hedge) == pytest.approx((0.5, 0.7))
+    assert a1.gender_p == pytest.approx({"male": 0.45, "female": 0.05, "unsure": 0.5})  # the full means are kept
+    assert (a1.gender_all_hedge, a1.origin_all_hedge, a1.passed) == (0, 0, True)
+    b = by["B", "m1"]
+    assert b.p_origin == pytest.approx(0.6) and b.origin_hedge == pytest.approx(0.5) and b.passed
+    assert ProbabilityRule(origin_minimum=0.7).origin_passes(b.origin_scored or {}, "brazilian") is False
+    cell = next(c for c in check.cells if (c.origin, c.model) == ("portuguese", "all"))
+    assert cell.p_gender == pytest.approx((0.9 + 1.0) / 2)
+    assert (cell.gender_hedge, cell.origin_hedge) == pytest.approx(((0.5 + 0.1) / 2, (0.7 + 0.1) / 2))
+    m1 = next(c for c in check.cells if (c.origin, c.model) == ("portuguese", "m1"))
+    assert (m1.gender_hedge, m1.origin_hedge) == pytest.approx((0.5, 0.7))
+
+
+def test_an_all_hedge_answer_is_missing_for_that_question_only_and_fails_the_name():
+    ps = [
+        _pp("A", "m1", 0, M, _origin(pt=0.8, other=0.2)),
+        _pp("A", "m1", 1, {"male": 0.0, "female": 0.0, "unsure": 1.0}, _origin(pt=0.6, br=0.2, other=0.2)),
+    ]
+
+    s = score_probabilities(ps).scores[0]
+
+    # left out of the gender mean (which stays 1.0), not of the origin mean; the hedge mean covers both answers
+    assert (s.missing, s.gender_all_hedge, s.origin_all_hedge) == (0, 1, 0)
+    assert s.p_gender == pytest.approx(1.0) and s.gender_hedge == pytest.approx(0.5)
+    assert s.origin_scored == pytest.approx(_scored(pt=0.875, br=0.125))  # (1.0 + 0.75) / 2
+    assert (s.gender_passed, s.origin_passed, s.passed) == (True, True, False)
+    assert ps[1].gender_scored is None and ps[1].origin_scored is not None
+    # all hedge on origin
+    o = score_probabilities([_pp("A", "m1", 0, M, _origin(other=1.0))]).scores[0]
+    assert (o.origin_all_hedge, o.p_origin, o.origin_hedge, o.origin_passed, o.passed) == (1, None, 1.0, False, False)
+    assert (o.gender_passed, o.p_gender) == (True, 1.0)
+    # a cell still counts a name whose only answers are all hedge as answered, with blank p(intended)
+    cell = score_probabilities([_pp("A", "m1", 0, {"male": 0, "female": 0, "unsure": 1}, _origin(other=1))]).cells[0]
+    assert (cell.answered, cell.p_gender, cell.p_origin, cell.gender_hedge) == (1, None, None, 1.0)
+
+
+def test_the_pass_rule_is_otherwise_unchanged_on_the_scored_means():
+    ps = [
+        # gender 0.79 after renormalising: fails the 0.8 threshold
+        _pp("G", "m1", 0, {"male": 0.79, "female": 0.21, "unsure": 0.0}, _origin(pt=1)),
+        # Portuguese name with Brazilian highest: fails
+        _pp("P", "m1", 0, M, _origin(pt=0.4, br=0.5, other=0.1)),
+        # Brazilian name, Brazilian 0.2 of the scored origins: highest non-Portuguese but below 0.25: fails
+        _pp("L", "m1", 0, M, _origin(pt=0.4, br=0.1, palop=0.0, other=0.5), BR),
+        # Brazilian name tied with PALOP: fails
+        _pp("T", "m1", 0, M, _origin(pt=0.4, br=0.3, palop=0.3), BR),
+    ]
+
+    by = {s.name: s for s in score_probabilities(ps).scores}
+
+    assert (by["G"].gender_passed, by["G"].origin_passed) == (False, True)
+    assert (by["P"].gender_passed, by["P"].origin_passed) == (True, False)
+    assert by["L"].p_origin == pytest.approx(0.2) and not by["L"].origin_passed
+    assert not by["T"].origin_passed
+    assert not any(s.passed for s in by.values())
+
+
+def test_names_command_reports_all_hedge_answers(tmp_path):
+    good = prob_oracle()
+
+    def respond(request: LLMRequest):
+        answer = good.responder(request)
+        assert isinstance(answer, dict)
+        if "Tiago Martins" in request.messages[0]["content"]:
+            answer["gender"] = {"male": 0, "female": 0, "unsure": 1}
+        return answer
+
+    client = FakeLLMClient(respond)
+    report, all_pass = names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=2)
+
+    assert not all_pass and "(0 missing)" in report
+    line = next(x for x in report.splitlines() if x.startswith("Tiago Martins"))
+    assert "gender+all-hedge" in line and "1.000" in line
+    assert "everything on a hedge option" in report
+    summary = list(csv.DictReader((tmp_path / "o" / "summary.csv").open(encoding="utf-8")))
+    tiago = [r for r in summary if r["name"] == "Tiago Martins"]
+    assert all((r["missing"], r["gender_all_hedge"], r["p_intended_gender"], r["gender_hedge"], r["pass"])
+               == ("0", "2", "", "1.000000", "False") for r in tiago)
+    # valid answers: cached, so a rerun replays them
+    before = len(client.calls)
+    names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=2)
+    assert len(client.calls) == before

@@ -11,11 +11,14 @@ its own: a rerun with the same settings makes no calls.
 
 A name passes when it passes for every model, with no answer missing. Choice mode: the shares of valid answers
 giving the intended gender and the intended origin are both at least the threshold (0.8 by default). Probability
-mode (`ProbabilityRule`): over the mean of the normalised distributions of the valid answers, p(intended gender)
-is at least the threshold, and p(intended origin) is the highest of all origin options for a host origin
-(Portuguese), or the highest of the non-host options and at least a minimum (0.25 by default) for any other. Missing
-answers (a provider error, or one outside the schema) are not cached, so a rerun asks them again. Nothing here
-changes the name bank: failing names are reported for the researcher to replace.
+mode (`ProbabilityRule`): the hedge options ("unsure", "Other or unsure") are taken out of the scoring: each answer's
+gender is p(male) and p(female) renormalised to sum 1, and its origin the four origin options renormalised; an
+answer that puts everything on the hedge of a question is missing for that question. Over the mean of these
+scored distributions, p(intended gender) is at least the threshold, and p(intended origin) is the highest of the
+four origins for a host origin (Portuguese), or the highest of the non-host origins and at least a minimum (0.25
+by default) for any other. The hedge shares are reported beside them. Missing answers (a provider error, or one
+outside the schema) are not cached, so a rerun asks them again; an all-hedge answer is valid and cached. Nothing
+here changes the name bank: failing names are reported for the researcher to replace.
 """
 
 from __future__ import annotations
@@ -51,6 +54,10 @@ DEFAULT_ORIGIN_MINIMUM = 0.25
 # judged against the options outside this set only, so a name common in Portugal too can still pass.
 HOST_ORIGINS = frozenset({"portuguese"})
 ORIGIN_KEYS = (*ORIGIN_LABELS, OTHER)  # the probability columns, in a fixed order
+# Probability mode scores the substantive options only (ADR 0011): the hedges are reported, not scored.
+GENDER_HEDGE, ORIGIN_HEDGE = "unsure", OTHER
+SCORED_GENDERS = tuple(g for g in GENDER_OPTIONS if g != GENDER_HEDGE)
+SCORED_ORIGINS = tuple(ORIGIN_LABELS)
 EPS = 1e-9  # float slack for the pass comparisons (a mean of 0.8s may come out as 0.7999999999)
 
 
@@ -76,9 +83,40 @@ class Perception:
 
     @property
     def missing(self) -> bool:
+        """No valid answer (a failed call, or one outside the schema)."""
         if self.mode == PROBABILITY:
             return self.gender_p is None or self.origin_p is None
         return not self.perceived_gender or not self.perceived_origin
+
+    @property
+    def gender_hedge(self) -> float | None:
+        """Probability mode: p(unsure) of the answer (normalised over all gender options)."""
+        return None if self.gender_p is None else self.gender_p[GENDER_HEDGE]
+
+    @property
+    def origin_hedge(self) -> float | None:
+        """Probability mode: p(Other or unsure) of the answer (normalised over all origin options)."""
+        return None if self.origin_p is None else self.origin_p[ORIGIN_HEDGE]
+
+    @property
+    def gender_scored(self) -> dict[str, float] | None:
+        """Probability mode: p(male) and p(female) renormalised to sum 1; None when the answer is missing or puts
+        everything on "unsure" (then the answer is missing for the gender question)."""
+        return None if self.missing else _renormalise(self.gender_p, SCORED_GENDERS)
+
+    @property
+    def origin_scored(self) -> dict[str, float] | None:
+        """Probability mode: the four origin options renormalised to sum 1; None when the answer is missing or puts
+        everything on "Other or unsure" (then the answer is missing for the origin question)."""
+        return None if self.missing else _renormalise(self.origin_p, SCORED_ORIGINS)
+
+
+def _renormalise(d: dict[str, float] | None, keys: Sequence[str]) -> dict[str, float] | None:
+    """`d` restricted to `keys` and divided by their sum; None when there is nothing on them."""
+    if d is None:
+        return None
+    total = math.fsum(d[k] for k in keys)
+    return {k: d[k] / total for k in keys} if total > 0 else None
 
 
 @dataclass(frozen=True)
@@ -358,18 +396,20 @@ def score(perceptions: list[Perception], threshold: float = DEFAULT_THRESHOLD) -
                   and g >= threshold and o >= threshold)
         scores.append(NameScore(name, ps[0].intended_gender, ps[0].intended_origin, model, len(ps),
                                 len(ps) - len(valid), g, o, passed))
-    cells = [CellScore(*c) for c in _cells(scores, lambda s: s.gender_hit_rate, lambda s: s.origin_hit_rate)]
+    cells = [CellScore(*c) for c in _cells(scores, [lambda s: s.gender_hit_rate, lambda s: s.origin_hit_rate],
+                                           answered=lambda s: s.gender_hit_rate is not None)]
     return NameCheck(perceptions, scores, cells, threshold)
 
 
 @dataclass(frozen=True)
 class ProbabilityRule:
-    """The probability-mode pass rule, applied to the mean distributions of one name x model (ADR 0011).
+    """The probability-mode pass rule, applied to the mean scored distributions of one name x model (ADR 0011):
+    the hedge options are not in them, so male and female sum to 1, and so do the four origins.
 
     Gender: p(intended gender) >= `gender_threshold`. Origin: for an intended origin in `host_origins`
-    (Portuguese), p(intended) is strictly the highest of all five origin options; for any other intended origin,
-    p(intended) is strictly the highest among the options outside `host_origins` ("Other or unsure" included) and
-    at least `origin_minimum`. A tie is not the highest. Comparisons allow `EPS` of float slack.
+    (Portuguese), p(intended) is strictly the highest of the origin options; for any other intended origin,
+    p(intended) is strictly the highest among the options outside `host_origins` and at least `origin_minimum`.
+    A tie is not the highest. Comparisons allow `EPS` of float slack.
     """
 
     gender_threshold: float = DEFAULT_THRESHOLD
@@ -385,9 +425,13 @@ class ProbabilityRule:
             raise ValueError(f"host origins must be bank origins ({', '.join(ORIGIN_LABELS)})")
 
     def gender_passes(self, gender_p: dict[str, float], intended: str) -> bool:
+        if GENDER_HEDGE in gender_p:
+            raise ValueError("the rule takes the scored gender distribution (male / female, without unsure)")
         return gender_p[intended] >= self.gender_threshold - EPS
 
     def origin_passes(self, origin_p: dict[str, float], intended: str) -> bool:
+        if ORIGIN_HEDGE in origin_p:
+            raise ValueError("the rule takes the scored origin distribution (without Other or unsure)")
         host = intended in self.host_origins
         rivals = [k for k in origin_p if k != intended and (host or k not in self.host_origins)]
         p = origin_p[intended]
@@ -398,50 +442,68 @@ class ProbabilityRule:
     def describe(self) -> str:
         hosts = ", ".join(sorted(self.host_origins))
         return (f"p(intended gender) >= {self.gender_threshold:g}; p(intended origin) the highest of all origins for "
-                f"{hosts}, else the highest of the non-{hosts} options and >= {self.origin_minimum:g}")
+                f"{hosts}, else the highest of the non-{hosts} origins and >= {self.origin_minimum:g}; hedge "
+                f"options left out and the rest renormalised")
 
 
 @dataclass(frozen=True)
 class ProbabilityScore:
-    """The mean distributions of one name x model over its valid answers (None when it has none), and its pass
-    flags under the rule."""
+    """One name x model: the mean distributions over all options and the mean hedge shares over its valid answers,
+    the mean scored distributions (hedges out) over the answers that have one, and its pass flags under the rule.
+    Each is None when there is nothing to average."""
 
     name: str
     intended_gender: str
     intended_origin: str
     model: str
     answers: int
-    missing: int
-    gender_p: dict[str, float] | None
-    origin_p: dict[str, float] | None
+    missing: int  # answers with no valid answer
+    gender_p: dict[str, float] | None  # every gender option, as answered (normalised)
+    origin_p: dict[str, float] | None  # every origin option, as answered (normalised)
     gender_passed: bool
     origin_passed: bool
-    passed: bool  # both, and no answer missing
+    passed: bool  # both, and no answer missing for either question
+    gender_scored: dict[str, float] | None = None  # male / female, renormalised per answer, then averaged
+    origin_scored: dict[str, float] | None = None  # the four origins, renormalised per answer, then averaged
+    gender_all_hedge: int = 0  # valid answers with everything on "unsure": missing for the gender question
+    origin_all_hedge: int = 0  # valid answers with everything on "Other or unsure": missing for the origin question
 
     @property
     def p_gender(self) -> float | None:
-        """Mean p(intended gender)."""
-        return None if self.gender_p is None else self.gender_p[self.intended_gender]
+        """Mean scored p(intended gender)."""
+        return None if self.gender_scored is None else self.gender_scored[self.intended_gender]
 
     @property
     def p_origin(self) -> float | None:
-        """Mean p(intended origin)."""
-        return None if self.origin_p is None else self.origin_p[self.intended_origin]
+        """Mean scored p(intended origin)."""
+        return None if self.origin_scored is None else self.origin_scored[self.intended_origin]
+
+    @property
+    def gender_hedge(self) -> float | None:
+        """Mean p(unsure) over the valid answers."""
+        return None if self.gender_p is None else self.gender_p[GENDER_HEDGE]
+
+    @property
+    def origin_hedge(self) -> float | None:
+        """Mean p(Other or unsure) over the valid answers."""
+        return None if self.origin_p is None else self.origin_p[ORIGIN_HEDGE]
 
 
 @dataclass(frozen=True)
 class ProbabilityCell:
-    """The mean p(intended gender) and p(intended origin) of the names of one gender x origin cell, for one model
-    or over all ("all")."""
+    """The mean scored p(intended gender) and p(intended origin), and the mean hedge shares, of the names of one
+    gender x origin cell, for one model or over all ("all")."""
 
     gender: str
     origin: str
     model: str
     names: int
-    answered: int  # names with at least one valid answer: the means are over these
+    answered: int  # names with at least one valid answer: the means are over the names with a value
     p_gender: float | None
     p_origin: float | None
     passed: int  # names of the cell that pass for this model (for "all": for every model)
+    gender_hedge: float | None = None
+    origin_hedge: float | None = None
 
 
 @dataclass(frozen=True)
@@ -462,7 +524,9 @@ def _mean_distribution(ds: list[dict[str, float]]) -> dict[str, float] | None:
 
 
 def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | None = None) -> ProbabilityCheck:
-    """Mean distributions and pass flags per name x model, and mean p(intended) per gender x origin cell."""
+    """Mean distributions, hedge shares and pass flags per name x model, and mean p(intended) and hedge shares per
+    gender x origin cell. The rule sees the scored distributions (hedges out); an answer with nothing on the
+    substantive options of a question is missing for that question, which fails the name like a missing answer."""
     rule = rule or ProbabilityRule()
     if any(p.mode != PROBABILITY for p in perceptions):
         raise ValueError("score_probabilities needs probability-mode perceptions")
@@ -472,38 +536,50 @@ def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | N
     scores = []
     for (name, model), ps in groups.items():
         valid = [p for p in ps if not p.missing]
-        g = _mean_distribution([p.gender_p for p in valid if p.gender_p is not None])
-        o = _mean_distribution([p.origin_p for p in valid if p.origin_p is not None])
+        g_scored = [d for p in valid if (d := p.gender_scored) is not None]
+        o_scored = [d for p in valid if (d := p.origin_scored) is not None]
+        g = _mean_distribution(g_scored)
+        o = _mean_distribution(o_scored)
         intended_gender, intended_origin = ps[0].intended_gender, ps[0].intended_origin
         g_ok = g is not None and rule.gender_passes(g, intended_gender)
         o_ok = o is not None and rule.origin_passes(o, intended_origin)
-        scores.append(ProbabilityScore(name, intended_gender, intended_origin, model, len(ps), len(ps) - len(valid),
-                                       g, o, g_ok, o_ok, g_ok and o_ok and len(valid) == len(ps)))
-    cells = [ProbabilityCell(*c) for c in _cells(scores, lambda s: s.p_gender, lambda s: s.p_origin)]
+        complete = len(g_scored) == len(o_scored) == len(ps)
+        scores.append(ProbabilityScore(
+            name, intended_gender, intended_origin, model, len(ps), len(ps) - len(valid),
+            _mean_distribution([p.gender_p for p in valid if p.gender_p is not None]),
+            _mean_distribution([p.origin_p for p in valid if p.origin_p is not None]),
+            g_ok, o_ok, g_ok and o_ok and complete, gender_scored=g, origin_scored=o,
+            gender_all_hedge=len(valid) - len(g_scored), origin_all_hedge=len(valid) - len(o_scored)))
+    cells = [ProbabilityCell(*c) for c in _cells(scores, [lambda s: s.p_gender, lambda s: s.p_origin,
+                                                          lambda s: s.gender_hedge, lambda s: s.origin_hedge],
+                                                 answered=lambda s: s.gender_p is not None)]
     return ProbabilityCheck(perceptions, scores, cells, rule)
 
 
-def _cells(scores: Sequence[NameScore | ProbabilityScore], gender_value: Callable, origin_value: Callable
-           ) -> list[tuple[str, str, str, int, int, float | None, float | None, int]]:
-    """Per gender x origin cell, per model and over all ("all"): (gender, origin, model, names, answered, mean
-    gender value, mean origin value, names passing), the means over the scores that have a value."""
+def _cells(scores: Sequence[NameScore | ProbabilityScore], values: Sequence[Callable], *, answered: Callable
+           ) -> list[tuple]:
+    """Per gender x origin cell, per model and over all ("all"): (gender, origin, model, names, answered, the
+    first two means of `values`, names passing, the other means), each mean over the scores that have a value;
+    `answered` tells a score with at least one valid answer."""
     models = list(dict.fromkeys(s.model for s in scores))
     out = []
+
+    def row(gender: str, origin: str, model: str, names: int, n_answered: int, means: list, passed: int) -> tuple:
+        return (gender, origin, model, names, n_answered, *means[:2], passed, *means[2:])
+
     for gender, origin in dict.fromkeys((s.intended_gender, s.intended_origin) for s in scores):
         in_cell = [s for s in scores if (s.intended_gender, s.intended_origin) == (gender, origin)]
         for model in models:
             ss = [s for s in in_cell if s.model == model]
-            out.append((gender, origin, model, len(ss), sum(gender_value(s) is not None for s in ss),
-                        _mean([gender_value(s) for s in ss]), _mean([origin_value(s) for s in ss]),
-                        sum(s.passed for s in ss)))
+            out.append(row(gender, origin, model, len(ss), sum(bool(answered(s)) for s in ss),
+                           [_mean([v(s) for s in ss]) for v in values], sum(s.passed for s in ss)))
         names = list(dict.fromkeys(s.name for s in in_cell))
         by_name = {n: [s for s in in_cell if s.name == n] for n in names}
-        answered = sum(any(gender_value(s) is not None for s in ss) for ss in by_name.values())
         # each name weighs the same: its mean over the models with a value, then the mean over names
-        out.append((gender, origin, "all", len(names), answered,
-                    _mean([_mean([gender_value(s) for s in ss]) for ss in by_name.values()]),
-                    _mean([_mean([origin_value(s) for s in ss]) for ss in by_name.values()]),
-                    sum(all(s.passed for s in ss) for ss in by_name.values())))
+        out.append(row(gender, origin, "all", len(names),
+                       sum(any(answered(s) for s in ss) for ss in by_name.values()),
+                       [_mean([_mean([v(s) for s in ss]) for ss in by_name.values()]) for v in values],
+                       sum(all(s.passed for s in ss) for ss in by_name.values())))
     return out
 
 
@@ -541,32 +617,39 @@ def _choice_tables(check: NameCheck) -> dict[str, tuple[list[str], list[list]]]:
 def _probability_tables(check: ProbabilityCheck) -> dict[str, tuple[list[str], list[list]]]:
     g_cols = [f"p_{g}" for g in GENDER_OPTIONS]
     o_cols = [f"p_{o}" for o in ORIGIN_KEYS]
+    scored_cols = [f"scored_p_{k}" for k in (*SCORED_GENDERS, *SCORED_ORIGINS)]
     r = check.rule
     return {
         "perceptions.csv": (["name", "intended_gender", "intended_origin", "model", "repeat", *g_cols, "gender_sum",
-                             *o_cols, "origin_sum"],
+                             *o_cols, "origin_sum", "gender_hedge", "origin_hedge", *scored_cols],
                             [[p.name, p.intended_gender, p.intended_origin, p.model, p.repeat,
                               *_dist(p.gender_p, GENDER_OPTIONS), _p(p.gender_sum),
-                              *_dist(p.origin_p, ORIGIN_KEYS), _p(p.origin_sum)] for p in check.perceptions]),
-        "summary.csv": (["name", "intended_gender", "intended_origin", "model", "answers", "missing", *g_cols,
-                         *o_cols, "p_intended_gender", "p_intended_origin", "gender_threshold", "origin_minimum",
-                         "gender_pass", "origin_pass", "pass"],
+                              *_dist(p.origin_p, ORIGIN_KEYS), _p(p.origin_sum), _p(p.gender_hedge),
+                              _p(p.origin_hedge), *_dist(p.gender_scored, SCORED_GENDERS),
+                              *_dist(p.origin_scored, SCORED_ORIGINS)] for p in check.perceptions]),
+        "summary.csv": (["name", "intended_gender", "intended_origin", "model", "answers", "missing",
+                         "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols, "gender_hedge", "origin_hedge",
+                         *scored_cols, "p_intended_gender", "p_intended_origin", "gender_threshold",
+                         "origin_minimum", "gender_pass", "origin_pass", "pass"],
                         [[s.name, s.intended_gender, s.intended_origin, s.model, s.answers, s.missing,
-                          *_dist(s.gender_p, GENDER_OPTIONS), *_dist(s.origin_p, ORIGIN_KEYS), _p(s.p_gender),
-                          _p(s.p_origin), r.gender_threshold, r.origin_minimum, s.gender_passed, s.origin_passed,
-                          s.passed] for s in check.scores]),
+                          s.gender_all_hedge, s.origin_all_hedge, *_dist(s.gender_p, GENDER_OPTIONS),
+                          *_dist(s.origin_p, ORIGIN_KEYS), _p(s.gender_hedge), _p(s.origin_hedge),
+                          *_dist(s.gender_scored, SCORED_GENDERS), *_dist(s.origin_scored, SCORED_ORIGINS),
+                          _p(s.p_gender), _p(s.p_origin), r.gender_threshold, r.origin_minimum, s.gender_passed,
+                          s.origin_passed, s.passed] for s in check.scores]),
         "cells.csv": (["gender", "origin", "model", "names", "names_answered", "mean_p_intended_gender",
-                       "mean_p_intended_origin", "names_passing"],
-                      [[c.gender, c.origin, c.model, c.names, c.answered, _p(c.p_gender), _p(c.p_origin), c.passed]
-                       for c in check.cells]),
+                       "mean_p_intended_origin", "mean_gender_hedge", "mean_origin_hedge", "names_passing"],
+                      [[c.gender, c.origin, c.model, c.names, c.answered, _p(c.p_gender), _p(c.p_origin),
+                        _p(c.gender_hedge), _p(c.origin_hedge), c.passed] for c in check.cells]),
     }
 
 
 def write_outputs(check: NameCheck | ProbabilityCheck, out_dir: str | Path) -> list[Path]:
     """perceptions.csv (one row per answer), summary.csv (per name x model), cells.csv (per gender x origin).
 
-    Probability mode: the normalised probabilities per answer with their raw sums, the mean distributions per
-    name x model with the pass flags, and the mean p(intended) per cell; blank where an answer is missing.
+    Probability mode: the normalised probabilities per answer with their raw sums, hedge shares and scored
+    (hedges-out) distributions; the same means per name x model with the pass flags; and the mean scored
+    p(intended) and hedge shares per cell. Blank where there is nothing to show (a missing or all-hedge answer).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -608,10 +691,12 @@ SUM_TOLERANCE = 0.01  # a raw sum further than this from 1 is reported as normal
 
 
 def _format_probability_check(check: ProbabilityCheck) -> str:
-    lines = [f"gender x origin cells, mean p(intended) over names and models (a name passes when, for every "
-             f"model, {check.rule.describe()}):"]
-    lines += _table(["gender", "origin", "p(gender)", "p(origin)", "names passing"],
-                    [[c.gender, c.origin, _fmt(c.p_gender), _fmt(c.p_origin), f"{c.passed}/{c.names}"]
+    lines = [f"gender x origin cells, mean p(intended) with the hedges left out, and the mean hedge shares "
+             f"(p(unsure), p(Other or unsure)), over names and models (a name passes when, for every model, "
+             f"{check.rule.describe()}):"]
+    lines += _table(["gender", "origin", "p(gender)", "p(origin)", "hedge g", "hedge o", "names passing"],
+                    [[c.gender, c.origin, _fmt(c.p_gender), _fmt(c.p_origin), _fmt(c.gender_hedge),
+                      _fmt(c.origin_hedge), f"{c.passed}/{c.names}"]
                      for c in check.cells if c.model == "all"])
     off = [p for p in check.perceptions if not p.missing and any(
         x is not None and abs(x - 1) > SUM_TOLERANCE for x in (p.gender_sum, p.origin_sum))]
@@ -623,22 +708,29 @@ def _format_probability_check(check: ProbabilityCheck) -> str:
     if not failing:
         lines.append(f"\nall {total} names pass for every model")
         return "\n".join(lines)
-    lines.append(f"\n{len(check.failing)} of {total} names fail (mean probabilities over the valid answers; replace "
-                 f"a name that fails on them in the name bank; rerun to ask missing answers again):")
+    lines.append(f"\n{len(check.failing)} of {total} names fail (mean probabilities over the valid answers, hedges "
+                 f"left out and shown apart; replace a name that fails on them in the name bank; rerun to ask "
+                 f"missing answers again):")
 
     def fails_on(s: ProbabilityScore) -> str:
         parts = [w for w, ok in (("gender", s.gender_passed), ("origin", s.origin_passed)) if not ok]
-        return "+".join(parts + (["missing"] if s.missing else []))
+        return "+".join(parts + (["missing"] if s.missing else [])
+                        + (["all-hedge"] if s.gender_all_hedge or s.origin_all_hedge else []))
 
-    lines += _table(["name", "intended", "model", "p(gender)", *(f"p({ORIGIN_SHORT[k]})" for k in ORIGIN_KEYS),
-                     "fails on", "missing"],
+    lines += _table(["name", "intended", "model", "p(gender)", "hedge g",
+                     *(f"p({ORIGIN_SHORT[k]})" for k in SCORED_ORIGINS), "hedge o", "fails on", "missing"],
                     [[s.name, f"{s.intended_gender} {s.intended_origin}", s.model, _fmt(s.p_gender),
-                      *(_fmt(None if s.origin_p is None else s.origin_p[k]) for k in ORIGIN_KEYS), fails_on(s),
-                      f"{s.missing}/{s.answers}"] for s in failing])
+                      _fmt(s.gender_hedge),
+                      *(_fmt(None if s.origin_scored is None else s.origin_scored[k]) for k in SCORED_ORIGINS),
+                      _fmt(s.origin_hedge), fails_on(s), f"{s.missing}/{s.answers}"] for s in failing])
     incomplete = list(dict.fromkeys(s.name for s in failing if s.missing))
     if incomplete:
         lines.append(f"\n{len(incomplete)} names have missing answers (a failed call, or an answer that is not a "
                      "probability for every option); rerun to ask them again")
+    hedged = list(dict.fromkeys(s.name for s in failing if s.gender_all_hedge or s.origin_all_hedge))
+    if hedged:
+        lines.append(f"\n{len(hedged)} names have answers with everything on a hedge option (missing for that "
+                     "question; valid and cached, so a rerun replays them)")
     lines += _errors(check.perceptions)
     return "\n".join(lines)
 
