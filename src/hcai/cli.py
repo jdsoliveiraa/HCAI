@@ -10,7 +10,7 @@ With condition C1 in the design it also prints what survived blinding (`hcai.bli
 `hcai models <config.toml>` lists the models of the config's providers; `hcai check <config.toml>` also probes
 each configured model (chat endpoint, JSON schema, temperature and seed determinism), see `hcai.check`.
 `hcai names <config.toml>` runs the name manipulation check: does each name of the bank signal its intended
-gender and origin to every pipeline model (`hcai.namecheck`, ADR 0009)? It reports failing names and changes nothing.
+gender and origin to every pipeline model (`hcai.namecheck`, ADRs 0009, 0011)? It reports failing names and changes nothing.
 `hcai site <config.toml>` writes the static project site (`hcai.site`, ADR 0010): the realism review page and the
 project's navigation hub. It reads the repository only and never calls an LLM.
 
@@ -34,7 +34,11 @@ from hcai.corpus import (
     CorpusFrozen, GenerationFailed, fake_generator_response, generate_corpus, recheck_corpus, translate_corpus,
 )
 from hcai.llm import CachedClient, FakeLLMClient, LLMClient, LLMRequest, MeteredClient, ProviderExhausted
-from hcai.namecheck import DEFAULT_THRESHOLD, NameCheckAborted, ValidAnswersOnly, format_check, perceive, score, write_outputs
+from hcai.namecheck import (
+    DEFAULT_MODE, DEFAULT_ORIGIN_MINIMUM, DEFAULT_THRESHOLD, MODES, PROBABILITY, NameCheck, NameCheckAborted,
+    ProbabilityCheck, ProbabilityRule, ValidAnswersOnly, format_check, perceive, score, score_probabilities,
+    write_outputs,
+)
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
@@ -195,14 +199,21 @@ def check_command(config: str | Path, client: LLMClient, listings: dict[str, lis
 
 
 def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path, cache_dir: str | Path,
-                  repeats: int = 5, threshold: float = DEFAULT_THRESHOLD, temperature: float | None = None
-                  ) -> tuple[str, bool]:
-    """Run the name manipulation check through `client` (cached in `cache_dir`); (report, every name passes)."""
+                  repeats: int = 5, threshold: float = DEFAULT_THRESHOLD, temperature: float | None = None,
+                  mode: str = DEFAULT_MODE, origin_minimum: float = DEFAULT_ORIGIN_MINIMUM) -> tuple[str, bool]:
+    """Run the name manipulation check through `client` (cached in `cache_dir`); (report, every name passes).
+
+    `mode` is "probability" (ADR 0011: `threshold` is the minimum mean p(intended gender), `origin_minimum` the
+    minimum mean p(intended origin) of a non-Portuguese name) or "choice" (ADR 0009: `threshold` is the minimum
+    gender and origin hit rate)."""
     design = load_design(config)
+    rule = ProbabilityRule(threshold, origin_minimum) if mode == PROBABILITY else None  # validated before any call
     metered = MeteredClient(client)
     # a missing answer (unparseable, or outside the options) is not cached, so a rerun asks it again
-    cached = CachedClient(ValidAnswersOnly(metered), cache_dir, cache_unparseable=False)
-    check = score(perceive(design, cached, repeats=repeats, temperature=temperature), threshold)
+    cached = CachedClient(ValidAnswersOnly(metered, mode), cache_dir, cache_unparseable=False)
+    perceptions = perceive(design, cached, repeats=repeats, temperature=temperature, mode=mode)
+    check: NameCheck | ProbabilityCheck = (score_probabilities(perceptions, rule) if rule is not None
+                                           else score(perceptions, threshold))
     paths = write_outputs(check, out_dir)
     calls = sum(metered.calls.values())
     missing = sum(p.missing for p in check.perceptions)
@@ -216,6 +227,9 @@ def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path,
 def _fake_response(request: LLMRequest) -> dict:
     props = (request.response_schema or {}).get("properties", {})
     if set(props) == {"gender", "origin"}:  # name manipulation check: no signal at all
+        if props["gender"].get("type") == "object":  # probability mode: all on "unsure" and "Other or unsure"
+            return {q: {o: float(i == len(props[q]["required"]) - 1) for i, o in enumerate(props[q]["required"])}
+                    for q in ("gender", "origin")}
         return {"gender": "unsure", "origin": props["origin"]["enum"][-1]}
     if "blinded_cv" in props:
         return fake_blinding(request)
@@ -278,8 +292,15 @@ def main(argv: list[str] | None = None) -> int:
     names = sub.add_parser("names", help="name manipulation check: does each name signal its gender and origin?")
     names.add_argument("config", type=Path)
     names.add_argument("--repeats", type=int, default=5, help="answers per name and model (default 5)")
+    names.add_argument("--mode", choices=MODES, default=DEFAULT_MODE,
+                       help="probability: a probability per option (default); choice: one gender and the single "
+                            "most likely origin (ADRs 0011, 0009)")
     names.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
-                       help=f"minimum gender and origin hit rate for a name to pass (default {DEFAULT_THRESHOLD})")
+                       help="probability mode: minimum mean p(intended gender); choice mode: minimum gender and origin "
+                            f"hit rate (default {DEFAULT_THRESHOLD})")
+    names.add_argument("--origin-min", type=float, default=DEFAULT_ORIGIN_MINIMUM,
+                       help="probability mode: minimum mean p(intended origin) of a non-Portuguese name, which must "
+                            f"also be the highest non-Portuguese option (default {DEFAULT_ORIGIN_MINIMUM})")
     names.add_argument("--temperature", type=float, default=None,
                        help="sampling temperature (default: the design's [design] temperature)")
     names.add_argument("--out", type=Path, default=Path("results/names"), help="output directory (default: results/names)")
@@ -368,8 +389,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "names":
-        if args.repeats < 1 or not 0.0 <= args.threshold <= 1.0:
-            print("error: --repeats must be >= 1 and --threshold between 0 and 1", file=sys.stderr)
+        if args.repeats < 1 or not 0.0 <= args.threshold <= 1.0 or not 0.0 <= args.origin_min <= 1.0:
+            print("error: --repeats must be >= 1 and --threshold and --origin-min between 0 and 1", file=sys.stderr)
             return 1
         cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
         try:
@@ -380,7 +401,8 @@ def _dispatch(args: argparse.Namespace) -> int:
                 client = make_client(design, design.models)
             report, all_pass = names_command(args.config, client, out_dir=args.out, cache_dir=cache,
                                              repeats=args.repeats, threshold=args.threshold,
-                                             temperature=args.temperature)
+                                             temperature=args.temperature, mode=args.mode,
+                                             origin_minimum=args.origin_min)
         except (ValueError, NameCheckAborted) as e:  # a config error (e.g. an origin with no option), or a model
             # whose calls keep failing (e.g. a wrong model id): answers so far are cached, so a rerun resumes
             print(f"names: {e}", file=sys.stderr)

@@ -1,6 +1,7 @@
 # 9. The name manipulation check asks each pipeline model about each name, blind to the intended answer
 
-Date: 2026-11-15 · Status: accepted (#11 Part B; spec #1 story 11)
+Date: 2026-11-15 · Status: accepted (#11 Part B; spec #1 story 11); amended by ADR 0011, which makes a probability
+mode the default. What follows is the choice mode, still available as `hcai names --mode choice`.
 
 ## Context
 
@@ -31,7 +32,8 @@ Ukrainian or other Eastern European; Other or unsure), with the context "a job a
   threshold (default 0.8) for every model and no answer is missing. A missing answer (a failed call, invalid JSON
   or a value outside the options) is left out of the rates, is not cached, and is asked again on a rerun. Cells
   report the unweighted mean of the rates of their names that have a valid answer (and how many those are), per
-  model and over all models.
+  model and over all models (there each name's mean over its models first, so every name weighs the same; ADR
+  0011).
 - **Failures are not perception.** Failed calls are reported with their error, not only as failing names; 10 in a
   row for one model stop the check (a wrong model id or an outage would otherwise fail every name), and a provider
   limit stops it as in `hcai run` (ADR 0005). Either way the answers so far are cached.

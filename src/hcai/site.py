@@ -809,7 +809,7 @@ class Site:
                      + "</section>")
         names = self.results / "names"
         if (names / "cells.csv").exists():
-            body = csv_table(names / "cells.csv", "Mean hit rates per gender × origin cell and model (cells.csv)")
+            body = csv_table(names / "cells.csv", "Per gender × origin cell and model (cells.csv)")
             if (names / "summary.csv").exists():
                 with (names / "summary.csv").open(newline="", encoding="utf-8") as f:
                     rows = list(csv.reader(f))
