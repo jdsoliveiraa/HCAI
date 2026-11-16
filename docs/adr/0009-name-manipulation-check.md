@@ -1,6 +1,7 @@
 # 9. The name manipulation check asks each pipeline model about each name, blind to the intended answer
 
-Date: 2026-11-15 · Status: accepted (#11 Part B; spec #1 story 11)
+Date: 2026-11-15 · Status: accepted (#11 Part B; spec #1 story 11); amended by ADR 0011, which makes a probability
+mode the default. What follows is the choice mode, still available as `hcai names --mode choice`.
 
 ## Context
 
