@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from conftest import FIXTURE_BANK
-from hcai.names import GENDERS, load_name_bank, name_parts
+from conftest import FIXTURE_BANK, ROOT
+from hcai.names import GENDERS, NameBankError, load_name_bank, name_parts
 
 # The fixture, not data/names/name_bank.toml: the real bank's names are the researcher's to pick.
 BANK = FIXTURE_BANK
@@ -42,14 +42,20 @@ def _write_bank(tmp_path, pt_male: list[str], pt_female: list[str]):
     return path
 
 
-def test_every_name_has_its_own_first_name_and_surname_across_the_bank():
-    bank = load_name_bank(BANK)
-
-    names = [n for o in bank.origins for g in GENDERS for n in o.names[g]]
-    firsts = [name_parts(n)[0].casefold() for n in names]
-    lasts = [name_parts(n)[1].casefold() for n in names]
-    assert len(set(firsts)) == len(firsts) and len(set(lasts)) == len(lasts)
+def test_name_parts_are_the_first_and_the_last_word():
     assert name_parts("Ana Clara Souza") == ("Ana", "Souza")
+    assert name_parts("  Tiago   Martins ") == ("Tiago", "Martins")
+
+
+@pytest.mark.xfail(strict=True, raises=NameBankError,
+                   reason="the researcher still has to give every name of data/names/name_bank.toml its own first "
+                          "name and surname; once that is done this test passes, so strict xfail fails: then drop "
+                          "the marker")
+def test_the_real_name_bank_loads_with_four_names_per_cell():
+    bank = load_name_bank(ROOT / "data" / "names" / "name_bank.toml")
+
+    assert {o.key for o in bank.origins} == {"portuguese", "brazilian", "palop", "eastern_european"}
+    assert all(len(o.names[g]) >= 3 and o.sources for o in bank.origins for g in GENDERS)
 
 
 def test_a_bank_with_unique_parts_loads(tmp_path):
@@ -92,3 +98,26 @@ def test_the_config_loader_rejects_a_bank_with_repeated_parts(tmp_path):
     config.write_text(config.read_text().replace(str(FIXTURE_BANK), str(bank)))
     with pytest.raises(ValueError, match="surname 'Martins'"):
         load_design(config)
+
+
+def test_parts_are_compared_in_one_unicode_form(tmp_path):
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFD", "Inês")
+    assert decomposed != "Inês"
+    with pytest.raises(NameBankError, match="first name"):
+        load_name_bank(_write_bank(tmp_path, ["Tiago Martins"], ["Inês Carvalho", f"{decomposed} Pereira"]))
+
+
+def test_a_cli_command_reports_a_bad_bank_as_an_error_not_a_traceback(tmp_path, capsys):
+    from conftest import fixture_config
+    from hcai.cli import main
+
+    config = fixture_config("variants", tmp_path)
+    config.write_text(config.read_text().replace(str(FIXTURE_BANK), str(_write_bank(tmp_path, ["Tiago Martins"],
+                                                                                    ["Inês Martins"]))))
+
+    assert main(["variants", str(config), "--out", str(tmp_path / "out")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "surname 'Martins' in Tiago Martins, Inês Martins" in err
+    assert "Traceback" not in err

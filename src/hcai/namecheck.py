@@ -708,14 +708,15 @@ def _format_probability_check(check: ProbabilityCheck) -> str:
     if not failing:
         lines.append(f"\nall {total} names pass for every model")
         return "\n".join(lines)
-    lines.append(f"\n{len(check.failing)} of {total} names fail (mean probabilities over the valid answers, hedges "
-                 f"left out and shown apart; replace a name that fails on them in the name bank; rerun to ask "
-                 f"missing answers again):")
+    lines.append(f"\n{len(check.failing)} of {total} names fail (p(gender) and p(origin) scored without the hedges, "
+                 f"averaged over the answers not all hedge; hedge shares averaged over the valid answers; replace a "
+                 f"name that fails on them in the name bank; rerun to ask missing answers again):")
 
     def fails_on(s: ProbabilityScore) -> str:
         parts = [w for w, ok in (("gender", s.gender_passed), ("origin", s.origin_passed)) if not ok]
+        hedged = [q for q, n in (("gender", s.gender_all_hedge), ("origin", s.origin_all_hedge)) if n]
         return "+".join(parts + (["missing"] if s.missing else [])
-                        + (["all-hedge"] if s.gender_all_hedge or s.origin_all_hedge else []))
+                        + ([f"all-hedge({'/'.join(hedged)})"] if hedged else []))
 
     lines += _table(["name", "intended", "model", "p(gender)", "hedge g",
                      *(f"p({ORIGIN_SHORT[k]})" for k in SCORED_ORIGINS), "hedge o", "fails on", "missing"],

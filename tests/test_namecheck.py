@@ -747,7 +747,7 @@ def test_names_command_reports_all_hedge_answers(tmp_path):
 
     assert not all_pass and "(0 missing)" in report
     line = next(x for x in report.splitlines() if x.startswith("Tiago Martins"))
-    assert "gender+all-hedge" in line and "1.000" in line
+    assert "gender+all-hedge(gender)" in line and "1.000" in line
     assert "everything on a hedge option" in report
     summary = list(csv.DictReader((tmp_path / "o" / "summary.csv").open(encoding="utf-8")))
     tiago = [r for r in summary if r["name"] == "Tiago Martins"]

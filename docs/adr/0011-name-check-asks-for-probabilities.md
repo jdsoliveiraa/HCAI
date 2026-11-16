@@ -69,7 +69,9 @@ report the hedge share separately, so hedging stays visible without deciding the
 - "Other or unsure" no longer competes with a non-Portuguese intended origin. A name the model can hardly place
   still has to lead the other minority origins and reach the minimum among what is left; how much the model
   hedged on it is in the hedge columns and should be read alongside a pass. A model that hedges heavily is scored
-  on the small remainder of its probability, so its scores can be noisier than they look.
+  on the small remainder of its probability: only an all-hedge question counts as missing, so an answer with 99%
+  on the hedges is scored on the remaining 1% at full weight and can pass outright. Read every pass together with
+  its hedge shares.
 - Self-reported probabilities from an LLM are not calibrated likelihoods; they are a graded perception score. At
   temperature 0 the repeats still mainly vary the option order, as in ADR 0009.
 - The schema uses the option labels (with spaces) as property keys. OpenAI-style strict structured outputs accept
