@@ -1,10 +1,38 @@
 import socket
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from hcai.config import Design, Identity
 from hcai.llm import FakeLLMClient, LLMRequest
+
+ROOT = Path(__file__).parents[1]
+# A name bank with the real bank's structure and placeholder names, every first name and surname used once: tests
+# do not depend on the names the researcher picks for data/names/name_bank.toml.
+FIXTURE_BANK = Path(__file__).parent / "fixtures" / "name_bank.toml"
+
+
+def fixture_config(name: str, directory: Path | None = None, **replacements: str) -> Path:
+    """configs/<name>.toml written to `directory` (a new temporary one by default) with the fixture name bank and
+    its other ../data paths made absolute; each `old=new` of `replacements` must occur in it."""
+    directory = Path(tempfile.mkdtemp(prefix=f"hcai-{name}-")) if directory is None else directory
+    text = ((ROOT / "configs" / f"{name}.toml").read_text()
+            .replace('name_bank = "../data/names/name_bank.toml"', f'name_bank = "{FIXTURE_BANK}"')
+            .replace('"../data/', f'"{ROOT}/data/'))
+    assert str(FIXTURE_BANK) in text
+    for old, new in replacements.items():
+        assert old in text, old
+        text = text.replace(old, new)
+    config = directory / f"{name}.toml"
+    config.write_text(text)
+    return config
+
+
+def core_config(directory: Path | None = None, **replacements: str) -> Path:
+    """configs/core.toml with the fixture name bank (see `fixture_config`)."""
+    return fixture_config("core", directory, **replacements)
+
 
 JOB_AD = "Data Analyst. Mandatory: SQL, Python. Desirable: dashboards."
 BASE_CV = "$name\nNationality: $nationality\n$work_eligibility\n\nSQL, Python, 3 years of experience."

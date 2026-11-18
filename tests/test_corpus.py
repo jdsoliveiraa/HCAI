@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import FIXTURE_BANK
 from hcai.cli import _fake_response, main
 from hcai.config import Design, Generator, load_design
 from hcai.corpus import (
@@ -19,7 +20,7 @@ from hcai.variants import WORK_ELIGIBILITY, build_variants, render_variant
 
 MANDATORY = ["Degree in a relevant field", "At least 2 years of experience", "Fluent Portuguese"]
 DESIRABLE = ["Team leadership", "A professional certification"]
-BANK = Path(__file__).parents[1] / "data" / "names" / "name_bank.toml"
+BANK = FIXTURE_BANK  # the real bank is the researcher's; its names may not pass the loader's checks yet
 
 
 def job_ad_response(role: str = "role") -> dict:
@@ -241,7 +242,7 @@ CORE = Path(__file__).parent.parent / "configs" / "core.toml"
 def test_core_config_generates_a_corpus_from_the_command_line_and_refuses_to_overwrite_it(tmp_path, monkeypatch, capsys):
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    core = load_design(CORE)
+    core = load_design(core_config(tmp_path))
     assert core.generator is not None and core.generator.model not in core.models
     config = tmp_path / "core.toml"
     config.write_text(
@@ -468,7 +469,7 @@ def test_an_unsupported_language_is_refused_before_any_llm_call(bilingual_design
 def test_core_config_runs_in_en_and_pt_with_rows_for_every_agent(tmp_path, monkeypatch):
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    assert load_design(CORE).languages == ["en", "pt"]
+    assert load_design(core_config(tmp_path)).languages == ["en", "pt"]
     config = tmp_path / "core.toml"
     config.write_text(
         CORE.read_text()

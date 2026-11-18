@@ -239,17 +239,11 @@ def test_a_c0_only_run_writes_no_proxy_leak_report(design, fake_client, tmp_path
 
 
 def test_fake_llm_run_of_a_c1_config_reports_proxy_leaks(tmp_path, capsys):
-    from pathlib import Path
-
     from hcai.cli import main
 
-    repo = Path(__file__).parent.parent
-    config = tmp_path / "c1.toml"
-    config.write_text(
-        (repo / "configs" / "variants.toml").read_text()
-        .replace('conditions = ["C0"]', 'conditions = ["C0", "C1"]')
-        .replace('"../data/', f'"{repo}/data/')
-    )
+    from conftest import fixture_config
+
+    config = fixture_config("variants", tmp_path, **{'conditions = ["C0"]': 'conditions = ["C0", "C1"]'})
 
     exit_code = main(["run", str(config), "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache"), "--fake-llm"])
 

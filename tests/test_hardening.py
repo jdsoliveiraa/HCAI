@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from conftest import scores_by_name
+from conftest import fixture_config, scores_by_name
 from hcai.config import PilotSlice, Pools, RunSettings, load_design, pilot_design
 from hcai.llm import FakeLLMClient, LLMRequest
 
@@ -394,12 +394,10 @@ def test_a_pilot_sized_results_table_can_be_analysed(design, tmp_path):
 
 
 def test_the_variants_config_run_can_be_analysed(tmp_path):
-    from pathlib import Path
-
     from hcai.analysis import analyse, load_results
     from hcai.cli import _fake_response, run_command
 
-    config = Path(__file__).parent.parent / "configs" / "variants.toml"
+    config = fixture_config("variants", tmp_path)
     run_command(config, out_dir=tmp_path, cache_dir=tmp_path / "cache", client=FakeLLMClient(_fake_response))
 
     analysis = analyse(load_results(tmp_path / "results.csv"), "pt_m", n_boot=50, n_model_boot=0, n_perm=99)
@@ -409,12 +407,10 @@ def test_the_variants_config_run_can_be_analysed(tmp_path):
 
 @pytest.mark.parametrize("pilot_slice", [None, PilotSlice(identities=3, languages=1)])
 def test_pilot_scales_match_the_variants_and_pools_the_runner_builds(pilot_slice):
-    from pathlib import Path
-
     from hcai.runner import build_pools
     from hcai.variants import build_variants
 
-    full = load_design(Path(__file__).parent.parent / "configs" / "variants.toml")  # EN + PT, name-bank identities
+    full = load_design(fixture_config("variants"))  # EN + PT, name-bank identities
     full = replace(full, conditions=["C0", "C1"], models=["model-a", "model-b"],
                    pools=Pools(equal_quality=True, mixed_quality=2, mixed_size=8))
     if pilot_slice is not None:
@@ -434,9 +430,7 @@ def test_pilot_scales_match_the_variants_and_pools_the_runner_builds(pilot_slice
 
 @pytest.mark.parametrize("n", [2, 4])
 def test_a_pilot_slice_of_identities_spreads_over_origins_and_genders(n):
-    from pathlib import Path
-
-    full = load_design(Path(__file__).parent.parent / "configs" / "variants.toml")  # name bank: 4 origins x 2 genders
+    full = load_design(fixture_config("variants"))  # name bank: 4 origins x 2 genders
 
     kept = pilot_design(replace(full, pilot=PilotSlice(identities=n))).identities
 

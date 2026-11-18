@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import scores_by_name
+from conftest import FIXTURE_BANK, fixture_config, scores_by_name
 from hcai.cli import main
 from hcai.config import Design, load_design
 from hcai.llm import FakeLLMClient
@@ -20,7 +20,7 @@ from hcai.variants import (
     write_variants,
 )
 
-BANK = Path(__file__).parents[1] / "data" / "names" / "name_bank.toml"
+BANK = FIXTURE_BANK
 
 CV_EN = """# $name
 Lisbon, Portugal · Nationality: $nationality
@@ -117,7 +117,7 @@ def test_en_rendering_uses_pronouns_name_and_nationality_of_the_identity(variant
     assert "She is a data analyst" in v.text and "chairwoman" in v.text
     assert "Nationality: Cape Verdean" in v.text
     assert v.text.startswith(f"# {v.name}\n")
-    assert v.name in {"Djamila Tavares", "Jandira Semedo", "Ivanilda Varela", "Neusa Monteiro"}
+    assert v.name in {"Djamila Fortes", "Jandira Lopes", "Ivanilda Furtado", "Neusa Brito"}
 
 
 def test_body_text_is_identical_across_identities_of_the_same_base_cv_and_language(variant_design):
@@ -290,7 +290,7 @@ def test_a_config_may_not_set_both_a_name_bank_and_identity_tables(variant_desig
 
 
 def test_the_checked_in_variants_config_renders_and_passes_the_diff_check():
-    design = load_design(Path(__file__).parents[1] / "configs" / "variants.toml")
+    design = load_design(fixture_config("variants"))
 
     variants = build_variants(design)
 

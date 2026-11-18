@@ -39,6 +39,7 @@ from hcai.namecheck import (
     ProbabilityCheck, ProbabilityRule, ValidAnswersOnly, format_check, perceive, score, score_probabilities,
     write_outputs,
 )
+from hcai.names import NameBankError
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
@@ -300,7 +301,8 @@ def main(argv: list[str] | None = None) -> int:
                             f"hit rate (default {DEFAULT_THRESHOLD})")
     names.add_argument("--origin-min", type=float, default=DEFAULT_ORIGIN_MINIMUM,
                        help="probability mode: minimum mean p(intended origin) of a non-Portuguese name, which must "
-                            f"also be the highest non-Portuguese option (default {DEFAULT_ORIGIN_MINIMUM})")
+                            "also be the highest non-Portuguese origin, both scored without the hedge options "
+                            f"(default {DEFAULT_ORIGIN_MINIMUM})")
     names.add_argument("--temperature", type=float, default=None,
                        help="sampling temperature (default: the design's [design] temperature)")
     names.add_argument("--out", type=Path, default=Path("results/names"), help="output directory (default: results/names)")
@@ -317,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return _dispatch(args)
-    except (MissingKey, FileNotFoundError) as e:
+    except (MissingKey, FileNotFoundError, NameBankError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except ProviderExhausted as e:

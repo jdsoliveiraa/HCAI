@@ -1,0 +1,47 @@
+# Test fixture: the structure of data/names/name_bank.toml (origins, codes, nationalities, sources) with
+# placeholder names in which every first name and every surname is used once across the bank, as the loader
+# requires. Tests use it so they do not depend on the researcher's choice of names.
+
+[origins.portuguese]
+code = "pt"
+country = "Portugal"
+nationality = { en = "Portuguese", pt = "Portuguesa" }
+male = ["Tiago Martins", "Nuno Gonçalves", "Rui Sousa", "Gonçalo Ferreira"]
+female = ["Inês Carvalho", "Joana Pereira", "Rita Almeida", "Catarina Ribeiro"]
+sources = [
+  { title = "Forebears: most common forenames in Portugal", url = "https://forebears.io/portugal/forenames" },
+  { title = "Forebears: most common surnames in Portugal", url = "https://forebears.io/portugal/surnames" },
+]
+
+[origins.brazilian]
+code = "br"
+country = "Brazil"
+nationality = { en = "Brazilian", pt = "Brasileira" }
+male = ["Matheus Costa", "Thiago Oliveira", "Leandro Lima", "Felipe Rodrigues"]
+female = ["Ana Clara Souza", "Jéssica Barbosa", "Fernanda Araújo", "Larissa Cavalcanti"]
+sources = [
+  { title = "IBGE Censo 2010: Nomes no Brasil (first-name frequencies)", url = "https://censo2010.ibge.gov.br/nomes/" },
+  { title = "Forebears: most common surnames in Brazil", url = "https://forebears.io/brazil/surnames" },
+]
+
+[origins.palop]
+code = "palop"
+country = "Cape Verde"
+nationality = { en = "Cape Verdean", pt = "Cabo-verdiana" }
+male = ["Adilson Tavares", "Edmilson Semedo", "Nilton Varela", "Odair Monteiro"]
+female = ["Djamila Fortes", "Jandira Lopes", "Ivanilda Furtado", "Neusa Brito"]
+sources = [
+  { title = "Forebears: most common forenames in Cape Verde", url = "https://forebears.io/cape-verde/forenames" },
+  { title = "Forebears: most common surnames in Cape Verde", url = "https://forebears.io/cape-verde/surnames" },
+]
+
+[origins.eastern_european]
+code = "ee"
+country = "Ukraine"
+nationality = { en = "Ukrainian", pt = "Ucraniana" }
+male = ["Oleksandr Melnyk", "Andrii Shevchenko", "Dmytro Bondarenko", "Serhii Kovalenko"]
+female = ["Olena Tkachenko", "Iryna Kravchenko", "Oksana Boyko", "Tetiana Lysenko"]
+sources = [
+  { title = "Forebears: most common forenames in Ukraine", url = "https://forebears.io/ukraine/forenames" },
+  { title = "Forebears: most common surnames in Ukraine", url = "https://forebears.io/ukraine/surnames" },
+]

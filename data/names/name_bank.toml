@@ -5,9 +5,11 @@
 # names that are recognisably tied to the origin in Portugal and skip names that are
 # common across all four origins (e.g. Maria, José, Silva), since a shared name would
 # not signal origin. Full names combine one first name with one surname from the same
-# origin. Surnames are gender-invariant, so male and female names of an origin share
-# the same surname pool. Whether the names signal the intended gender and origin is
-# tested separately by the manipulation check (spec #1, story 11).
+# origin. Every name has its own first name and its own surname across the whole bank
+# (first name = the first word, surname = the last word, compared ignoring case), so no
+# two identities share a name cue; loading a bank that repeats either fails, naming the
+# duplicates. Whether the names signal the intended gender and origin is tested
+# separately by the manipulation check (spec #1, story 11).
 #
 # Origins: `code` builds the identity id (<code>_m / <code>_f). `nationality` is the
 # value written after "Nationality:" (en) or "Nacionalidade:" (pt); in PT-PT it agrees

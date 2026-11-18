@@ -24,22 +24,41 @@ check unchanged.
   and padding) with a finite, non-negative number (not a string or a bool) and a positive sum. Each distribution is
   divided by its sum, which is recorded (`gender_sum`, `origin_sum`), so percentages or loose sums still count. Any
   other answer is missing: not cached, asked again on a rerun, and failing the name, as in ADR 0009.
-- **Aggregation.** Per name x model, the normalised distributions of the valid answers are averaged (an unweighted
-  mean over repeats).
-- **Pass rule** (`ProbabilityRule`; comparisons with 1e-9 float slack):
+- **Hedges are not scored** (amended 2026-11-16, see below). Each answer is scored on its substantive options only:
+  gender on p(male) and p(female) renormalised to sum 1 ("unsure" left out), origin on the four origin options
+  renormalised ("Other or unsure" left out). The hedge share of each question, p(unsure) and p(Other or unsure)
+  of the answer's normalised distribution, is reported beside the scores. An answer with nothing on the
+  substantive options of a question (all hedge) is missing for that question: it is left out of that question's
+  mean and fails the name like a missing answer, but it is a valid answer, so it is cached and a rerun replays it.
+- **Aggregation.** Per name x model, the scored distributions are averaged over the answers that have one, and the
+  full normalised distributions and hedge shares over the valid answers (unweighted means over repeats).
+- **Pass rule** (`ProbabilityRule`, on the mean scored distributions; comparisons with 1e-9 float slack):
   - gender: mean p(intended gender) >= `--threshold` (default 0.8);
-  - origin, intended Portuguese (`HOST_ORIGINS`): mean p(Portuguese) is strictly the highest of all five origin
-    options;
-  - origin, any other intended origin: mean p(intended) is strictly the highest among the options other than
-    Portuguese ("Other or unsure" included) and at least `--origin-min` (default 0.25).
-  A tie is not "the highest". A name passes when it passes for every model with no answer missing.
-- **Outputs.** `perceptions.csv` has the normalised probabilities and raw sums per answer; `summary.csv` the mean
-  distribution, mean p(intended gender) and p(intended origin), the rule's parameters and the gender, origin and
-  overall pass flags per name x model; `cells.csv` the mean p(intended) per gender x origin cell, per model and over
-  all (each name weighs the same: its mean over the models with a value, then the mean over names). Probabilities
+  - origin, intended Portuguese (`HOST_ORIGINS`): mean p(Portuguese) is strictly the highest of the four origins;
+  - origin, any other intended origin: mean p(intended) is strictly the highest among the origins other than
+    Portuguese and at least `--origin-min` (default 0.25).
+  A tie is not "the highest". A name passes when it passes for every model with no answer missing for either
+  question.
+- **Outputs.** `perceptions.csv` has the normalised probabilities over all options and raw sums per answer, its
+  hedge shares (`gender_hedge`, `origin_hedge`) and its scored distributions (`scored_p_<option>`); `summary.csv`
+  per name x model the counts of all-hedge answers per question, the mean full distribution, mean hedge shares,
+  mean scored distribution, scored p(intended gender) and p(intended origin), the rule's parameters and the gender,
+  origin and overall pass flags; `cells.csv` the mean scored p(intended) and the mean hedge shares per gender x
+  origin cell, per model and over all (each name weighs the same: its mean over the models with a value, then the
+  mean over names). Probabilities
   are written with 6 decimals; the pass flags are computed at full precision, so a value printed at a boundary may
-  still fail it. The printed report lists the failing names with p(intended gender), the whole origin
-  distribution and what they fail on, and counts answers whose raw sums were off 1 by more than 0.01.
+  still fail it. The printed report shows the cells with their hedge shares, lists the failing names with
+  p(intended gender), the scored origin distribution, both hedge shares and what they fail on, and counts answers
+  whose raw sums were off 1 by more than 0.01.
+
+### Amendment (2026-11-16): the hedge options are left out of the scoring
+
+The first probability run scored the distributions over every option, hedges included. gpt-5.6-luna put about
+41% of its probability on the hedge options ("unsure", "Other or unsure") on average, against about 9% for
+qwen3.8-flash. A name that luna read as clearly male but hedged on then fell below the gender threshold, and
+"Other or unsure" outweighed the intended minority origin, so the strict scoring measured how much a model hedges,
+not what it perceives in the name. The researcher decided to score the substantive options renormalised and to
+report the hedge share separately, so hedging stays visible without deciding the pass.
 
 ## Consequences
 
@@ -47,8 +66,12 @@ check unchanged.
   origin clearly beats the other non-Portuguese readings and reaches the minimum. The audit's claim is accordingly
   "the name leans towards its intended origin more than towards any other minority origin", not "the name is read
   as foreign"; results should be reported that way.
-- "Other or unsure" competes with a non-Portuguese intended origin, so a name the model cannot place does not pass
-  on a low bar.
+- "Other or unsure" no longer competes with a non-Portuguese intended origin. A name the model can hardly place
+  still has to lead the other minority origins and reach the minimum among what is left; how much the model
+  hedged on it is in the hedge columns and should be read alongside a pass. A model that hedges heavily is scored
+  on the small remainder of its probability: only an all-hedge question counts as missing, so an answer with 99%
+  on the hedges is scored on the remaining 1% at full weight and can pass outright. Read every pass together with
+  its hedge shares.
 - Self-reported probabilities from an LLM are not calibrated likelihoods; they are a graded perception score. At
   temperature 0 the repeats still mainly vary the option order, as in ADR 0009.
 - The schema uses the option labels (with spaces) as property keys. OpenAI-style strict structured outputs accept
