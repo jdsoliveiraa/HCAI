@@ -350,6 +350,7 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
     build = build_probability_request if mode == PROBABILITY else build_request
+    version = PROBABILITY_PROMPT_VERSION if mode == PROBABILITY else ""  # failed calls included
     names = bank_names(design)
     bank_origins = list(dict.fromkeys(o for _, _, o in names))
     temperature = design.temperature if temperature is None else temperature
@@ -368,7 +369,8 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
                     if failures[model] >= MAX_CONSECUTIVE_ERRORS:
                         raise NameCheckAborted(f"{model}: {failures[model]} calls in a row failed, the last with "
                                                f"{error}") from e
-                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode))
+                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode,
+                                          prompt_version=version))
                     continue
                 failures[model] = 0
                 if mode == PROBABILITY:
@@ -376,7 +378,7 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
                     out.append(Perception(name, gender, origin, model, repeat, "", "", cached=response.cached,
                                           mode=mode, gender_p=a and a.gender_p, origin_p=a and a.origin_p,
                                           gender_sum=a and a.gender_sum, origin_sum=a and a.origin_sum,
-                                          prompt_version=PROBABILITY_PROMPT_VERSION))
+                                          prompt_version=version))
                 else:
                     out.append(Perception(name, gender, origin, model, repeat, *parse_answer(response.parsed),
                                           cached=response.cached))

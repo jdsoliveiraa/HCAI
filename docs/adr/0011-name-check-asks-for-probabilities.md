@@ -83,6 +83,10 @@ and changed the probability prompt instead:
 A model can still answer all-hedge under prob-v2; that answer is still missing and fails the name. Asking for a
 best estimate pushes a model towards committing to a reading, so a pass under prob-v2 is not directly comparable
 with one under prob-v1: compare results of the same `prompt_version` only.
+"Other or unsure" also means an origin outside the four listed; by keeping it for names with no signal, prob-v2
+may move the probability of a name that points elsewhere (an Italian- or Spanish-sounding surname, say) onto
+the listed origins, which can help such a name pass. Read origin passes under prob-v2 with that in mind. Failed
+calls carry the prompt version too (the version of the request that failed).
 
 ## Consequences
 

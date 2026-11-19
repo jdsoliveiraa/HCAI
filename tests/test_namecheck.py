@@ -398,6 +398,22 @@ def test_every_probability_answer_records_the_prompt_version_and_choice_answers_
     assert {p.prompt_version for p in perceive(design, oracle(), repeats=1, mode="choice")} == {""}
 
 
+def test_a_failed_call_still_records_the_prompt_version():
+    design = load_design(CORE)
+    inner = prob_oracle()
+    first = bank_names(design)[0][0]
+
+    def respond(request: LLMRequest):
+        if f"full name is: {first}\n" in request.messages[0]["content"]:
+            raise ProviderError("boom")
+        return inner.responder(request)
+
+    perceptions = perceive(design, FakeLLMClient(respond), repeats=2, mode="probability")
+    failed = [p for p in perceptions if p.error]
+    assert failed and {p.prompt_version for p in perceptions} == {PROBABILITY_PROMPT_VERSION}
+    assert {s.prompt_version for s in score_probabilities(perceptions).scores} == {PROBABILITY_PROMPT_VERSION}
+
+
 def test_parse_probabilities_normalises_and_records_the_raw_sums():
     a = parse_probabilities({"gender": {"male": 0.7, "female": 0.2, "unsure": 0.1},
                              "origin": _labels(pt=0.5, br=0.3, palop=0.1, ee=0.05, other=0.05)})
