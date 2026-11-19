@@ -47,10 +47,6 @@ def test_name_parts_are_the_first_and_the_last_word():
     assert name_parts("  Tiago   Martins ") == ("Tiago", "Martins")
 
 
-@pytest.mark.xfail(strict=True, raises=NameBankError,
-                   reason="the researcher still has to give every name of data/names/name_bank.toml its own first "
-                          "name and surname; once that is done this test passes, so strict xfail fails: then drop "
-                          "the marker")
 def test_the_real_name_bank_loads_with_four_names_per_cell():
     bank = load_name_bank(ROOT / "data" / "names" / "name_bank.toml")
 

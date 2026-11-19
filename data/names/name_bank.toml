@@ -14,15 +14,18 @@
 # Origins: `code` builds the identity id (<code>_m / <code>_f). `nationality` is the
 # value written after "Nationality:" (en) or "Nacionalidade:" (pt); in PT-PT it agrees
 # with the feminine noun "nacionalidade", so it does not change with the candidate's gender.
-# PALOP is represented by Cape Verde and Eastern Europe by Ukraine: the largest PALOP
-# and Eastern-European resident communities in Portugal.
+# PALOP is represented by Angola and Eastern Europe by Ukraine. Cape Verde (the largest
+# PALOP community in Portugal) was tried first, but its names are mostly Portuguese-derived
+# and the pilot name check read them as Portuguese or Brazilian; Angolan Bantu surnames
+# carry the origin. Ukrainian is the largest Eastern-European community in Portugal.
+# Names were replaced after the pilot name check (#11): see docs/pilot/name-check.md.
 
 [origins.portuguese]
 code = "pt"
 country = "Portugal"
 nationality = { en = "Portuguese", pt = "Portuguesa" }
-male = ["Tiago Martins", "Nuno Gonçalves", "Rui Sousa", "Gonçalo Ferreira"]
-female = ["Inês Martins", "Joana Gonçalves", "Rita Sousa", "Catarina Ferreira"]
+male = ["Tiago Simões", "Nuno Fonseca", "Rui Antunes", "Gonçalo Figueiredo"]
+female = ["Inês Coelho", "Joana Cunha", "Rita Matos", "Catarina Gonçalves"]
 sources = [
   { title = "Forebears: most common forenames in Portugal", url = "https://forebears.io/portugal/forenames" },
   { title = "Forebears: most common surnames in Portugal", url = "https://forebears.io/portugal/surnames" },
@@ -32,8 +35,8 @@ sources = [
 code = "br"
 country = "Brazil"
 nationality = { en = "Brazilian", pt = "Brasileira" }
-male = ["Matheus Souza", "Thiago Oliveira", "Leandro Lima", "Felipe Rodrigues"]
-female = ["Ana Clara Souza", "Jéssica Oliveira", "Fernanda Lima", "Larissa Rodrigues"]
+male = ["Vinícius Moraes", "Thiago Santana", "Matheus Siqueira", "Davi Araujo"]
+female = ["Larissa Cavalcante", "Aline Bezerra", "Ana Clara Souza", "Jéssica de Paula"]
 sources = [
   { title = "IBGE Censo 2010: Nomes no Brasil (first-name frequencies)", url = "https://censo2010.ibge.gov.br/nomes/" },
   { title = "Forebears: most common surnames in Brazil", url = "https://forebears.io/brazil/surnames" },
@@ -41,21 +44,21 @@ sources = [
 
 [origins.palop]
 code = "palop"
-country = "Cape Verde"
-nationality = { en = "Cape Verdean", pt = "Cabo-verdiana" }
-male = ["Adilson Tavares", "Edmilson Semedo", "Nilton Varela", "Odair Monteiro"]
-female = ["Djamila Tavares", "Jandira Semedo", "Ivanilda Varela", "Neusa Monteiro"]
+country = "Angola"
+nationality = { en = "Angolan", pt = "Angolana" }
+male = ["Adilson Kiala", "Wilson Muhongo", "Nelson Cassule", "Edson Gonga"]
+female = ["Esperança Panzo", "Laurinda Bunga", "Marcelina Vunge", "Edna Cassoma"]
 sources = [
-  { title = "Forebears: most common forenames in Cape Verde", url = "https://forebears.io/cape-verde/forenames" },
-  { title = "Forebears: most common surnames in Cape Verde", url = "https://forebears.io/cape-verde/surnames" },
+  { title = "Forebears: most common forenames in Angola", url = "https://forebears.io/angola/forenames" },
+  { title = "Forebears: most common surnames in Angola (Bantu surnames from ranks 61-143)", url = "https://forebears.io/angola/surnames" },
 ]
 
 [origins.eastern_european]
 code = "ee"
 country = "Ukraine"
 nationality = { en = "Ukrainian", pt = "Ucraniana" }
-male = ["Oleksandr Melnyk", "Andrii Shevchenko", "Dmytro Bondarenko", "Serhii Kovalenko"]
-female = ["Olena Melnyk", "Iryna Shevchenko", "Oksana Bondarenko", "Tetiana Kovalenko"]
+male = ["Oleksandr Melnyk", "Andrii Tkachenko", "Dmytro Bondarenko", "Serhii Kovalenko"]
+female = ["Olena Boiko", "Iryna Kravchenko", "Oksana Lysenko", "Tetiana Marchenko"]
 sources = [
   { title = "Forebears: most common forenames in Ukraine", url = "https://forebears.io/ukraine/forenames" },
   { title = "Forebears: most common surnames in Ukraine", url = "https://forebears.io/ukraine/surnames" },
