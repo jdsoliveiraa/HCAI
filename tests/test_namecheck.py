@@ -11,7 +11,7 @@ from hcai.cli import main, names_command
 from hcai.config import load_design
 from hcai.llm import FakeLLMClient, LLMRequest, ProviderError, ProviderExhausted
 from hcai.namecheck import (
-    GENDER_OPTIONS, MAX_CONSECUTIVE_ERRORS, ORIGIN_KEYS, ORIGIN_LABELS, OTHER, OTHER_LABEL, NameCheckAborted,
+    GENDER_OPTIONS, MAX_CONSECUTIVE_ERRORS, ORIGIN_KEYS, PROBABILITY_PROMPT_VERSION, ORIGIN_LABELS, OTHER, OTHER_LABEL, NameCheckAborted,
     Perception, ProbabilityRule, bank_names, build_probability_request, build_request, option_order, parse_answer,
     parse_probabilities, perceive, score, score_probabilities,
 )
@@ -362,6 +362,42 @@ def test_the_probability_request_keeps_the_context_and_the_option_order_of_its_r
             != build_request("X Y", "m", 0, bank_origins=bank, temperature=0.0, seed=7).cache_key())
 
 
+def test_the_probability_prompt_asks_for_a_best_estimate_and_keeps_the_hedges_for_no_signal():
+    bank = list(ORIGIN_LABELS)
+    for repeat in range(4):
+        request = build_probability_request("X Y", "m", repeat, bank_origins=bank, temperature=0.0, seed=7)
+        prompt = request.messages[0]["content"]
+        assert "give your best estimate as a probability" in prompt
+        assert "A name carries real but uncertain signals" in prompt
+        assert "in proportion to how likely each one is" in prompt
+        assert ('Use "unsure" and "Other or unsure" only for what the name gives no signal at all about for that '
+                "question") in prompt
+        # outside the name and the two option lists, the prompt names no gender or origin option at all
+        genders, origins = option_order(repeat, bank)
+        rest = prompt.replace("X Y", "").replace(", ".join(genders), "").replace("; ".join(origins), "")
+        rest = rest.replace('"unsure"', "").replace(f'"{OTHER_LABEL}"', "").lower()
+        words = ["male", "female", "portug", "brazil", "cape verd", "palop", "ukrain", "eastern europ", "angol",
+                 "african", "latin", "slav"]
+        assert not [w for w in words if w in rest.replace("portugal", "")], rest
+        assert rest.count("portugal") == 1  # the context sentence only
+    # the choice prompt is unchanged (its answers keep their cache entries)
+    assert build_request("X Y", "m", 0, bank_origins=bank, temperature=0.0, seed=7).messages[0]["content"] == (
+        "Consider a job applicant in Portugal whose full name is: X Y\n\n"
+        "Based only on the name, answer two questions.\n"
+        f"1. gender: how would most people perceive this applicant's gender? One of: "
+        f"{', '.join(option_order(0, bank)[0])}.\n"
+        f"2. origin: what is the applicant's most likely origin? One of: {'; '.join(option_order(0, bank)[1])}.\n\n"
+        'Answer with JSON: {"gender": "<option>", "origin": "<option>"}, copying each option exactly.')
+
+
+def test_every_probability_answer_records_the_prompt_version_and_choice_answers_none():
+    design = load_design(CORE)
+    probability = perceive(design, prob_oracle(), repeats=1, mode="probability")
+    assert {p.prompt_version for p in probability} == {PROBABILITY_PROMPT_VERSION}
+    assert {s.prompt_version for s in score_probabilities(probability).scores} == {PROBABILITY_PROMPT_VERSION}
+    assert {p.prompt_version for p in perceive(design, oracle(), repeats=1, mode="choice")} == {""}
+
+
 def test_parse_probabilities_normalises_and_records_the_raw_sums():
     a = parse_probabilities({"gender": {"male": 0.7, "female": 0.2, "unsure": 0.1},
                              "origin": _labels(pt=0.5, br=0.3, palop=0.1, ee=0.05, other=0.05)})
@@ -533,17 +569,22 @@ def test_names_command_in_probability_mode_writes_the_probabilities(tmp_path):
     # p(gender) 0.9 / 0.95 with "unsure" (0.05) left out; the scored origins 0.5, 0.3, 0.2; no origin hedge
     assert all(x in failing_line for x in ("0.947", "0.050", "0.500", "0.300", "0.200", "origin"))
     rows = list(csv.DictReader((tmp_path / "out" / "perceptions.csv").open(encoding="utf-8")))
-    assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "p_male", "p_female",
+    assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "prompt_version",
+                             "p_male", "p_female",
                              "p_unsure", "gender_sum", "p_portuguese", "p_brazilian", "p_palop", "p_eastern_european",
                              "p_other_or_unsure", "origin_sum", "gender_hedge", "origin_hedge", "scored_p_male",
                              "scored_p_female", "scored_p_portuguese", "scored_p_brazilian", "scored_p_palop",
                              "scored_p_eastern_european"]
+    assert {r["prompt_version"] for r in rows} == {PROBABILITY_PROMPT_VERSION}
     odair = next(r for r in rows if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (odair["p_male"], odair["gender_sum"], odair["p_portuguese"], odair["origin_sum"]) == (
         "0.900000", "50.000000", "0.500000", "2.000000")
     assert (odair["gender_hedge"], odair["origin_hedge"], odair["scored_p_male"], odair["scored_p_palop"]) == (
         "0.050000", "0.000000", "0.947368", "0.200000")
     summary = list(csv.DictReader((tmp_path / "out" / "summary.csv").open(encoding="utf-8")))
+    assert list(summary[0])[:6] == ["name", "intended_gender", "intended_origin", "model", "prompt_version",
+                                    "answers"]
+    assert {r["prompt_version"] for r in summary} == {PROBABILITY_PROMPT_VERSION}
     assert {(r["name"], r["model"]) for r in summary if r["pass"] == "False"} == {("Odair Monteiro", first)}
     o = next(r for r in summary if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (o["p_intended_gender"], o["p_intended_origin"], o["gender_pass"], o["origin_pass"]) == (

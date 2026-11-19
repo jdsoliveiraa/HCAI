@@ -60,6 +60,30 @@ qwen3.8-flash. A name that luna read as clearly male but hedged on then fell bel
 not what it perceives in the name. The researcher decided to score the substantive options renormalised and to
 report the hedge share separately, so hedging stays visible without deciding the pass.
 
+### Amendment (2026-11-19): the probability prompt asks for a best estimate (`prompt_version` prob-v2)
+
+With the hedges left out of the scoring, the rerun showed gpt-5.6-luna putting 100% on "unsure" and/or "Other or
+unsure" in 25 of its 160 answers (16%), spread over every repeat (0-4) and every intended origin, while its other
+answers on the same names were clear (e.g. 0.99 on the Ukrainian option). These all-hedge answers are missing for
+that question and fail the name, so the check failed names on an answering habit of one model rather than on
+what the name signals. The researcher kept the strict rule (an all-hedge answer is missing and fails the name)
+and changed the probability prompt instead:
+
+- It asks for the model's best estimate, says that a name carries real but uncertain signals, asks it to express
+  that uncertainty in the probabilities of the substantive options in proportion to how likely each one is, and
+  keeps "unsure" / "Other or unsure" for a name that gives no signal at all for that question.
+- Unchanged: the context ("a job applicant in Portugal", "based only on the name"), the options, their per-repeat
+  order, the seed and the JSON schema. The new text names no gender or origin option outside the option lists
+  (only the two hedge labels it explains), no intended label, nothing from the name bank and no example name.
+- The choice-mode prompt is unchanged.
+- `PROBABILITY_PROMPT_VERSION` ("prob-v2") is recorded per answer in `perceptions.csv` and per name x model in
+  `summary.csv` (`prompt_version`). The first prompt is "prob-v1"; its outputs have no `prompt_version` column.
+- The new prompt has new cache keys: the prob-v1 answers stay in the cache, unused, and the check asks again.
+
+A model can still answer all-hedge under prob-v2; that answer is still missing and fails the name. Asking for a
+best estimate pushes a model towards committing to a reading, so a pass under prob-v2 is not directly comparable
+with one under prob-v1: compare results of the same `prompt_version` only.
+
 ## Consequences
 
 - A Brazilian or Cape Verdean name may now pass while "Portuguese" is its most likely origin, as long as its own
