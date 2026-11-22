@@ -32,7 +32,9 @@ check unchanged.
   mean and fails the name like a missing answer, but it is a valid answer, so it is cached and a rerun replays it.
   (Amended 2026-11-22, see below: it is first asked again, up to `--reasks` times.)
 - **Aggregation.** Per name x model, the scored distributions are averaged over the answers that have one, and the
-  full normalised distributions and hedge shares over the valid answers (unweighted means over repeats).
+  full normalised distributions and hedge shares over the valid answers (unweighted means over repeats). (Since
+  2026-11-22 the answers are the answers on record, one per repeat: an all-hedge answer that was asked again is
+  in none of these means, see below.)
 - **Pass rule** (`ProbabilityRule`, on the mean scored distributions; comparisons with 1e-9 float slack):
   - gender: mean p(intended gender) >= `--threshold` (default 0.8);
   - origin, intended Portuguese (`HOST_ORIGINS`): mean p(Portuguese) is strictly the highest of the four origins;
@@ -43,8 +45,8 @@ check unchanged.
 - **Outputs.** `perceptions.csv` has the normalised probabilities over all options and raw sums per answer, its
   hedge shares (`gender_hedge`, `origin_hedge`) and its scored distributions (`scored_p_<option>`), and (since
   2026-11-22) its `attempt`; `reasked.csv` (since 2026-11-22) the all-hedge answers that were asked again;
-  `summary.csv` per name x model the re-asks (`reasks`, since 2026-11-22), the counts of all-hedge answers per
-  question, the mean full distribution, mean hedge shares,
+  `summary.csv` per name x model the re-asks made and their limit (`reasks`, `max_reasks`, since 2026-11-22), the
+  counts of all-hedge answers per question, the mean full distribution, mean hedge shares,
   mean scored distribution, scored p(intended gender) and p(intended origin), the rule's parameters and the gender,
   origin and overall pass flags; `cells.csv` the mean scored p(intended) and the mean hedge shares per gender x
   origin cell, per model and over all (each name weighs the same: its mean over the models with a value, then the
@@ -130,9 +132,12 @@ The researcher decided to treat an all-hedge answer like a failed call and ask i
   the start of it.
 - **Record.** `perceptions.csv` keeps one row per answer and gains `attempt` (0, or k for the k-th re-ask).
   `reasked.csv` has one row, with the same columns, per all-hedge answer that was asked again, so the two files
-  hold every valid answer received. `summary.csv` gains `reasks` per name x model. The printed report gives per
-  model the re-asks made, for how many answers, and how many of those stayed all hedge; its last line counts the
-  answers, the re-asks, the LLM calls and what came from the cache (answers + re-asks = calls + from cache).
+  hold every valid answer received. `summary.csv` gains `reasks` (the re-asks made, per name x model) and
+  `max_reasks` (the `--reasks` limit of the run, beside the rule's other parameters). The printed report gives per
+  model the re-asks made, for how many answers, and how those answers ended: answered, still all hedge, or
+  missing (the re-ask failed or was not valid). Its last line counts the answers, the re-asks, the LLM calls and
+  what came from the cache (answers + re-asks = calls + from cache). A choice-mode run writes no `reasked.csv`
+  and removes one left in its output directory by a probability run, so no re-asks of another run sit beside it.
 - **Choice mode** is unchanged: "unsure" and "Other or unsure" are answers there and are never asked again.
 
 This is a retry of non-answers, with a record, not a filter on content. What decides a re-ask is that an answer
@@ -149,12 +154,19 @@ with the results:
   the name then stays all hedge and fails. But one estimate in up to four attempts now replaces the all-hedge
   answers before it, so a name the model declines to place fairly often can pass. `attempt` and `reasks` show how
   many re-asks a pass needed; a name that needed several, or on several repeats, deserves a look in `reasked.csv`.
+- The hedge shares (`gender_hedge`, `origin_hedge`: per answer, per name x model and per cell) are over the
+  answers on record. An all-hedge answer that was asked again had a hedge share of 1 and is in none of them, so
+  with re-asks the hedge columns say how much the model hedges when it gives an estimate and understate its
+  hedging overall: read them with `reasks` and `reasked.csv`.
 - Results with and without re-asks differ on the names that needed one. `--reasks 0` gives the earlier behaviour
-  from the same cache; compare runs of the same `--reasks` only.
+  from the same cache; compare runs of the same `--reasks` only (`max_reasks` in `summary.csv`).
 - As in ADR 0006, a chain depends on what the model answered when it was asked: two people starting from empty
   caches may see different chains. The outputs and the cache are the record.
 - A re-ask costs one call, at most `--reasks` per all-hedge answer. With re-asks on, `--repeats` is at most 1000,
-  so that no attempt has the seed of another repeat.
+  so that no attempt has the seed of another repeat. The attempt is carried by the seed alone, so in one cache a
+  design whose seed is a multiple of 1000 away from another's would take that design's re-asks for its first
+  answers (and the reverse), as would a `--reasks 0` run of more than 1000 repeats; neither applies to the
+  design (seed 42, 5 repeats). Use a separate `--cache` for such a run.
 
 ## Consequences
 
@@ -167,7 +179,8 @@ with the results:
   hedged on it is in the hedge columns and should be read alongside a pass. A model that hedges heavily is scored
   on the small remainder of its probability: only an all-hedge question counts as missing, so an answer with 99%
   on the hedges is scored on the remaining 1% at full weight and can pass outright. Read every pass together with
-  its hedge shares.
+  its hedge shares (and, since 2026-11-22, with its re-asks: the hedge shares leave out the all-hedge answers
+  that were asked again).
 - Self-reported probabilities from an LLM are not calibrated likelihoods; they are a graded perception score. At
   temperature 0 the repeats still mainly vary the option order, as in ADR 0009.
 - The schema uses the option labels (with spaces) as property keys. OpenAI-style strict structured outputs accept

@@ -215,8 +215,8 @@ def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path,
     # a missing answer (unparseable, or outside the options) is not cached, so a rerun asks it again
     cached = CachedClient(ValidAnswersOnly(metered, mode), cache_dir, cache_unparseable=False)
     perceptions = perceive(design, cached, repeats=repeats, temperature=temperature, mode=mode, reasks=reasks)
-    check: NameCheck | ProbabilityCheck = (score_probabilities(perceptions, rule) if rule is not None
-                                           else score(perceptions, threshold))
+    check: NameCheck | ProbabilityCheck = (score_probabilities(perceptions, rule, max_reasks=reasks)
+                                           if rule is not None else score(perceptions, threshold))
     paths = write_outputs(check, out_dir)
     calls = sum(metered.calls.values())
     missing = sum(p.missing for p in check.perceptions)

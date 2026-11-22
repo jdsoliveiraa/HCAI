@@ -73,9 +73,11 @@ SCORED_ORIGINS = tuple(ORIGIN_LABELS)
 PROBABILITY_PROMPT_VERSION = "prob-v2"
 DEFAULT_REASKS = 3  # probability mode: times an all-hedge answer is asked again before it stays missing (ADR 0011)
 # A re-ask is the request of its repeat with the seed moved by this much per attempt, and nothing else changed: a
-# new cache key, and a seed no other repeat or attempt of the name has as long as the repeats are fewer than
-# this. Attempt 0 adds nothing, so its request and cache key are what they were before re-asks existed.
+# new cache key, and a seed no other repeat or attempt of the name has as long as the repeats are at most this
+# many (repeats 0 to 999). Attempt 0 adds nothing, so its request and cache key are what they were before
+# re-asks existed. The attempt is in the seed only: a design whose seed is a multiple of this away shares entries.
 REASK_SEED_STEP = 1000
+REASKED_FILE = "reasked.csv"  # probability mode: the all-hedge answers that were asked again
 EPS = 1e-9  # float slack for the pass comparisons (a mean of 0.8s may come out as 0.7999999999)
 
 
@@ -395,7 +397,8 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
         raise ValueError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
     last_attempt = reasks if mode == PROBABILITY else 0
     if last_attempt and repeats > REASK_SEED_STEP:
-        raise ValueError(f"repeats must be at most {REASK_SEED_STEP} when all-hedge answers are asked again")
+        raise ValueError(f"repeats must be at most {REASK_SEED_STEP} when all-hedge answers are asked again "
+                         "(the probability mode with reasks above 0)")
     version = PROBABILITY_PROMPT_VERSION if mode == PROBABILITY else ""  # failed calls included
     names = bank_names(design)
     bank_origins = list(dict.fromkeys(o for _, _, o in names))
@@ -523,7 +526,8 @@ class ProbabilityRule:
 class ProbabilityScore:
     """One name x model: the mean distributions over all options and the mean hedge shares over its valid answers,
     the mean scored distributions (hedges out) over the answers that have one, and its pass flags under the rule.
-    Each is None when there is nothing to average."""
+    Each is None when there is nothing to average. Its answers are the answers on record, one per repeat: an
+    all-hedge answer that was asked again is in none of the means, the hedge shares included, only in `reasks`."""
 
     name: str
     intended_gender: str
@@ -587,6 +591,7 @@ class ProbabilityCheck:
     scores: list[ProbabilityScore]
     cells: list[ProbabilityCell]
     rule: ProbabilityRule
+    max_reasks: int | None = None  # the most re-asks an all-hedge answer could get (`perceive`'s `reasks`), if known
 
     @property
     def failing(self) -> list[str]:
@@ -598,12 +603,14 @@ def _mean_distribution(ds: list[dict[str, float]]) -> dict[str, float] | None:
     return {k: math.fsum(d[k] for d in ds) / len(ds) for k in ds[0]} if ds else None
 
 
-def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | None = None) -> ProbabilityCheck:
+def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | None = None, *,
+                        max_reasks: int | None = None) -> ProbabilityCheck:
     """Mean distributions, hedge shares and pass flags per name x model, and mean p(intended) and hedge shares per
     gender x origin cell. The rule sees the scored distributions (hedges out); an answer with nothing on the
     substantive options of a question is missing for that question, which fails the name like a missing answer.
     Each perception is the answer of its repeat: the all-hedge answers it replaced (`reasked`) are counted
-    (`reasks`), never scored."""
+    (`reasks`) and are in no mean, so the hedge shares leave them out too. `max_reasks` is the limit the answers
+    were asked with, kept to be written with the results (None: not known)."""
     rule = rule or ProbabilityRule()
     if any(p.mode != PROBABILITY for p in perceptions):
         raise ValueError("score_probabilities needs probability-mode perceptions")
@@ -632,7 +639,7 @@ def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | N
     cells = [ProbabilityCell(*c) for c in _cells(scores, [lambda s: s.p_gender, lambda s: s.p_origin,
                                                           lambda s: s.gender_hedge, lambda s: s.origin_hedge],
                                                  answered=lambda s: s.gender_p is not None)]
-    return ProbabilityCheck(perceptions, scores, cells, rule)
+    return ProbabilityCheck(perceptions, scores, cells, rule, max_reasks)
 
 
 def _cells(scores: Sequence[NameScore | ProbabilityScore], values: Sequence[Callable], *, answered: Callable
@@ -709,19 +716,20 @@ def _probability_tables(check: ProbabilityCheck) -> dict[str, tuple[list[str], l
 
     return {
         "perceptions.csv": (answer_cols, [answer_row(p) for p in check.perceptions]),
-        "reasked.csv": (answer_cols, [answer_row(e) for p in check.perceptions for e in p.reasked]),
+        REASKED_FILE: (answer_cols, [answer_row(e) for p in check.perceptions for e in p.reasked]),
         "summary.csv": (["name", "intended_gender", "intended_origin", "model", "prompt_version", "answers",
                          "missing", "reasks", "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols,
                          "gender_hedge", "origin_hedge",
                          *scored_cols, "p_intended_gender", "p_intended_origin", "gender_threshold",
-                         "origin_minimum", "gender_pass", "origin_pass", "pass"],
+                         "origin_minimum", "max_reasks", "gender_pass", "origin_pass", "pass"],
                         [[s.name, s.intended_gender, s.intended_origin, s.model, s.prompt_version, s.answers,
                           s.missing, s.reasks, s.gender_all_hedge, s.origin_all_hedge,
                           *_dist(s.gender_p, GENDER_OPTIONS),
                           *_dist(s.origin_p, ORIGIN_KEYS), _p(s.gender_hedge), _p(s.origin_hedge),
                           *_dist(s.gender_scored, SCORED_GENDERS), *_dist(s.origin_scored, SCORED_ORIGINS),
-                          _p(s.p_gender), _p(s.p_origin), r.gender_threshold, r.origin_minimum, s.gender_passed,
-                          s.origin_passed, s.passed] for s in check.scores]),
+                          _p(s.p_gender), _p(s.p_origin), r.gender_threshold, r.origin_minimum,
+                          "" if check.max_reasks is None else check.max_reasks, s.gender_passed, s.origin_passed,
+                          s.passed] for s in check.scores]),
         "cells.csv": (["gender", "origin", "model", "names", "names_answered", "mean_p_intended_gender",
                        "mean_p_intended_origin", "mean_gender_hedge", "mean_origin_hedge", "names_passing"],
                       [[c.gender, c.origin, c.model, c.names, c.answered, _p(c.p_gender), _p(c.p_origin),
@@ -733,14 +741,18 @@ def write_outputs(check: NameCheck | ProbabilityCheck, out_dir: str | Path) -> l
     """perceptions.csv (one row per answer), summary.csv (per name x model), cells.csv (per gender x origin).
 
     Probability mode: the normalised probabilities per answer with its attempt, raw sums, hedge shares and scored
-    (hedges-out) distributions; the same means per name x model with its re-asks and the pass flags; and the mean
-    scored p(intended) and hedge shares per cell. Blank where there is nothing to show (a missing or all-hedge
-    answer). It also writes reasked.csv: one row, with the columns of perceptions.csv, per all-hedge answer that
-    was asked again (only its header when there was none), so the two files hold every valid answer received.
+    (hedges-out) distributions; the same means per name x model with its re-asks, the re-ask limit and the pass
+    flags; and the mean scored p(intended) and hedge shares per cell. Blank where there is nothing to show (a
+    missing or all-hedge answer). It also writes reasked.csv: one row, with the columns of perceptions.csv, per
+    all-hedge answer that was asked again (only its header when there was none), so the two files hold every
+    valid answer received. The choice mode has no reasked.csv: one left in `out_dir` by a probability run is
+    removed, so it is not read with the choice tables.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tables = _probability_tables(check) if isinstance(check, ProbabilityCheck) else _choice_tables(check)
+    if REASKED_FILE not in tables:
+        (out / REASKED_FILE).unlink(missing_ok=True)
     paths = []
     for filename, (header, rows) in tables.items():
         path = out / filename
@@ -777,20 +789,24 @@ ORIGIN_SHORT = {"portuguese": "pt", "brazilian": "br", "palop": "palop", "easter
 SUM_TOLERANCE = 0.01  # a raw sum further than this from 1 is reported as normalised
 
 
-def _format_reasks(perceptions: list[Perception]) -> str:
-    """Per model: the all-hedge answers that were asked again, for how many answers, and how many of those ended
-    all hedge on a question all the same."""
+def _format_reasks(check: ProbabilityCheck) -> str:
+    """Per model: the all-hedge answers that were asked again, for how many answers, and how those answers ended:
+    answered (an estimate for both questions), still all hedge on a question, or missing (the re-ask failed or
+    was not valid)."""
     counts: dict[str, list[int]] = {}
-    for p in perceptions:
-        n = counts.setdefault(p.model, [0, 0, 0])
-        n[0] += len(p.reasked)
-        n[1] += bool(p.reasked)
-        n[2] += bool(p.reasked and p.all_hedge)
+    for p in check.perceptions:
+        n = counts.setdefault(p.model, [0, 0, 0, 0, 0])
+        if p.reasked:
+            n[0] += len(p.reasked)
+            n[1] += 1
+            n[2 if p.missing else 3 if p.all_hedge else 4] += 1
     if not any(n[0] for n in counts.values()):
         return "re-asks of all-hedge answers: none"
-    return ("re-asks of all-hedge answers (the same question asked again as a new attempt; the answers they "
-            "replaced are in reasked.csv): "
-            + "; ".join(f"{model}: {n[0]} for {n[1]} answers, {n[2]} still all hedge" if n[0] else f"{model}: 0"
+    limit = "" if check.max_reasks is None else f", up to {check.max_reasks} times"
+    return (f"re-asks of all-hedge answers (the same question asked again as a new attempt{limit}; the answers "
+            f"they replaced are in {REASKED_FILE} and in no mean), per model: "
+            + "; ".join(f"{model}: re-asks {n[0]}, answers asked again {n[1]} (answered {n[4]}, still all hedge "
+                        f"{n[3]}, missing {n[2]})" if n[0] else f"{model}: re-asks 0"
                         for model, n in counts.items()))
 
 
@@ -807,15 +823,16 @@ def _format_probability_check(check: ProbabilityCheck) -> str:
     if off:
         lines.append(f"\n{len(off)} answers had probabilities not summing to 1 (normalised; raw sums in "
                      "perceptions.csv)")
-    lines.append("\n" + _format_reasks(check.perceptions))
+    lines.append("\n" + _format_reasks(check))
     failing = [s for s in check.scores if not s.passed]
     total = len(dict.fromkeys(s.name for s in check.scores))
     if not failing:
         lines.append(f"\nall {total} names pass for every model")
         return "\n".join(lines)
     lines.append(f"\n{len(check.failing)} of {total} names fail (p(gender) and p(origin) scored without the hedges, "
-                 f"averaged over the answers not all hedge; hedge shares averaged over the valid answers; replace a "
-                 f"name that fails on them in the name bank; rerun to ask missing answers again):")
+                 f"averaged over the answers not all hedge; hedge shares averaged over the valid answers, without "
+                 f"the all-hedge answers that were asked again; replace a name that fails on them in the name "
+                 f"bank; rerun to ask missing answers again):")
 
     def fails_on(s: ProbabilityScore) -> str:
         parts = [w for w, ok in (("gender", s.gender_passed), ("origin", s.origin_passed)) if not ok]
