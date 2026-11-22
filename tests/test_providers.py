@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from conftest import scores_by_name
+from conftest import core_config, scores_by_name
 from hcai.cli import main, make_client, models_command, run_command
 from hcai.config import RunSettings, load_design
 from hcai.llm import (
@@ -646,15 +646,23 @@ def with_timeout(path: Path, value: str) -> Path:
 
 
 def fake_network(monkeypatch, handler) -> list[httpx.Request]:
-    """Every `httpx.Client` the code builds for itself talks to `handler`, not the network; returns the requests."""
+    """Every `httpx.Client` that `hcai.llm` builds for itself talks to `handler`, not the network; returns the
+    requests it gets. Only `hcai.llm`'s view of httpx changes: every other library keeps the real one."""
     seen: list[httpx.Request] = []
 
     def record(request):
         seen.append(request)
         return handler(request)
 
-    real = httpx.Client
-    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(record), **kw))
+    class Httpx:
+        def __getattr__(self, name):
+            return getattr(httpx, name)
+
+        @staticmethod
+        def Client(**kw):
+            return httpx.Client(transport=httpx.MockTransport(record), **kw)
+
+    monkeypatch.setattr("hcai.llm.httpx", Httpx())
     return seen
 
 
@@ -686,10 +694,11 @@ def test_the_connect_timeout_stays_short_and_never_exceeds_the_request_timeout()
     assert (http_timeout(5).read, http_timeout(5).connect) == (5, 5)
 
 
-def test_the_core_config_sets_the_request_timeout_explicitly():
+def test_the_core_config_sets_the_request_timeout_explicitly(tmp_path):
     run = tomllib.loads((SKELETON.parent / "core.toml").read_text())["run"]
 
-    assert run["request_timeout"] == 600
+    assert "request_timeout" in run  # written out, not left to the default (its value may be raised)
+    assert load_design(core_config(tmp_path)).run.request_timeout == run["request_timeout"]
 
 
 def test_the_configured_request_timeout_reaches_the_calls_of_both_providers(tmp_path, monkeypatch):
@@ -727,6 +736,7 @@ def test_every_command_that_calls_a_provider_uses_the_configured_request_timeout
     seen = fake_network(monkeypatch, handler)
     path = with_timeout(config(tmp_path, '\n[generator]\nmodel = "gen-model"\n'), "45")
     if command == "corpus":  # a corpus of its own: the frozen one is not regenerated
+        assert f'corpus_dir = "{CORPUS}"' in path.read_text()
         path.write_text(path.read_text().replace(f'corpus_dir = "{CORPUS}"', f'corpus_dir = "{tmp_path / "corpus"}"'))
     out, cache = ["--out", str(tmp_path / "out")], ["--cache", str(tmp_path / "cache")]
     args = {"run": out + cache, "corpus": cache, "names": out + cache, "check": [], "models": []}[command]
@@ -736,20 +746,23 @@ def test_every_command_that_calls_a_provider_uses_the_configured_request_timeout
     assert timeouts(seen) == {(45.0, 20.0)}
 
 
-@pytest.mark.parametrize("value", ["0", "-30", '"600"', "true", "nan", "inf"])
+@pytest.mark.parametrize("value", ["0", "-30", '"600"', "true", "nan", "inf", "86401", "1e10", "1" + "0" * 400])
 def test_an_invalid_request_timeout_is_refused_when_the_config_loads(tmp_path, value):
-    with pytest.raises(ValueError, match=r"\[run\] request_timeout must be a number of seconds > 0"):
+    with pytest.raises(ValueError, match=r"\[run\] request_timeout must be a number of seconds > 0 and at most 86400"):
         load_design(with_timeout(config(tmp_path), value))
 
 
-def test_a_whole_or_fractional_number_of_seconds_is_a_valid_request_timeout(tmp_path):
+def test_a_whole_or_fractional_number_of_seconds_up_to_a_day_is_a_valid_request_timeout(tmp_path):
     assert load_design(with_timeout(config(tmp_path), "900")).run.request_timeout == 900
     assert load_design(with_timeout(config(tmp_path), "0.5")).run.request_timeout == 0.5
+    assert load_design(with_timeout(config(tmp_path), "86400")).run.request_timeout == 86400
 
 
 def test_the_clients_refuse_an_invalid_request_timeout_before_any_call():
     with pytest.raises(ValueError, match="request_timeout"):
         OpenAICompatibleClient("https://p.example/v1", "k", timeout=0)
+    with pytest.raises(ValueError, match="request_timeout"):
+        OpenAICompatibleClient("https://p.example/v1", "k", timeout=1e10)  # too large for the platform's clock
     with pytest.raises(ValueError, match="request_timeout"):
         provider_client(lambda m: BUILTIN_PROVIDERS["opencode-go"], ["m"], environ={"OPENCODE_API_KEY": "k"},
                         request_timeout=-1)
@@ -772,7 +785,6 @@ def test_the_request_timeout_changes_neither_the_request_sent_nor_its_cache_key(
     first = CachedClient(client(120), cache).complete(REQ)
     again = CachedClient(client(600), cache).complete(REQ)  # the entry cached under the old timeout is a hit
 
-    assert REQ.cache_key() == key
     assert [p.name for p in cache.iterdir()] == [f"{key}.json"]
     assert "timeout" not in (cache / f"{key}.json").read_text()
     assert (first.cached, again.cached) == (False, True) and again.text == first.text and len(sent) == 1
@@ -780,6 +792,18 @@ def test_the_request_timeout_changes_neither_the_request_sent_nor_its_cache_key(
     short, long = sent
     assert (short.method, short.url, short.content, short.headers) == (long.method, long.url, long.content, long.headers)
     assert timeouts([short]) == {(120.0, 20.0)} and timeouts([long]) == {(600.0, 20.0)}
+
+
+def test_the_cache_key_of_a_request_is_the_one_caches_filled_before_the_request_timeout_hold():
+    """Hashes computed before `[run] request_timeout` existed: the pilot's cache must still be found."""
+    full = LLMRequest(
+        model="qwen3.8-flash",
+        messages=[{"role": "system", "content": "Blind the CV."}, {"role": "user", "content": "Currículo: João, Coimbra"}],
+        temperature=0.0, seed=42,
+        response_schema={"type": "object", "properties": {"blinded_cv": {"type": "string"}}, "required": ["blinded_cv"]})
+
+    assert REQ.cache_key() == "9dc4b03e66522fef8c6b4416a237682f1f368259e9e4d3ff2cb65bffd1e0d2af"
+    assert full.cache_key() == "5f02aa20415c038bbcf5c932b5376eecf206506d56b500835282acbfe5140ca9"
 
 
 def test_a_run_cached_under_one_request_timeout_replays_in_full_under_another(tmp_path):

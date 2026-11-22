@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import sys
 import time
@@ -36,7 +35,11 @@ USER_AGENT = f"hcai/{_package_version()}"
 # Seconds a provider call waits for the answer: the default of `[run] request_timeout`. The pilot's Blinder
 # answers (up to about 11,000 completion tokens) took longer than the 120 s this used to be fixed at.
 DEFAULT_REQUEST_TIMEOUT = 600.0
-# Seconds to open the connection: short, so an unreachable provider fails fast whatever the request timeout.
+# The most `[run] request_timeout` may be: a day. A longer wait is a mistake, and a number of seconds too large
+# for the platform's clock makes every call fail with an OverflowError instead.
+MAX_REQUEST_TIMEOUT = 24 * 3600.0
+# Seconds to open the connection (the TCP connection, then again the TLS handshake): short, so an unreachable
+# provider fails fast whatever the request timeout.
 CONNECT_TIMEOUT = 20.0
 
 
@@ -46,11 +49,13 @@ def http_timeout(request_timeout: float) -> httpx.Timeout:
     `request_timeout` is httpx's read timeout: the longest silence while waiting for or reading the answer
     (a chat completion is sent whole, so in practice the time the model takes to write it). Sending the
     request and waiting for a free connection get the same limit; connecting gets `CONNECT_TIMEOUT`, or
-    `request_timeout` if that is shorter. Raises `ValueError` unless it is a finite number above 0.
+    `request_timeout` if that is shorter. Raises `ValueError` unless it is a number above 0 and at most
+    `MAX_REQUEST_TIMEOUT`.
     """
     if (isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float))
-            or not 0 < request_timeout < math.inf):
-        raise ValueError(f"request_timeout must be a number of seconds > 0, not {request_timeout!r}")
+            or not 0 < request_timeout <= MAX_REQUEST_TIMEOUT):
+        raise ValueError(f"request_timeout must be a number of seconds > 0 and at most {MAX_REQUEST_TIMEOUT:.0f} "
+                         f"(a day), not {request_timeout!r}")
     return httpx.Timeout(float(request_timeout), connect=min(CONNECT_TIMEOUT, float(request_timeout)))
 
 
@@ -268,8 +273,8 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.usage_include = usage_include
         self.subscription = subscription
-        self._timeout = http_timeout(timeout)
-        self._http = http or httpx.Client(timeout=self._timeout)
+        self._timeout = http_timeout(timeout)  # sent with every request (`_send`), whichever client carries it
+        self._http = http or httpx.Client()
         self._key = api_key
         self._log = log or _stderr
         self._warned_session = False  # the MissingSessionID warning is printed once per client (one per run)
@@ -293,7 +298,7 @@ class OpenAICompatibleClient:
         try:
             return self._http.request(method, url, headers=self._headers, timeout=self._timeout, **kw)
         except Exception as e:  # noqa: BLE001 - httpx/h11 messages can quote the Authorization header
-            hint = (f" (no answer within [run] request_timeout = {self._timeout.read:g}s)"
+            hint = (f" (no answer within [run] request_timeout = {self._timeout.read:.10g}s)"
                     if isinstance(e, httpx.ReadTimeout) else "")
             raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}{hint}") from None
 
