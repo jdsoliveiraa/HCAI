@@ -118,10 +118,62 @@
   /* Where the draft of a sample lives in localStorage. Changing this would orphan saved drafts. */
   function storageKey(meta) { return "hcai-review:" + meta.corpus_version + ":" + meta.seed; }
 
+  /* What to say about the export, as an interface string key. `now` and `committed` are the JSON text of the
+     answers and of the committed review (null when there is none); `last` says which answers each of the two
+     files was last written with ({ md: text, json: text }; a file never written is missing), or is null. */
+  function exportState(now, committed, last) {
+    if (committed !== null && now === committed) { return "review.export.committed"; }
+    var md = !!last && last.md === now;
+    var json = !!last && last.json === now;
+    if (md && json) { return "review.export.same"; }
+    if (md) { return "review.export.only.md"; }
+    if (json) { return "review.export.only.json"; }
+    return last && (last.md || last.json) ? "review.export.changed" : "review.export.none";
+  }
+
+  /* The export marker as stored (see exportState's `last`), or null when there is none or it is not one. */
+  function parseExported(raw) {
+    var parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { return null; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { return null; }
+    var out = {};
+    if (typeof parsed.md === "string") { out.md = parsed.md; }
+    if (typeof parsed.json === "string") { out.json = parsed.json; }
+    return out.md || out.json ? out : null;
+  }
+
+  /* The current item from where things are on screen (tops from the top of the window): the last item whose top
+     has reached `line`; -1 before the first; tops.length once "Verdict and export" has reached the line, or is
+     on screen at the end of the page (on a tall screen it never gets as high as the line). */
+  function currentIndex(tops, finishTop, line, atEnd, height) {
+    var found = -1;
+    for (var i = 0; i < tops.length; i++) {
+      if (tops[i] > line) { break; }
+      found = i;
+    }
+    if (finishTop <= line || (atEnd && finishTop < height)) { found = tops.length; }
+    return found;
+  }
+
+  /* What a key does: { act: "next" | "prev" | "all" | "notes" | "leave" }, { act: "check", n: <from 0> }, or
+     null. While the reviewer types in a field only Escape does anything. */
+  function keyAction(key, typing) {
+    if (key === "Escape") { return typing ? { act: "leave" } : null; }
+    if (typing) { return null; }
+    var k = String(key).toLowerCase();
+    if (k === "j") { return { act: "next" }; }
+    if (k === "k") { return { act: "prev" }; }
+    if (/^[1-9]$/.test(k)) { return { act: "check", n: Number(k) - 1 }; }
+    if (k === "a") { return { act: "all" }; }
+    if (k === "n") { return { act: "notes" }; }
+    return null;
+  }
+
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       reviewMarkdown: reviewMarkdown, checkReview: checkReview, normalize: normalize,
-      itemDone: itemDone, progress: progress, storageKey: storageKey
+      itemDone: itemDone, progress: progress, storageKey: storageKey,
+      exportState: exportState, parseExported: parseExported, currentIndex: currentIndex, keyAction: keyAction
     };
   }
   if (typeof document === "undefined") { return; }
@@ -135,19 +187,39 @@
     if (!holder || !form) { return; }
     var data = JSON.parse(holder.textContent);
     var draftKey = storageKey(data.meta);
-    // The JSON text of the last export, to tell whether the answers have changed since. Beside the draft, not in it.
+    // Which answers each exported file was last written with (exportState), to tell whether they have changed
+    // since. Kept beside the draft, not in it.
     var exportedKey = "hcai-review-exported:" + data.meta.corpus_version + ":" + data.meta.seed;
     var KEYS_KEY = "hcai-review-keys";  // "off" when the reviewer has turned the keyboard shortcuts off
+    var root = document.documentElement;
     var statusEl = byId("review-status");
     var finishStatusEl = byId("finish-status");
+    var saidEl = byId("review-said");
     var bar = byId("review-bar");
     var finish = byId("finish");
     var articles = Array.prototype.slice.call(form.querySelectorAll("article[data-item]"));
     var chips = articles.map(function (a, n) { return bar.querySelector('a[data-chip="' + n + '"]'); });
+    var committedText = data.committed ? JSON.stringify(normalize(data.committed, data)) : null;
     var state;
+    var current = -1;  // the current item: see "The current item" below
 
     function status(message) { statusEl.textContent = message; }
     function finishStatus(message) { finishStatusEl.textContent = message; }
+    function say(message) { saidEl.textContent = message; }  // for a screen reader: what a key or "All hold" did
+
+    var exported = null;
+    try { exported = parseExported(window.localStorage.getItem(exportedKey)); } catch (e) { /* no storage */ }
+    function markExported(files) {
+      var now = JSON.stringify(state);
+      exported = exported || {};
+      files.forEach(function (file) { exported[file] = now; });
+      try { window.localStorage.setItem(exportedKey, JSON.stringify(exported)); } catch (e) { /* this visit only */ }
+      render();
+    }
+    function forgetExported() {
+      exported = null;
+      try { window.localStorage.removeItem(exportedKey); } catch (e) { /* nothing stored */ }
+    }
 
     var staleKey = "";
     function loadDraft() {
@@ -182,14 +254,6 @@
     }
     function startingState() {
       return data.committed ? normalize(data.committed, data) : normalize(null, data);
-    }
-
-    var lastExport = null;
-    try { lastExport = window.localStorage.getItem(exportedKey); } catch (e) { /* no storage: never "exported" */ }
-    function markExported() {
-      lastExport = JSON.stringify(state);
-      try { window.localStorage.setItem(exportedKey, lastExport); } catch (e) { /* kept for this visit only */ }
-      render();
     }
 
     function articleFor(id) {
@@ -231,13 +295,29 @@
       });
     }
 
+    function itemName(n) { return t("review.item") + " " + (n + 1); }
+
+    /* The strip's second line: the current item and how many of its checks are ticked. It is what shows a key's
+       effect when the checklist itself is not on screen (below the text, on a narrow window). */
+    function renderCurrent() {
+      var article = articles[current];
+      var text = "";
+      if (article) {
+        var boxes = article.querySelectorAll("input[data-check]");
+        var ticked = 0;
+        for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) { ticked++; } }
+        text = t("review.current").replace("{n}", current + 1).replace("{ticked}", ticked).replace("{total}", boxes.length);
+      }
+      byId("review-current").textContent = text;
+    }
+
     /* Everything the page shows about the answers: progress, each item's state, and the save and export states. */
     function render() {
       var answers = {};
       state.items.forEach(function (a) { answers[a.id] = a; });
       articles.forEach(function (article, n) {
         var done = itemDone(answers[article.getAttribute("data-item")]);
-        var label = t(done ? "review.item.done" : "review.item.todo");
+        var label = done ? t("review.item.done") : t("review.item.todo");
         var badge = article.querySelector("[data-state]");
         if (badge) {
           badge.textContent = label;
@@ -251,23 +331,23 @@
       });
       var p = progress(state);
       byId("review-progress").textContent = t("review.progress").replace("{done}", p.done).replace("{total}", p.total);
+      renderCurrent();
       var saveEl = byId("save-state");
       saveEl.classList.toggle("error", saved === null);
       saveEl.textContent = saved === null ? t("review.nosave.short")
         : savedAt ? t("review.saved.at") + " " + savedAt
         : hasDraft ? t("review.saved") : "";
-      var now = JSON.stringify(state);
-      byId("export-state").textContent =
-        data.committed && now === JSON.stringify(normalize(data.committed, data)) ? t("review.export.committed")
-        : lastExport === null ? t("review.export.none")
-        : lastExport === now ? t("review.export.same") : t("review.export.changed");
+      byId("export-state").textContent = t(exportState(JSON.stringify(state), committedText, exported));
       measure();
     }
-    /* The strip's height, for what sticks or scrolls under it: the answers beside a text (--bar-h), and a jump
-       to an item or a focused field (the scroll padding), which must not end up under the strip. */
+    /* The height the strip covers while it sticks (none on a short screen, where it scrolls away), for what sticks
+       or scrolls under it: the answers beside a text (--bar-h), and a jump to an item or a focused field (the
+       scroll padding), which must not end up under the strip. */
+    function stuck() { return window.getComputedStyle(bar).position === "sticky" ? bar.offsetHeight : 0; }
     function measure() {
-      document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px");
-      document.documentElement.style.scrollPaddingTop = bar.offsetHeight + "px";
+      var height = stuck() + "px";
+      root.style.setProperty("--bar-h", height);
+      root.style.scrollPaddingTop = height;
     }
 
     function download(name, text, type) {
@@ -281,8 +361,16 @@
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
     var base = data.record.split("/").pop();
-    function exportMarkdown() { read(); download(base + ".md", reviewMarkdown(data, state), "text/markdown;charset=utf-8"); }
-    function exportJson() { read(); download(base + ".json", JSON.stringify(state, null, 2) + "\n", "application/json"); }
+    function exportMarkdown() {
+      read();
+      download(base + ".md", reviewMarkdown(data, state), "text/markdown;charset=utf-8");
+      markExported(["md"]);
+    }
+    function exportJson() {
+      read();
+      download(base + ".json", JSON.stringify(state, null, 2) + "\n", "application/json");
+      markExported(["json"]);
+    }
 
     var draft = loadDraft();
     var messages = [];
@@ -291,6 +379,7 @@
       hasDraft = true;
     } else {
       state = startingState();
+      forgetExported();  // the marker is about a draft: without one (none, or set aside) it would mislead
       if (data.committed) { messages.push(t("review.committed")); }
     }
     if (staleKey) { messages.push(t("review.stale") + " " + staleKey + ")."); }
@@ -314,6 +403,7 @@
       var boxes = article.querySelectorAll("input[data-check]");
       for (var i = 0; i < boxes.length; i++) { boxes[i].checked = true; }
       changed();
+      say(itemName(articles.indexOf(article)) + ": " + t("review.said.all"));
     }
     form.addEventListener("click", function (e) {
       var button = e.target && e.target.closest ? e.target.closest("button[data-all]") : null;
@@ -327,14 +417,15 @@
       changed();
     });
 
+    // Each file is marked as holding the answers it was written with: "Markdown only" leaves the JSON stale.
     byId("export").addEventListener("click", function () {
       exportMarkdown();
       setTimeout(exportJson, 400);
-      markExported();
+      markExported(["json"]);  // on its way: the state does not flicker through "only the Markdown"
       finishStatus(t("review.exported"));
     });
-    byId("export-md").addEventListener("click", function () { exportMarkdown(); markExported(); });
-    byId("export-json").addEventListener("click", function () { exportJson(); markExported(); });
+    byId("export-md").addEventListener("click", exportMarkdown);
+    byId("export-json").addEventListener("click", exportJson);
 
     var slots = byId("show-slots");
     slots.addEventListener("change", function () { form.classList.toggle("slots-on", slots.checked); });
@@ -342,15 +433,12 @@
 
     byId("clear").addEventListener("click", function () {
       if (!window.confirm(t("review.clear.confirm"))) { return; }
-      try {
-        window.localStorage.removeItem(draftKey);
-        window.localStorage.removeItem(exportedKey);
-      } catch (e) { /* nothing stored */ }
+      try { window.localStorage.removeItem(draftKey); } catch (e) { /* nothing stored */ }
+      forgetExported();
       state = startingState();
       saved = false;
       savedAt = "";
       hasDraft = false;
-      lastExport = null;
       fill();
       render();
       status(data.committed ? t("review.committed") : "");
@@ -375,8 +463,9 @@
         }
         state = normalize(parsed, data);
         fill();
+        exported = null;  // these answers are in the JSON file that was just read; its Markdown is not known
         save();
-        markExported();  // these answers are the file that was just read
+        markExported(["json"]);
         finishStatus(t("review.imported"));
       };
       reader.readAsText(file);
@@ -384,15 +473,14 @@
     });
 
     /* The current item: where the keys act. -1 before the first item, articles.length in "Verdict and export".
-       It follows the scroll position, a jump (chip or key) and the focus. */
-    var current = -1;
-    var lockY = null;  // the scroll position right after a jump or a focus: the item stays current until a scroll
+       It follows the scroll position (currentIndex). An item the reader is sent to (a jump link, a key, the
+       focus) is current until the next scroll (lockY), but only while it is on screen: a page that comes back at
+       another scroll position (a reload, the Back button) must never leave the keys acting out of sight. */
+    var lockY = null;
     function setCurrent(n) {
       if (n === current) { return; }
-      if (articles[current]) {
-        articles[current].classList.remove("current");
-        if (chips[current]) { chips[current].removeAttribute("aria-current"); }
-      }
+      if (chips[current]) { chips[current].removeAttribute("aria-current"); }
+      if (articles[current]) { articles[current].classList.remove("current"); }
       current = n;
       if (articles[n]) {
         articles[n].classList.add("current");
@@ -400,33 +488,49 @@
         if (chip) {
           chip.setAttribute("aria-current", "true");
           var row = chip.closest("ol");
-          if (row && row.scrollWidth > row.clientWidth) {  // a phone's one-row list: keep the chip in it
+          if (row && row.scrollWidth > row.clientWidth) {  // a one-row list: keep the chip in it
             var c = chip.getBoundingClientRect();
             var r = row.getBoundingClientRect();
             row.scrollLeft += c.left - r.left - (r.width - c.width) / 2;
           }
         }
       }
+      renderCurrent();
+    }
+    function onScreen(el, itsTop) {
+      var r = el.getBoundingClientRect();
+      return itsTop ? r.top >= stuck() - 4 && r.top < window.innerHeight : r.bottom > stuck() && r.top < window.innerHeight;
+    }
+    function claim(n, itsTop) {
+      if (!onScreen(articles[n] || finish, itsTop)) { return false; }
+      setCurrent(n);
+      lockY = window.scrollY;
+      return true;
     }
     function go(n) {
       n = Math.max(0, Math.min(articles.length, n));
       var target = articles[n] || finish;
-      setCurrent(n);
-      if (articles[n]) { articles[n].focus({ preventScroll: true }); }
+      target.focus({ preventScroll: true });  // so that Tab goes on from there
       target.scrollIntoView();
-      lockY = window.scrollY;
+      claim(n, false);
     }
     function fromScroll() {
       if (lockY !== null && Math.abs(window.scrollY - lockY) < 2) { return; }
       lockY = null;
-      var line = bar.offsetHeight + window.innerHeight * 0.3;
-      var found = -1;
-      for (var i = 0; i < articles.length; i++) {
-        if (articles[i].getBoundingClientRect().top > line) { break; }
-        found = i;
+      var atEnd = window.innerHeight + window.scrollY >= root.scrollHeight - 2;
+      setCurrent(currentIndex(
+        articles.map(function (a) { return a.getBoundingClientRect().top; }), finish.getBoundingClientRect().top,
+        stuck() + window.innerHeight * 0.3, atEnd, window.innerHeight));
+    }
+    /* A link to an item (#item-N, #finish): that item is current if the page did go there. */
+    function fromHash() {
+      var hash = window.location.hash;
+      var item = /^#item-(\d+)$/.exec(hash);
+      var n = item ? Number(item[1]) : hash === "#finish" ? articles.length : -1;
+      if (n < 0 || n > articles.length || !claim(n, true)) {
+        lockY = null;
+        fromScroll();
       }
-      if (finish.getBoundingClientRect().top <= line) { found = articles.length; }
-      setCurrent(found);
     }
     var ticking = false;
     window.addEventListener("scroll", function () {
@@ -434,24 +538,25 @@
       ticking = true;
       window.requestAnimationFrame(function () { ticking = false; fromScroll(); });
     }, { passive: true });
-    window.addEventListener("resize", measure);
+    window.addEventListener("resize", function () { measure(); fromScroll(); });
+    window.addEventListener("hashchange", fromHash);
+    window.addEventListener("load", fromHash);
+    window.addEventListener("pageshow", fromHash);
     form.addEventListener("focusin", function (e) {
       var article = e.target && e.target.closest ? e.target.closest("article[data-item]") : null;
       var n = article ? articles.indexOf(article) : -1;
-      if (n >= 0) {
-        setCurrent(n);
-        lockY = window.scrollY;
-      }
+      if (n >= 0) { claim(n, false); }
     });
     bar.addEventListener("click", function (e) {
-      var chip = e.target && e.target.closest ? e.target.closest("a[data-chip]") : null;
+      var chip = e.target && e.target.closest ? e.target.closest("a.chip") : null;
       if (!chip) { return; }
       e.preventDefault();
-      go(Number(chip.getAttribute("data-chip")));
+      go(chip.hasAttribute("data-chip") ? Number(chip.getAttribute("data-chip")) : articles.length);
       try { window.history.replaceState(null, "", chip.getAttribute("href")); } catch (err) { /* opened from disk */ }
     });
 
-    /* Keyboard shortcuts: single keys, only while the focus is not in a field, and they can be turned off. */
+    /* Keyboard shortcuts (keyAction): single keys, only while the focus is not in a field, and they can be
+       turned off. They only ever change an item that is on screen. */
     var keysBox = byId("keys-on");
     var keysOn = true;
     try { keysOn = window.localStorage.getItem(KEYS_KEY) !== "off"; } catch (e) { /* on */ }
@@ -466,48 +571,40 @@
       if (!keysOn || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) { return; }
       var el = e.target;
       var tag = el && el.tagName;
-      var typing = tag === "TEXTAREA" || tag === "SELECT" || (el && el.isContentEditable) ||
+      var typing = tag === "TEXTAREA" || tag === "SELECT" || !!(el && el.isContentEditable) ||
         (tag === "INPUT" && !/^(checkbox|radio|button|file)$/.test(el.type));
-      if (e.key === "Escape") {
-        if (typing) {
-          el.blur();
-          if (articles[current]) { articles[current].focus({ preventScroll: true }); }
-        }
+      var action = keyAction(e.key, typing);
+      if (!action) { return; }
+      var article = articles[current];
+      if (action.act === "leave") {
+        el.blur();
+        if (article) { article.focus({ preventScroll: true }); }
         return;
       }
-      if (typing) { return; }
-      var key = e.key.toLowerCase();
-      var article = articles[current];
-      if (key === "j") {
+      if (action.act === "next") {
         go(current + 1);
-      } else if (key === "k") {
+      } else if (action.act === "prev") {
         go(current - 1);
-      } else if (!article) {
+      } else if (!article || !onScreen(article, false)) {
         return;
-      } else if (/^[1-9]$/.test(key)) {
-        var box = article.querySelectorAll("input[data-check]")[Number(key) - 1];
+      } else if (action.act === "check") {
+        var box = article.querySelectorAll("input[data-check]")[action.n];
         if (!box) { return; }
         box.checked = !box.checked;
         changed();
-      } else if (key === "a") {
+        say(itemName(current) + ": " + box.parentNode.textContent.trim() + ", " +
+          (box.checked ? t("review.said.ticked") : t("review.said.unticked")));
+      } else if (action.act === "all") {
         tickAll(article);
-      } else if (key === "n") {
-        article.querySelector("textarea[data-notes]").focus();
       } else {
-        return;
+        article.querySelector("textarea[data-notes]").focus();
       }
       e.preventDefault();
     });
 
     document.addEventListener("hcai:lang", render);
     render();
-    var anchored = /^#item-(\d+)$/.exec(window.location.hash);
-    if (anchored && articles[Number(anchored[1])]) {
-      setCurrent(Number(anchored[1]));
-      lockY = window.scrollY;
-    } else {
-      fromScroll();
-    }
+    fromHash();
   }
 
   if (document.readyState === "loading") { document.addEventListener("DOMContentLoaded", start); } else { start(); }

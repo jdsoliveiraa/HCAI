@@ -91,6 +91,12 @@ UI: dict[str, tuple[str, str]] = {
                   "em inglês e em português europeu; as diferenças de pontuação são medidas e depois mitigadas com "
                   "anonimização e pontuação por rubrica, sob supervisão humana."),
     "home.parts": ("Project parts", "Partes do projeto"),
+    "home.card.probes": ("model probes of", "sondagem dos modelos de"),
+    "home.card.no_probes": ("no model probes yet", "ainda sem sondagem dos modelos"),
+    "home.card.run": ("pilot run summary present", "resumo da execução piloto presente"),
+    "home.card.no_run": ("no pilot run yet", "ainda sem execução piloto"),
+    "home.card.adrs": ("ADRs:", "ADR:"),
+    "home.card.no_configs": ("no config files", "sem ficheiros de configuração"),
     "status.corpus": ("Corpus", "Corpus"),
     "status.review": ("Realism review", "Revisão de realismo"),
     "status.names": ("Name manipulation check", "Verificação da manipulação dos nomes"),
@@ -105,8 +111,11 @@ UI: dict[str, tuple[str, str]] = {
     "corpus.template.help": ("Identity slots are shown highlighted in brackets; everything else is the same for every identity.",
                              "As posições de identidade aparecem destacadas entre parênteses; o resto é igual para todas as identidades."),
     "corpus.variants": ("Variant viewer", "Visualizador de variantes"),
-    "corpus.variants.help": ("Choose a language and an identity. Highlighted text is what differs between identities.",
-                             "Escolha uma língua e uma identidade. O texto destacado é o que muda entre identidades."),
+    "corpus.variants.choose": ("Choose a language and an identity.", "Escolha uma língua e uma identidade."),
+    "corpus.variants.all": ("Every identity's variant is listed below, in every language.",
+                            "A variante de cada identidade aparece abaixo, em todas as línguas."),
+    "corpus.variants.help": ("Highlighted text is what differs between identities.",
+                             "O texto destacado é o que muda entre identidades."),
     "corpus.identities": ("Identities", "Identidades"),
     "corpus.language": ("Language", "Língua"),
     "corpus.identity": ("Identity", "Identidade"),
@@ -120,8 +129,8 @@ UI: dict[str, tuple[str, str]] = {
     "corpus.role_page": ("Job ad and base CVs", "Anúncio de emprego e CVs base"),
     "corpus.compare": ("Compare with", "Comparar com"),
     "corpus.compare.none": ("no other identity", "nenhuma outra identidade"),
-    "corpus.compare.help": ("A second identity is shown beside the first.",
-                            "Uma segunda identidade aparece ao lado da primeira."),
+    "corpus.compare.help": ("A second identity is shown beside the first (below it on a narrow screen).",
+                            "Uma segunda identidade aparece ao lado da primeira (por baixo, num ecrã estreito)."),
     "review.title": ("Realism review", "Revisão de realismo"),
     "review.intro": ("Read each item, tick each check that holds and note anything odd. An item counts as reviewed "
                      "when every check is ticked, or when it has a note saying what does not hold. Answers are saved "
@@ -190,6 +199,14 @@ UI: dict[str, tuple[str, str]] = {
     "review.export.same": ("Nothing has changed since the last export.", "Nada mudou desde a última exportação."),
     "review.export.committed": ("Same as the committed review: nothing new to export.",
                                 "Igual à revisão registada: nada de novo para exportar."),
+    "review.export.only.md": ("Only the Markdown file is known to hold these answers: export the JSON too before you commit.",
+                              "Só o ficheiro Markdown tem de certeza estas respostas: exporte também o JSON antes de fazer commit."),
+    "review.export.only.json": ("Only the JSON file is known to hold these answers: export the Markdown too before you commit.",
+                                "Só o ficheiro JSON tem de certeza estas respostas: exporte também o Markdown antes de fazer commit."),
+    "review.current": ("Item {n}: {ticked} of {total} ticked", "Item {n}: {ticked} de {total} marcadas"),
+    "review.said.ticked": ("ticked", "marcada"),
+    "review.said.unticked": ("unticked", "desmarcada"),
+    "review.said.all": ("every check ticked", "todas as verificações marcadas"),
     "review.keys": ("Keyboard shortcuts", "Atalhos de teclado"),
     "review.keys.on": ("Shortcuts on", "Atalhos ligados"),
     "review.keys.move": ("next / previous item", "item seguinte / anterior"),
@@ -603,18 +620,18 @@ class Site:
     def _hub(self, path: str) -> str:
         """The home page's cards: one per part of the project, with where it stands and a link to its page."""
         def card(to: str, key: str, state: str) -> list[Any]:
-            return [Raw(f'<a href="{esc(self.link(path, to))}">{ui(key)}</a>'), state]
+            return [Raw(f'<a href="{esc(self.link(path, to))}">{ui(key)}</a>'), Raw(state)]
 
         probes = sorted((self.root / "docs" / "pilot").glob("check-*.json"))
         run = (self.results / "pilot" / "run_summary.json").exists()
-        pilot = ((f"model probes of {probes[-1].stem.removeprefix('check-')}" if probes else "no model probes yet")
-                 + ("; pilot run summary present" if run else "; no pilot run yet"))
+        pilot = ((f'{ui("home.card.probes")} {esc(probes[-1].stem.removeprefix("check-"))}' if probes
+                  else ui("home.card.no_probes")) + "; " + ui("home.card.run" if run else "home.card.no_run"))
         adrs = sorted((self.root / "docs" / "adr").glob("[0-9]*.md"))
         configs = sorted((self.root / "configs").glob("*.toml"))
         rows = self._status(path)
         rows[2:2] = [card("pilot.html", "nav.pilot", pilot)]  # after the corpus and the review, before the name check
-        rows += [card("decisions/index.html", "nav.decisions", f"{len(adrs)} decisions (ADRs)"),
-                 card("configs.html", "nav.configs", ", ".join(f.name for f in configs) or "no config files")]
+        rows += [card("decisions/index.html", "nav.decisions", f'{ui("home.card.adrs")} {len(adrs)}'),
+                 card("configs.html", "nav.configs", esc(", ".join(f.name for f in configs)) or ui("home.card.no_configs"))]
         cards = "".join(f'<li class="card"><h3>{link}</h3><div class="card-state">'
                         f"{state if isinstance(state, Raw) else esc(state)}</div></li>" for link, state in rows)
         return f'<ul class="cards">{cards}</ul>'
@@ -802,7 +819,8 @@ class Site:
                     f'<fieldset><legend>{ui("corpus.identity")}</legend>{ids}</fieldset>{compare}</div>')
         errors = "".join(f'<p class="error">{esc(p)}</p>' for p in problems)
         return (f'<section aria-labelledby="h-var">{ui("corpus.variants", "h2", id="h-var")}'
-                f'<p class="muted">{ui("corpus.variants.help")}</p>{controls}{errors}'
+                f'<p class="muted">{ui("corpus.variants.choose", class_="js-only")} '
+                f'{ui("corpus.variants.all", class_="no-js-only")} {ui("corpus.variants.help")}</p>{controls}{errors}'
                 f'<div class="variants slots-on">{"".join(sections)}</div></section>')
 
     # review
@@ -901,11 +919,14 @@ class Site:
         bar = (
             '<div class="review-bar" id="review-bar">'
             '<div class="review-where js-only"><p class="review-progress" id="review-progress"></p>'
-            '<p class="save-state" id="save-state"></p></div>'
+            '<p class="review-current" id="review-current"></p></div>'
             f'<nav{aria("review.items.label")}><ol class="chips">{chips}</ol></nav>'
-            f'<label class="toggle"><input type="checkbox" id="show-slots"> {ui("review.slots")}</label>'
+            f'<div class="review-side"><label class="toggle"><input type="checkbox" id="show-slots"> {ui("review.slots")}</label>'
+            '<p class="save-state js-only" id="save-state"></p></div>'
             "</div>"
-            '<p id="review-status" class="status" role="status" aria-live="polite"></p>')
+            '<p id="review-status" class="status" role="status" aria-live="polite"></p>'
+            # what a key or "All hold" just did, for a screen reader (the strip shows it to the eye)
+            '<p id="review-said" class="visually-hidden" role="status" aria-live="polite"></p>')
         keys = [("j</kbd> <kbd>k", "review.keys.move"), ("1</kbd>–<kbd>5", "review.keys.check"),
                 ("a", "review.keys.all"), ("n", "review.keys.notes"), ("Esc", "review.keys.esc")]
         shortcuts = (
@@ -914,7 +935,7 @@ class Site:
             + "".join(f"<dt><kbd>{k}</kbd></dt>{ui(key, 'dd')}" for k, key in keys)
             + f'</dl><p class="muted">{ui("review.keys.help")}</p></details>')
         finish = (
-            f'<section class="finish" id="finish" aria-labelledby="h-finish">{ui("review.finish", "h2", id="h-finish")}'
+            f'<section class="finish" id="finish" aria-labelledby="h-finish" tabindex="-1">{ui("review.finish", "h2", id="h-finish")}'
             f'<fieldset class="verdict"><legend>{ui("review.verdict")}</legend>'
             f'<p><label><input type="checkbox" id="verdict-freeze"> {ui("review.verdict.freeze")}</label></p>'
             f'<p><label for="verdict-notes">{ui("review.notes")}</label><textarea id="verdict-notes" rows="3"></textarea></p>'

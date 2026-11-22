@@ -87,11 +87,28 @@
         apply(next);
       });
     }
-    // on a phone the nav is one scrolling row: bring the current page's link into it
-    var here = document.querySelector('.site-nav a[aria-current="page"]');
-    var row = here && here.closest("ul");
-    if (row && row.scrollWidth > row.clientWidth) {
-      row.scrollLeft = Math.max(0, here.offsetLeft - row.offsetLeft - 16);
+    // On a phone the nav is one row that scrolls sideways and fades at its right edge (style.css). Keep the
+    // current page's link, and any link that takes the focus, whole and clear of the fade: a browser does not
+    // scroll a link that is only partly hidden.
+    var row = document.querySelector(".site-nav ul");
+    var FADE = 40;  // the fade's width: 2.5rem
+    function reveal(link) {
+      if (!row || row.scrollWidth <= row.clientWidth) { return; }
+      var l = link.getBoundingClientRect();
+      var r = row.getBoundingClientRect();
+      if (l.right > r.right - FADE) {
+        row.scrollLeft += l.right - (r.right - FADE);
+      } else if (l.left < r.left) {
+        row.scrollLeft -= r.left - l.left;
+      }
+    }
+    if (row) {
+      var here = row.querySelector('a[aria-current="page"]');
+      if (here) { reveal(here); }
+      row.addEventListener("focusin", function (e) {
+        var link = e.target && e.target.closest ? e.target.closest("a") : null;
+        if (link) { reveal(link); }
+      });
     }
   }
 

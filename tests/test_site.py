@@ -242,19 +242,27 @@ def test_home_is_a_hub_with_every_part_and_its_state_before_the_prose(project: P
     cards = re.findall(r'<li class="card"><h3><a href="([^"]+)">.*?</a></h3><div class="card-state">(.*?)</div></li>', home)
     assert [href for href, _ in cards] == ["corpus/index.html", "review.html", "pilot.html", "pilot.html#names",
                                            "results.html", "decisions/index.html", "configs.html"]
-    states = dict(cards)
+    states = {href: re.sub(r"<[^>]+>", "", state) for href, state in cards}
     assert states["corpus/index.html"] == "v1: 4 job ads, 8 base CVs (en, pt), generator gen-x"
     assert states["review.html"] == "not committed yet"
     assert states["pilot.html"] == "model probes of 2026-11-14; no pilot run yet"
     assert states["pilot.html#names"] == "2 names, 1 failing"
-    assert states["decisions/index.html"] == "1 decisions (ADRs)"
+    assert states["decisions/index.html"] == "ADRs: 1"
     assert states["configs.html"] == "other.toml, site.toml"
+    # the cards' own words switch language with the rest of the interface
+    assert dict(cards)["pilot.html"] == ('<span data-i18n="home.card.probes">model probes of</span> 2026-11-14; '
+                                         '<span data-i18n="home.card.no_run">no pilot run yet</span>')
     # the lede and the cards come first, then the research questions, the summary and the links
     order = [home.index(mark) for mark in ('class="lede"', 'class="cards"', 'id="h-rqs"', 'id="h-summary"', 'id="h-links"')]
     assert order == sorted(order)
     bare = tmp_path / "bare"
     build_site(write_project(tmp_path / "empty", corpus=False, results=False), bare)
-    assert (bare / "index.html").read_text().count('<li class="card">') == 7  # a part with nothing yet still has its card
+    empty = (bare / "index.html").read_text()
+    assert empty.count('<li class="card">') == 7  # a part with nothing yet still has its card
+    assert 'data-i18n="home.card.no_run"' in empty and "ADRs:</span> 1" in empty
+    (tmp_path / "empty" / "docs" / "pilot" / "check-2026-11-14.json").unlink()
+    build_site(tmp_path / "empty" / "configs" / "site.toml", bare)
+    assert 'data-i18n="home.card.no_probes"' in (bare / "index.html").read_text()
 
 
 def test_deep_pages_say_where_they_are_and_link_to_their_neighbours(project: Path, tmp_path: Path):
@@ -309,14 +317,20 @@ def test_every_page_reads_without_scripts_and_no_script_blocks_it(project: Path,
     shown = _ScriptOnly()
     shown.feed(review)
     for control in ("export", "export-md", "export-json", "import-file", "clear", "date-today", "keys-on",
-                    "review-progress", "save-state", "export-state"):
+                    "review-progress", "review-current", "save-state", "export-state"):
         assert shown.script_only[control], control
     assert shown.all_hold == [True] * 8
     for field in ("reviewer", "date", "verdict-freeze", "verdict-notes", "show-slots", "item-0-notes", "review-status"):
         assert not shown.script_only[field], field
-    # the texts, the jump links and the slot highlighting need no script
+    # the texts, the jump links and the slot highlighting need no script; the form says that saving does
     assert ".review:has(#show-slots:checked) mark.slot" in css
     assert 'href="#item-0"' in review and 'href="#finish"' in review
+    assert f'<noscript><p class="error">{UI["review.nojs"][0]}</p></noscript>' in review
+    # the variant viewer says what is on the page either way: a choice with scripts, the whole list without
+    viewer = (out / "corpus" / "nurse" / "weak" / "cv02.html").read_text()
+    assert '<span data-i18n="corpus.variants.choose" class="js-only">' in viewer
+    assert '<span data-i18n="corpus.variants.all" class="no-js-only">' in viewer
+    assert "html.js .no-js-only { display: none !important; }" in css
 
 
 def test_theme_switch_reuses_the_dark_tokens(project: Path, tmp_path: Path):
@@ -378,8 +392,10 @@ def test_interface_strings_exist_in_both_languages(project: Path, tmp_path: Path
     used: set[str] = set()
     for page in pages:
         used |= set(re.findall(r'data-i18n(?:-label)?="([^"]+)"', (out / page).read_text()))
-    for script in ("site.js", "review.js", "variants.js"):
-        used |= set(re.findall(r'\bt\("([a-z_.]+)"\)', (ASSETS / script).read_text()))
+    for script in ("site.js", "review.js", "variants.js"):  # every key a script names, however it is passed on
+        used |= set(re.findall(r'"((?:review|corpus|home|nav|lang|theme|pager|toc|crumbs)\.[a-z_.]*[a-z])"',
+                               (ASSETS / script).read_text()))
+    assert {"review.item.done", "review.item.todo", "review.export.only.md", "review.said.all", "lang.switch"} <= used
     used |= {"theme.auto", "theme.light", "theme.dark"}  # built as "theme." + the theme
     assert used and used <= set(UI), sorted(used - set(UI))
     for key, (en, pt) in UI.items():
@@ -625,6 +641,43 @@ def test_browser_export_matches_python_and_round_trips(project: Path, tmp_path: 
     assert result["storageKey"] == "hcai-review:v1:7"
 
 
+def test_review_page_logic_for_export_state_current_item_and_keys():
+    """What the review page decides, as its script decides it (the functions the page calls)."""
+    out = json.loads(node_run(f"""
+        const r = require({json.dumps(str(REVIEW_JS))});
+        const tops = [-2600, -900, 150, 1400];  // four items; the third has reached the line
+        process.stdout.write(JSON.stringify({{
+          // which answers each exported file holds: both, one, an older state, or none
+          exp: [r.exportState("A", null, null), r.exportState("A", null, {{md: "A", json: "A"}}),
+                r.exportState("B", null, {{md: "B", json: "A"}}), r.exportState("B", null, {{md: "A", json: "B"}}),
+                r.exportState("B", null, {{md: "A", json: "A"}}), r.exportState("A", "A", null),
+                r.exportState("A", "A", {{md: "B", json: "B"}}), r.exportState("A", "C", {{json: "A"}})],
+          marker: [r.parseExported(null), r.parseExported("not json"), r.parseExported('"A"'), r.parseExported("[]"),
+                   r.parseExported('{{"format": "hcai-realism-review"}}'), r.parseExported('{{"md": "A", "json": 3}}'),
+                   r.parseExported('{{"md": "A", "json": "B", "x": 1}}')],
+          // the current item follows what is on screen
+          cur: [r.currentIndex(tops, 4000, 300, false, 800), r.currentIndex([400, 1200], 4000, 300, false, 800),
+                r.currentIndex([-5000, -3000], 250, 300, false, 800),
+                r.currentIndex([-5000, -300], 700, 384, true, 1080),   // a tall screen at the end of the page
+                r.currentIndex([-5000, -300], 700, 384, false, 1080),  // the same place, not at the end
+                r.currentIndex([], 900, 300, false, 800)],
+          keys: [r.keyAction("j", false), r.keyAction("K", false), r.keyAction("1", false), r.keyAction("5", false),
+                 r.keyAction("a", false), r.keyAction("n", false), r.keyAction("Escape", false), r.keyAction("x", false),
+                 r.keyAction("0", false), r.keyAction("j", true), r.keyAction("a", true), r.keyAction("3", true),
+                 r.keyAction("Escape", true), r.keyAction("Enter", false), r.keyAction(" ", false)],
+        }}));
+    """))
+    assert out["exp"] == ["review.export.none", "review.export.same", "review.export.only.md", "review.export.only.json",
+                          "review.export.changed", "review.export.committed", "review.export.committed",
+                          "review.export.only.json"]
+    assert set(out["exp"]) <= set(UI)
+    assert out["marker"] == [None, None, None, None, None, {"md": "A"}, {"md": "A", "json": "B"}]
+    assert out["cur"] == [2, -1, 2, 2, 1, -1]  # 2 of two items is "Verdict and export"; -1 is before the first item
+    act = [k and k["act"] for k in out["keys"]]
+    assert act == ["next", "prev", "check", "check", "all", "notes", None, None, None, None, None, None, "leave", None, None]
+    assert [k["n"] for k in out["keys"][2:4]] == [0, 4]
+
+
 def test_an_item_is_reviewed_when_every_check_is_ticked_or_it_has_a_note(project: Path, tmp_path: Path):
     """The page's progress is read off the answers (nothing is stored for it)."""
     data = Site(project, tmp_path / "s").review_data()
@@ -682,7 +735,11 @@ def test_review_page_is_an_accessible_form(project: Path, tmp_path: Path):
     # landmarks and names: the strip's jump links are a labelled nav, each item a labelled article, messages are
     # status regions, and the buttons are grouped under a name
     assert '<nav aria-label="Review items" data-i18n-label="review.items.label"><ol class="chips">' in page
-    assert page.count('role="status" aria-live="polite"') == 2
+    # messages are status regions: on load and on the first save, after an export or import, and (for a screen
+    # reader only) what a key or "All hold" just did
+    assert re.findall(r'<p id="([a-z-]+)" class="[a-z-]+" role="status" aria-live="polite">', page) == [
+        "review-status", "review-said", "finish-status"]
+    assert '<p id="review-said" class="visually-hidden"' in page
     assert len(re.findall(r'<article class="item" id="item-\d+" data-item="[^"]+" aria-labelledby="item-\d+-h" tabindex="-1">', page)) == 8
     assert len(re.findall(r'role="group" aria-label="[^"]+" data-i18n-label="[^"]+"', page)) == 2
 
@@ -708,6 +765,8 @@ def test_review_page_follows_the_reviewers_order(project: Path, tmp_path: Path):
     order = [page.index(mark) for mark in ('id="reviewer"', 'id="review-bar"', 'id="item-0"', 'id="item-7"', 'id="finish"',
                                            'id="verdict-freeze"', 'id="export"', 'id="import-file"', 'id="review-data"')]
     assert order == sorted(order)
+    # a key can land in the last section too, so that Tab goes on from there
+    assert '<section class="finish" id="finish" aria-labelledby="h-finish" tabindex="-1">' in page
     # the keys are listed, and can be turned off
     keys = re.search(r'<details class="keys js-only">(.*?)</details>', page, re.S)
     assert keys is not None and 'id="keys-on" checked' in keys.group(1)
