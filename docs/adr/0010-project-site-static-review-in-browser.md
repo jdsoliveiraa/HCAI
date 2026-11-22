@@ -26,3 +26,45 @@ The researcher needs one place to do the realism review of the pilot corpus (spe
 
 - An unexported draft lives in one browser only. Clearing site data loses it, so the page asks the reviewer to export.
 - Out of scope: logins, a backend or remote storage, rendering the notebook, and editing the corpus from the site.
+
+### Amendment (2026-11-22): the review page follows the reviewer, and every page reads without scripts (site UX pass)
+
+The first review page listed its 12 items in one scroll of about 17,000 px, each checklist above its text, with no
+sign of progress, and on a phone every table collapsed to one letter per line. Agreed with the researcher: one even
+pass over the whole site, no deep rework.
+
+- **"Reviewed" is derived, never recorded.** A review item counts as reviewed when every check is ticked, or when it
+  has a note. The page reads this off the answers to show progress ("5 of 12 reviewed", one jump link per item).
+  Nothing is stored for it: the record stays format version 1, field for field, and a saved draft loads as it is
+  (same localStorage key, same shape). An unticked check with no note keeps its item "to do", so the reviewer has
+  to say what does not hold.
+- **The page follows the reviewer's order; the record keeps its own.** Reviewer and date, then the items, then the
+  verdict and the export. Each item shows its text first, with the checklist and notes beside it on a wide screen
+  (they stay in view while the text scrolls) and after it on a narrow one. The exported Markdown is unchanged, with
+  the verdict first.
+- **"All hold" is per item only.** One button (key `a`) ticks every check of one item. There is no page-wide one:
+  the review is the evidence for freezing the corpus, so each item stays its own act.
+- **Keyboard shortcuts are single keys that can be turned off.** `j` / `k` move between items, `1`–`5` tick or
+  untick a check of the current item, `a` is "All hold", `n` goes to the notes, `Esc` leaves a field. They act only
+  while the focus is not in a field, the current item is marked, and a box on the page turns them off (remembered).
+- **What the browser keeps** (localStorage, each optional): the draft under `hcai-review:<corpus version>:<seed>`,
+  as before; `hcai-review-exported:<corpus version>:<seed>`, the JSON text of the last export, only to say whether
+  the answers have changed since (it is not a record); `hcai-review-keys` (`off`); `hcai-lang`; `hcai-theme`.
+- **Theme switch.** Auto (the system's theme: the default, and what a page does without scripts), light or dark,
+  remembered. One inline script in each page's `<head>` applies the choice before the first paint and marks that
+  scripts run; it is the only inline script. The dark colours are written once in `style.css`, for the system
+  preference, and the generator copies them under `data-theme="dark"` (`hcai.site.themed_css`).
+- **Every page reads without scripts.** Scripts are deferred, so none delays the first paint. Controls that need
+  them are hidden unless scripts run (`.js-only`): the two switches, the review's progress, export, import and
+  shortcuts. Links, tables, the variant list and the slot highlighting of the review work without. The review form
+  still needs scripts to save and export, and says so.
+- **Phones.** A wide table scrolls sideways in its own box instead of squeezing its columns, and the navigation is
+  one row that scrolls sideways (a menu button would need a script).
+- **Finding your way.** The home page is a hub: a card per part of the project, with where it stands. Deep pages
+  show the pages above them and link to the previous and next base CV or decision; long pages list their sections.
+  The variant viewer can put a second identity beside the first.
+- **Considered:** a stepper with one item per screen (find-in-page and links to an item stop working, and it needs
+  more state: a deeper rework than agreed); an explicit "reviewed" flag in the record (format version 2, with a
+  migration) or in the draft only (one more click per item, and an imported review would fall back to the derived
+  rule anyway); a page-wide "tick everything"; filters on the corpus index and hiding the reviewed items (9 base
+  CVs per role, and the jump links already lead to what is left).

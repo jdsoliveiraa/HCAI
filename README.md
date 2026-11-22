@@ -171,7 +171,7 @@ uv run hcai site configs/core.toml && python -m http.server -d site   # preview 
 ```
 
 - **Pages:**
-  - **Home:** summary, research questions, links to the proposal PDF, spec #1, tickets, notebook, report and configs, plus the status of the corpus, the review, the name check and the results.
+  - **Home:** a hub. One paragraph on the project, then a card per part (corpus, realism review, pilot, name check, results, decisions, configs) with where it stands and a link to its page; then the research questions, the summary and the links to the proposal PDF, spec #1, tickets, notebook and report.
   - **Corpus:** each role's job ad in EN and PT. Each base CV in EN and PT with its quality level and borderline label, its template with the identity slots marked, and a variant viewer of its identities with the demographic differences highlighted. The variants are rendered in-process from the corpus and the name bank, so nothing is written to `data/`.
   - **Pilot:** model probes from `docs/pilot/check-*.json`, the name check from `results/names/*.csv`, the pilot run summary, and usage notes.
   - **Results:** the analysis tables and figures, once they exist.
@@ -185,6 +185,12 @@ uv run hcai site configs/core.toml && python -m http.server -d site   # preview 
   - **Import JSON** restores an export.
   - The committed JSON is preloaded when there is no draft.
   - A record of another corpus version, seed or set of items is refused, with a message.
+  - **Order of the page:** reviewer and date, the items, then "Verdict and export". Each item shows its text first, with the checklist and notes beside it on a wide screen (they stay in view while the text scrolls) and after it on a narrow one. The exported record keeps its own layout (verdict first).
+  - **Progress:** a strip stays in view with "n of 12 reviewed" and a jump link per item, filled once the item is reviewed. An item counts as reviewed when every check is ticked, or when it has a note saying what does not hold. This is read off the answers: nothing is stored for it, so the record stays format version 1 and saved drafts load as they are.
+  - **Fewer clicks:** "All hold" ticks every check of one item (there is no page-wide one). Keys, while the focus is not in a field: `j` / `k` next / previous item, `1`–`5` tick or untick a check of the current item, `a` all hold, `n` notes, `Esc` leave a field. They are listed on the page and can be turned off there.
+  - **Saving and exporting:** the strip says when the draft was last saved; next to the export buttons the page says whether the answers were exported, have changed since the last export, or are the same as the committed review.
+- **Finding your way:** deep pages show the pages above them (Corpus / nurse) and link to the previous and next base CV or decision; long pages list their sections. In the variant viewer a second identity can be put beside the first ("Compare with"). On a phone a wide table scrolls sideways in its own box and the navigation is one row that scrolls.
+- **Theme and scripts:** the site follows the system's light or dark theme; the "Theme" button switches between auto, light and dark and the browser remembers it. Every page reads with scripts off: the scripts are deferred, and controls that need them (the two switches, the variant viewer's controls, the review's export) are hidden without them. Only the review form needs scripts, to save and export.
 - **Deployment:** `.github/workflows/pages.yml` builds the site with uv and deploys it with `actions/upload-pages-artifact` and `actions/deploy-pages` on every push to `main`. The repository is private, and GitHub Pages serves a private repository only on a paid plan. So either make the repository public (the plan in ADR 0010; the corpus and results are synthetic) or use a plan that allows Pages for private repositories. Then choose Settings → Pages → Source: "GitHub Actions". The build uses only what is committed, so commit the frozen corpus (`data/corpus/v1`) for the corpus pages and the review to appear.
 
 ## Tests

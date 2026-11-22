@@ -14,12 +14,13 @@ import pytest
 
 from hcai.cli import main
 from hcai.review import (
-    FORMAT, SampleCV, SampleIdentity, blank_review, check_review, review_markdown, review_sample,
+    FORMAT, FORMAT_VERSION, SampleCV, SampleIdentity, blank_review, check_review, review_markdown, review_sample,
 )
-from hcai.site import OPEN, CLOSE, MARKER, Site, build_site, review_payload
+from hcai.site import OPEN, CLOSE, HEAD_SCRIPT, MARKER, UI, Site, build_site, review_payload, themed_css
 from hcai.variants import render_variant
 
-REVIEW_JS = Path(__file__).parents[1] / "src" / "hcai" / "site_assets" / "review.js"
+ASSETS = Path(__file__).parents[1] / "src" / "hcai" / "site_assets"
+REVIEW_JS = ASSETS / "review.js"
 
 ROLES = ["nurse", "accountant"]
 QUALITIES = ["strong", "weak"]
@@ -146,6 +147,32 @@ class _Links(HTMLParser):
                 self.links.append(str(a[key]))
 
 
+class _ScriptOnly(HTMLParser):
+    """Which elements with an id (and which "All hold" buttons) are inside `.js-only`, or carry it."""
+
+    VOID = {"input", "br", "hr", "meta", "link", "img"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[bool] = []
+        self.script_only: dict[str, bool] = {}
+        self.all_hold: list[bool] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = dict(attrs)
+        hidden = "js-only" in (a.get("class") or "").split() or any(self.stack)
+        if a.get("id"):
+            self.script_only[str(a["id"])] = hidden
+        if "data-all" in a:
+            self.all_hold.append(hidden)
+        if tag not in self.VOID:
+            self.stack.append("js-only" in (a.get("class") or "").split())
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag not in self.VOID and self.stack:
+            self.stack.pop()
+
+
 def parse(page: Path) -> _Links:
     p = _Links()
     p.feed(page.read_text(encoding="utf-8"))
@@ -208,6 +235,159 @@ def test_pages_share_the_nav_and_mark_the_current_page(project: Path, tmp_path: 
     assert 'lang="en"' in home and 'name="viewport"' in home
 
 
+def test_home_is_a_hub_with_every_part_and_its_state_before_the_prose(project: Path, tmp_path: Path):
+    out = tmp_path / "site"
+    build_site(project, out)
+    home = (out / "index.html").read_text()
+    cards = re.findall(r'<li class="card"><h3><a href="([^"]+)">.*?</a></h3><div class="card-state">(.*?)</div></li>', home)
+    assert [href for href, _ in cards] == ["corpus/index.html", "review.html", "pilot.html", "pilot.html#names",
+                                           "results.html", "decisions/index.html", "configs.html"]
+    states = dict(cards)
+    assert states["corpus/index.html"] == "v1: 4 job ads, 8 base CVs (en, pt), generator gen-x"
+    assert states["review.html"] == "not committed yet"
+    assert states["pilot.html"] == "model probes of 2026-11-14; no pilot run yet"
+    assert states["pilot.html#names"] == "2 names, 1 failing"
+    assert states["decisions/index.html"] == "1 decisions (ADRs)"
+    assert states["configs.html"] == "other.toml, site.toml"
+    # the lede and the cards come first, then the research questions, the summary and the links
+    order = [home.index(mark) for mark in ('class="lede"', 'class="cards"', 'id="h-rqs"', 'id="h-summary"', 'id="h-links"')]
+    assert order == sorted(order)
+    bare = tmp_path / "bare"
+    build_site(write_project(tmp_path / "empty", corpus=False, results=False), bare)
+    assert (bare / "index.html").read_text().count('<li class="card">') == 7  # a part with nothing yet still has its card
+
+
+def test_deep_pages_say_where_they_are_and_link_to_their_neighbours(project: Path, tmp_path: Path):
+    out = tmp_path / "site"
+    build_site(project, out)
+
+    def crumbs(page: str) -> list[str]:
+        nav = re.search(r'<nav class="crumbs"[^>]*><ol>(.*?)</ol></nav>', (out / page).read_text(), re.S)
+        return re.findall(r'href="([^"]+)"', nav.group(1)) if nav else []
+
+    assert crumbs("corpus/nurse.html") == ["index.html"]
+    assert crumbs("corpus/nurse/weak/cv02.html") == ["../../index.html", "../../nurse.html"]
+    assert crumbs("decisions/0001-first-decision.html") == ["index.html"]
+    assert crumbs("index.html") == [] and crumbs("corpus/index.html") == []  # top-level pages are in the main nav
+
+    def pager(page: str) -> dict[str, str]:
+        return dict(re.findall(r'<a class="pager-(prev|next)" rel="(?:prev|next)" href="([^"]+)"', (out / page).read_text()))
+
+    # base CVs follow each other in corpus order, across quality levels and roles
+    assert pager("corpus/nurse/strong/cv01.html") == {"next": "cv02.html"}  # the first base CV has no previous one
+    assert pager("corpus/nurse/strong/cv02.html") == {"prev": "cv01.html", "next": "../weak/cv01.html"}
+    assert pager("corpus/nurse/weak/cv02.html") == {"prev": "cv01.html", "next": "../../accountant/strong/cv01.html"}
+    assert pager("corpus/accountant/weak/cv02.html") == {"prev": "cv01.html"}
+    # a page with several sections lists them (the links are checked by broken_links)
+    for page, anchors in (("corpus/index.html", ["#h-nurse", "#h-accountant"]),
+                          ("corpus/nurse/weak/cv02.html", ["#h-ids", "#h-tpl", "#h-var"]),
+                          ("pilot.html", ["#h-probes", "#names", "#h-run", "#h-usage"]),
+                          ("configs.html", ["#h-other", "#h-site"])):
+        toc = re.search(r'<nav class="toc" aria-labelledby="toc-label">(.*?)</nav>', (out / page).read_text(), re.S)
+        assert toc is not None and re.findall(r'href="([^"]+)"', toc.group(1)) == anchors, page
+    assert broken_links(out) == []
+
+
+def test_every_page_reads_without_scripts_and_no_script_blocks_it(project: Path, tmp_path: Path):
+    out = tmp_path / "site"
+    pages = build_site(project, out)
+    for page in pages:
+        text = (out / page).read_text()
+        head, body = text.split("</head>")
+        # the one inline script (theme before the first paint, and the mark that scripts run); the rest is deferred
+        assert head.count("<script>") == 1 and f"<script>{HEAD_SCRIPT}</script>" in head, page
+        assert re.findall(r"<script(?! defer src=| type=\"application/json\")[^>]*>", text) == ["<script>"], page
+        assert "<script" not in body.replace('<script type="application/json"', ""), page
+        # the switches do nothing without scripts, so they are only shown with them
+        assert re.search(r'<div class="prefs js-only">\s*<button type="button" id="theme-toggle"', body), page
+        assert body.index('id="lang-toggle"') < body.index("</header>")
+        assert 'href="#main"' in body and '<main id="main"' in body and "<footer" in body, page
+    css = (out / "assets" / "style.css").read_text()
+    assert "html:not(.js) .js-only { display: none !important; }" in css
+    assert 'className="js"' in HEAD_SCRIPT and "hcai-theme" in HEAD_SCRIPT
+    review = (out / "review.html").read_text()
+    shown = _ScriptOnly()
+    shown.feed(review)
+    for control in ("export", "export-md", "export-json", "import-file", "clear", "date-today", "keys-on",
+                    "review-progress", "save-state", "export-state"):
+        assert shown.script_only[control], control
+    assert shown.all_hold == [True] * 8
+    for field in ("reviewer", "date", "verdict-freeze", "verdict-notes", "show-slots", "item-0-notes", "review-status"):
+        assert not shown.script_only[field], field
+    # the texts, the jump links and the slot highlighting need no script
+    assert ".review:has(#show-slots:checked) mark.slot" in css
+    assert 'href="#item-0"' in review and 'href="#finish"' in review
+
+
+def test_theme_switch_reuses_the_dark_tokens(project: Path, tmp_path: Path):
+    source = (ASSETS / "style.css").read_text()
+    css = themed_css(source)
+    system = re.search(r'@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{(.*?)\}', css, re.S)
+    forced = re.search(r':root\[data-theme="dark"\] \{(.*?)\}', css, re.S)
+    assert system is not None and forced is not None
+
+    def tokens(block: str) -> dict[str, str]:
+        return dict(re.findall(r"(--[a-z0-9-]+|color-scheme):\s*([^;]+);", block))
+
+    assert tokens(system.group(1)) == tokens(forced.group(1)) and len(tokens(forced.group(1))) > 10
+    assert tokens(forced.group(1))["color-scheme"] == "dark"
+    # a token added to the dark block of style.css reaches the switch without being written twice
+    more = themed_css(source.replace("    --focus: #ffb366;\n", "    --focus: #ffb366;\n    --new-token: #123456;\n"))
+    assert more.count("--new-token: #123456;") == 2
+    with pytest.raises(ValueError):
+        themed_css(":root { --bg: #fff; }")
+    out = tmp_path / "site"
+    build_site(project, out)
+    assert (out / "assets" / "style.css").read_text() == css
+    script = (out / "assets" / "site.js").read_text()
+    assert '"hcai-theme"' in script and "/*STRINGS*/" not in script
+
+
+def contrast(a: str, b: str) -> float:
+    """The WCAG 2 contrast ratio of two #rrggbb colours."""
+    def luminance(colour: str) -> float:
+        parts = [int(colour[i: i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in parts)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_colour_tokens_meet_wcag_aa_in_both_themes():
+    light_css, dark_css = (ASSETS / "style.css").read_text().split("@media (prefers-color-scheme: dark)", 1)
+    themes = {"light": dict(re.findall(r"--([a-z-]+): (#[0-9a-f]{6});", light_css)),
+              "dark": dict(re.findall(r"--([a-z-]+): (#[0-9a-f]{6});", dark_css.split("}", 1)[0]))}
+    assert set(themes["light"]) == set(themes["dark"]) and "bg" in themes["light"]
+    text = [("text", "bg"), ("text", "surface"), ("text", "tag"), ("muted", "bg"), ("muted", "surface"), ("link", "bg"),
+            ("link", "surface"), ("accent-text", "accent"), ("mark-text", "mark"), ("borderline", "tag"),
+            ("borderline", "surface"), ("error", "bg"), ("error", "surface")]
+    # what marks a control or a state without text: field, button and chip borders (muted), a filled chip (accent),
+    # the focus ring
+    marks = [("muted", "bg"), ("accent", "bg"), ("focus", "bg"), ("focus", "surface")]
+    for name, t in themes.items():
+        for fg, bg in text:
+            assert contrast(t[fg], t[bg]) >= 4.5, (name, fg, bg)
+        for fg, bg in marks:
+            assert contrast(t[fg], t[bg]) >= 3, (name, fg, bg)
+
+
+def test_interface_strings_exist_in_both_languages(project: Path, tmp_path: Path):
+    out = tmp_path / "site"
+    pages = build_site(project, out)
+    used: set[str] = set()
+    for page in pages:
+        used |= set(re.findall(r'data-i18n(?:-label)?="([^"]+)"', (out / page).read_text()))
+    for script in ("site.js", "review.js", "variants.js"):
+        used |= set(re.findall(r'\bt\("([a-z_.]+)"\)', (ASSETS / script).read_text()))
+    used |= {"theme.auto", "theme.light", "theme.dark"}  # built as "theme." + the theme
+    assert used and used <= set(UI), sorted(used - set(UI))
+    for key, (en, pt) in UI.items():
+        assert en.strip() and pt.strip(), key
+    assert UI["review.progress"][0].count("{done}") == UI["review.progress"][1].count("{done}") == 1
+    assert UI["review.progress"][0].count("{total}") == UI["review.progress"][1].count("{total}") == 1
+
+
 def test_corpus_pages_show_labels_and_highlight_demographic_differences(project: Path, tmp_path: Path):
     out = tmp_path / "site"
     build_site(project, out)
@@ -220,6 +400,18 @@ def test_corpus_pages_show_labels_and_highlight_demographic_differences(project:
     assert '<mark class="slot">Brasileira</mark>' in page
     # generated text is escaped, never raw HTML
     assert "<b>in</b>" not in page and "&lt;b&gt;in&lt;/b&gt;" in page
+    # the viewer's controls need scripts (hidden until they run); a second identity can be put beside the first
+    assert '<div class="variant-controls" hidden>' in page and 'src="../../../assets/variants.js"' in page
+    compare = re.search(r'<select id="v-compare">(.*?)</select>', page, re.S)
+    assert compare is not None and 'for="v-compare"' in page
+    assert re.findall(r'<option value="([^"]*)"', compare.group(1)) == ["", "pt_m", "pt_f", "br_m", "br_f"]
+    shown = json.loads(node_run(f"""
+        const v = require({json.dumps(str(ASSETS / "variants.js"))});
+        process.stdout.write(JSON.stringify([v.shown("en", "pt_m", ""), v.shown("pt", "pt_m", "br_f"),
+                                             v.shown("pt", "pt_m", "pt_m")]));
+    """))
+    assert shown == [{"lang": "en", "identities": ["pt_m"]}, {"lang": "pt", "identities": ["pt_m", "br_f"]},
+                     {"lang": "pt", "identities": ["pt_m"]}]
 
 
 def test_marked_variant_is_the_variant_with_markers(project: Path):
@@ -414,6 +606,7 @@ def test_browser_export_matches_python_and_round_trips(project: Path, tmp_path: 
           md: r.reviewMarkdown(data, review), imported: imported, check: r.checkReview(review, data),
           bad: r.checkReview(bad, data), notReview: r.checkReview([], data),
           blank: r.normalize(null, data), fewer: r.checkReview(Object.assign({{}}, review, {{items: review.items.slice(1)}}), data),
+          keys: Object.keys(imported), itemKeys: Object.keys(imported.items[0]), storageKey: r.storageKey(data.meta),
         }}));
     """)
     result = json.loads(out)
@@ -424,6 +617,35 @@ def test_browser_export_matches_python_and_round_trips(project: Path, tmp_path: 
     assert result["notReview"] == "not a realism review export"
     assert result["fewer"] == "its items differ from this sample's"
     assert result["blank"] == blank_review(data["meta"], data["items"])
+    # the record is still format version 1, field for field, and a draft is still found under the same key: the
+    # page's progress and shortcuts add nothing to either
+    assert result["keys"] == list(blank_review(data["meta"], data["items"])) == [
+        "format", "format_version", "corpus_version", "generator", "seed", "reviewer", "date", "verdict", "items"]
+    assert result["itemKeys"] == ["id", "title", "checks", "notes"] and FORMAT_VERSION == 1
+    assert result["storageKey"] == "hcai-review:v1:7"
+
+
+def test_an_item_is_reviewed_when_every_check_is_ticked_or_it_has_a_note(project: Path, tmp_path: Path):
+    """The page's progress is read off the answers (nothing is stored for it)."""
+    data = Site(project, tmp_path / "s").review_data()
+    assert data is not None
+    review = filled(data)  # first item: one of two checks and a note; last item: four of five checks and a note
+    review["items"][1]["checks"] = {c: True for c in review["items"][1]["checks"]}  # every check, no note
+    review["items"][2]["checks"]["realistic"] = True  # one of two checks, no note
+    review["items"][3]["notes"] = "  \n "  # a blank note is no note
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    out = json.loads(node_run(f"""
+        const fs = require("fs");
+        const r = require({json.dumps(str(REVIEW_JS))});
+        const review = JSON.parse(fs.readFileSync({json.dumps(str(tmp_path / "review.json"))}, "utf8"));
+        process.stdout.write(JSON.stringify({{
+          done: review.items.map(r.itemDone), progress: r.progress(review),
+          odd: [r.itemDone(null), r.itemDone({{}}), r.itemDone({{checks: {{}}, notes: ""}})],
+        }}));
+    """))
+    assert out["done"] == [True, True, False, False, False, False, False, True]
+    assert out["progress"] == {"done": 3, "total": 8}
+    assert out["odd"] == [False, False, False]
 
 
 def test_committed_review_is_preloaded_only_when_it_matches(project: Path, tmp_path: Path):
@@ -457,6 +679,39 @@ def test_review_page_is_an_accessible_form(project: Path, tmp_path: Path):
     blob = re.search(r'<script type="application/json" id="review-data">(.*?)</script>', page, re.S)
     assert blob is not None
     assert len(json.loads(blob.group(1))["items"]) == 8
+    # landmarks and names: the strip's jump links are a labelled nav, each item a labelled article, messages are
+    # status regions, and the buttons are grouped under a name
+    assert '<nav aria-label="Review items" data-i18n-label="review.items.label"><ol class="chips">' in page
+    assert page.count('role="status" aria-live="polite"') == 2
+    assert len(re.findall(r'<article class="item" id="item-\d+" data-item="[^"]+" aria-labelledby="item-\d+-h" tabindex="-1">', page)) == 8
+    assert len(re.findall(r'role="group" aria-label="[^"]+" data-i18n-label="[^"]+"', page)) == 2
+
+
+def test_review_page_follows_the_reviewers_order(project: Path, tmp_path: Path):
+    out = tmp_path / "site"
+    build_site(project, out)
+    page = (out / "review.html").read_text()
+    # the strip: one jump link per item, numbered from 1, then the verdict and export
+    chips = re.findall(r'<a class="chip[^"]*" href="(#[^"]+)"', page)
+    assert chips == [f"#item-{n}" for n in range(8)] + ["#finish"]
+    assert re.search(r'<a class="chip" href="#item-0" data-chip="0" title="Job ad: nurse \(en\)">.*? 1<span', page)
+    articles = re.findall(r'<article class="item".*?</article>', page, re.S)
+    assert len(articles) == 8
+    for n, article in enumerate(articles):
+        # the text first, then its checklist and notes (beside it on a wide screen, below it on a narrow one)
+        assert article.index('class="doc"') < article.index('class="answers"') < article.index('class="checks"') \
+            < article.index("data-notes"), n
+        assert f'<span class="item-n">{n + 1}</span>' in article
+        assert article.count("data-all") == 1  # "All hold" is per item ...
+    assert page.count("data-all") == 8  # ... and there is no page-wide one
+    # who and when, the items, then the verdict and the export
+    order = [page.index(mark) for mark in ('id="reviewer"', 'id="review-bar"', 'id="item-0"', 'id="item-7"', 'id="finish"',
+                                           'id="verdict-freeze"', 'id="export"', 'id="import-file"', 'id="review-data"')]
+    assert order == sorted(order)
+    # the keys are listed, and can be turned off
+    keys = re.search(r'<details class="keys js-only">(.*?)</details>', page, re.S)
+    assert keys is not None and 'id="keys-on" checked' in keys.group(1)
+    assert re.findall(r"<kbd>([^<]+)</kbd>", keys.group(1)) == ["j", "k", "1", "5", "a", "n", "Esc"]
 
 
 def test_generated_text_cannot_inject_markup_links_or_break_the_review_data(tmp_path: Path):
