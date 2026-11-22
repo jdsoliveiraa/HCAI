@@ -67,6 +67,8 @@ repeats = 1
 rate_limit_backoff = 30
 rate_limit_max_backoff = 900
 rate_limit_max_wait = 21600
+# HTTP read timeout in seconds: the Blinder's long answers (up to ~11k tokens on PT CVs) timed out at the old 120 s.
+request_timeout = 600
 
 # Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
 [pilot]

@@ -79,7 +79,7 @@ def test_check_cli_writes_json_and_does_not_touch_the_cache(tmp_path, monkeypatc
         def list_models(self):
             return ["openai/gpt-4o-mini"]
 
-    monkeypatch.setattr("hcai.cli.http_client", lambda provider: Listing())
+    monkeypatch.setattr("hcai.cli.http_client", lambda provider, **kw: Listing())
 
     code = main(["check", str(SKELETON), "--out", str(tmp_path / "check.json"), "--repeats", "2"])
 

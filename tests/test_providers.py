@@ -1,9 +1,11 @@
-"""Providers (#11 Part A): per-model provider config, keys and `.env`, rate limits, unknown cost, resume.
+"""Providers (#11 Part A): per-model provider config, keys and `.env`, rate limits, unknown cost, resume;
+the request timeout (#11 Part B).
 
 Every HTTP call goes to an in-process `httpx.MockTransport`; nothing leaves the machine.
 """
 
 import json
+import tomllib
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -12,8 +14,8 @@ import httpx
 import pytest
 
 from conftest import scores_by_name
-from hcai.cli import main, models_command, run_command
-from hcai.config import load_design
+from hcai.cli import main, make_client, models_command, run_command
+from hcai.config import RunSettings, load_design
 from hcai.llm import (
     USER_AGENT,
     CachedClient,
@@ -24,6 +26,7 @@ from hcai.llm import (
     ProviderExhausted,
     RateLimited,
     RateLimitGuard,
+    http_timeout,
 )
 from hcai.providers import SESSION_ID, BUILTIN_PROVIDERS, MissingKey, check_keys, load_dotenv, provider_client
 from hcai.runner import execute, read_results
@@ -629,3 +632,186 @@ def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_re
     summary = json.loads((out / "run_summary.json").read_text())
     assert summary["missing_session_errors"] == state["n"] == summary["calls"]
     assert not list((tmp_path / "cache").glob("*.json"))  # refused calls are never cached
+
+
+# --- request timeout (#11 Part B) ---------------------------------------------------------------------------
+
+
+def with_timeout(path: Path, value: str) -> Path:
+    """The config at `path` with `[run] request_timeout = <value>` (the skeleton leaves it at its default)."""
+    text = path.read_text()
+    assert "request_timeout" not in text and "retry_backoff = 2.0" in text
+    path.write_text(text.replace("retry_backoff = 2.0", f"retry_backoff = 2.0\nrequest_timeout = {value}"))
+    return path
+
+
+def fake_network(monkeypatch, handler) -> list[httpx.Request]:
+    """Every `httpx.Client` the code builds for itself talks to `handler`, not the network; returns the requests."""
+    seen: list[httpx.Request] = []
+
+    def record(request):
+        seen.append(request)
+        return handler(request)
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(record), **kw))
+    return seen
+
+
+def timeouts(requests: list[httpx.Request]) -> set[tuple[float, float]]:
+    """The (read, connect) timeouts the transport was told to apply to `requests`."""
+    return {(r.extensions["timeout"]["read"], r.extensions["timeout"]["connect"]) for r in requests}
+
+
+def test_the_request_timeout_defaults_to_600_seconds_with_a_short_connect_timeout(tmp_path):
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        return chat_answer("ok")
+
+    design = load_design(config(tmp_path))  # the skeleton sets no request_timeout
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+
+    routed_client(handler, design=design).complete(replace(REQ, model=design.models[0]))
+    OpenAICompatibleClient("https://p.example/v1", "k", http=http).complete(REQ)
+
+    assert design.run.request_timeout == RunSettings().request_timeout == 600
+    expected = {"connect": 20.0, "read": 600.0, "write": 600.0, "pool": 600.0}
+    assert [r.extensions["timeout"] for r in seen] == [expected, expected]
+
+
+def test_the_connect_timeout_stays_short_and_never_exceeds_the_request_timeout():
+    assert (http_timeout(900).read, http_timeout(900).connect) == (900, 20)
+    assert (http_timeout(5).read, http_timeout(5).connect) == (5, 5)
+
+
+def test_the_core_config_sets_the_request_timeout_explicitly():
+    run = tomllib.loads((SKELETON.parent / "core.toml").read_text())["run"]
+
+    assert run["request_timeout"] == 600
+
+
+def test_the_configured_request_timeout_reaches_the_calls_of_both_providers(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-oc")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    seen = fake_network(monkeypatch, lambda request: chat_answer("ok"))
+    design = load_design(with_timeout(
+        config(tmp_path, '\n[model_providers]\n"b" = "openrouter"\n', models_line='models = ["a", "b"]'), "900"))
+
+    client = make_client(design, design.models)  # what run, corpus, names and check call the models through
+    client.complete(replace(REQ, model="a"))
+    client.complete(replace(REQ, model="b"))
+
+    assert [r.url.host for r in seen] == ["opencode.ai", "openrouter.ai"]
+    assert timeouts(seen) == {(900.0, 20.0)}
+
+
+@pytest.mark.parametrize("command, exit_code, paths", [
+    ("run", 3, {"/chat/completions"}),
+    ("corpus", 3, {"/chat/completions"}),
+    ("names", 3, {"/chat/completions"}),
+    ("check", 3, {"/models", "/chat/completions"}),
+    ("models", 0, {"/models"}),
+])
+def test_every_command_that_calls_a_provider_uses_the_configured_request_timeout(
+        command, exit_code, paths, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-oc")
+
+    def handler(request):  # lists models, and refuses every chat call for no credits: the command stops at once
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "openai/gpt-4o-mini"}]})
+        return httpx.Response(402, json={"error": {"message": "no credits left"}})
+
+    seen = fake_network(monkeypatch, handler)
+    path = with_timeout(config(tmp_path, '\n[generator]\nmodel = "gen-model"\n'), "45")
+    if command == "corpus":  # a corpus of its own: the frozen one is not regenerated
+        path.write_text(path.read_text().replace(f'corpus_dir = "{CORPUS}"', f'corpus_dir = "{tmp_path / "corpus"}"'))
+    out, cache = ["--out", str(tmp_path / "out")], ["--cache", str(tmp_path / "cache")]
+    args = {"run": out + cache, "corpus": cache, "names": out + cache, "check": [], "models": []}[command]
+
+    assert main([command, str(path), *args]) == exit_code
+    assert {r.url.path.removeprefix("/zen/go/v1") for r in seen} == paths
+    assert timeouts(seen) == {(45.0, 20.0)}
+
+
+@pytest.mark.parametrize("value", ["0", "-30", '"600"', "true", "nan", "inf"])
+def test_an_invalid_request_timeout_is_refused_when_the_config_loads(tmp_path, value):
+    with pytest.raises(ValueError, match=r"\[run\] request_timeout must be a number of seconds > 0"):
+        load_design(with_timeout(config(tmp_path), value))
+
+
+def test_a_whole_or_fractional_number_of_seconds_is_a_valid_request_timeout(tmp_path):
+    assert load_design(with_timeout(config(tmp_path), "900")).run.request_timeout == 900
+    assert load_design(with_timeout(config(tmp_path), "0.5")).run.request_timeout == 0.5
+
+
+def test_the_clients_refuse_an_invalid_request_timeout_before_any_call():
+    with pytest.raises(ValueError, match="request_timeout"):
+        OpenAICompatibleClient("https://p.example/v1", "k", timeout=0)
+    with pytest.raises(ValueError, match="request_timeout"):
+        provider_client(lambda m: BUILTIN_PROVIDERS["opencode-go"], ["m"], environ={"OPENCODE_API_KEY": "k"},
+                        request_timeout=-1)
+
+
+def test_the_request_timeout_changes_neither_the_request_sent_nor_its_cache_key(tmp_path):
+    sent: list[httpx.Request] = []
+
+    def handler(request):
+        sent.append(request)
+        return chat_answer("ok")
+
+    def client(timeout: float) -> OpenAICompatibleClient:
+        return OpenAICompatibleClient("https://p.example/v1", "k", timeout=timeout,
+                                      http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    key = REQ.cache_key()
+    cache = tmp_path / "cache"
+
+    first = CachedClient(client(120), cache).complete(REQ)
+    again = CachedClient(client(600), cache).complete(REQ)  # the entry cached under the old timeout is a hit
+
+    assert REQ.cache_key() == key
+    assert [p.name for p in cache.iterdir()] == [f"{key}.json"]
+    assert "timeout" not in (cache / f"{key}.json").read_text()
+    assert (first.cached, again.cached) == (False, True) and again.text == first.text and len(sent) == 1
+    client(600).complete(REQ)  # uncached, to compare what goes over the wire under each timeout
+    short, long = sent
+    assert (short.method, short.url, short.content, short.headers) == (long.method, long.url, long.content, long.headers)
+    assert timeouts([short]) == {(120.0, 20.0)} and timeouts([long]) == {(600.0, 20.0)}
+
+
+def test_a_run_cached_under_one_request_timeout_replays_in_full_under_another(tmp_path):
+    calls: list[httpx.Request] = []
+
+    def handler(request):
+        calls.append(request)
+        return crew_answer(request)
+
+    def run(name: str, seconds: str):
+        (tmp_path / name).mkdir()
+        design = load_design(with_timeout(config(tmp_path / name), seconds))
+        client = provider_client(design.provider_for, design.models, environ={"OPENCODE_API_KEY": SECRET},
+                                 http=httpx.Client(transport=httpx.MockTransport(handler)),
+                                 request_timeout=design.run.request_timeout)
+        return execute(design, client, out_dir=tmp_path / name / "out", cache_dir=tmp_path / "cache")
+
+    first = run("short", "120")
+    made = len(calls)
+    second = run("long", "600")
+
+    assert made == first.totals["calls"] == 5 and timeouts(calls) == {(120.0, 20.0)}
+    assert len(calls) == made and second.totals["calls"] == 0 and second.totals["cache_hits"] == 5
+    assert [(r.status, r.score) for r in second.rows] == [(r.status, r.score) for r in first.rows]
+
+
+def test_a_read_timeout_is_a_provider_error_that_names_the_setting():
+    def handler(request):
+        raise httpx.ReadTimeout("The read operation timed out")
+
+    client = OpenAICompatibleClient("https://p.example/v1", "k", timeout=45,
+                                    http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with pytest.raises(ProviderError, match=r"ReadTimeout: .*\[run\] request_timeout = 45s"):
+        client.complete(REQ)
