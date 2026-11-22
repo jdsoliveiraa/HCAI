@@ -8,11 +8,14 @@ these and passes its `ui` function in, so the interface strings stay in its one 
 
 The chart, one per cell: a row per name x model with a grey bar for the scored p(intended gender), a stacked bar
 of the scored origin shares (the hedge options are not in them, ADR 0011) and a pass or fail mark. The intended
-origin is always the first segment, so it starts at 0 and the origin minimum of the pass rule can be read against
-its end; that line is drawn only where the rule applies it (not for a host origin, `HOST_ORIGINS`). Colours are
-classes styled in site_assets/style.css (`nc-*`), one per origin in the order of the CSV's columns: the four
-were checked pairwise for colour-vision deficiencies in both themes, since any two origins can touch. A fifth
-origin would get the neutral class, never a new hue. Names and models come from the CSV and are always escaped.
+origin is always the first segment, drawn from 0 to its exact share, so the origin minimum of the pass rule can
+be read against its end; that line is drawn only where the rule applies it (not for a host origin,
+`HOST_ORIGINS`). A bar is about 130 units long, so it cannot show a difference under about 0.01: at a threshold
+the mark and the table say whether a row passes, not the bar. A question with no estimate has no bar and no
+line, only the words. Colours are classes styled in site_assets/style.css (`nc-*`), one per origin in the order
+of the CSV's columns: the four were checked pairwise for colour-vision deficiencies in both themes, since any two
+origins can touch. A fifth origin would get the neutral class, never a new hue (`hcai names` writes four).
+Names and models come from the CSV and are always escaped; a row's <title> reads it in the CSV's own words.
 """
 
 from __future__ import annotations
@@ -82,14 +85,21 @@ class NamesRecord:
 
 
 def read_table(path: Path) -> Table:
-    with path.open(newline="", encoding="utf-8") as f:
+    """A CSV file as text. A byte order mark is dropped. A file that is not comma-separated (a spreadsheet's
+    semicolon or tab export) is refused: read as one column it would pass for a record with nothing in it."""
+    with path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, restval="")
         rows = [{k: v for k, v in row.items() if k is not None} for row in reader]  # None: cells past the header
-        return Table(list(reader.fieldnames or []), rows)
+        header = list(reader.fieldnames or [])
+    if len(header) == 1 and (";" in header[0] or "\t" in header[0]):
+        raise ValueError("not comma-separated; keep the file as hcai names wrote it (UTF-8, commas, decimal points)")
+    return Table(header, rows)
 
 
 def load_record(path: Path) -> NamesRecord | None:
-    """The name check tables in `path`, or None when it has neither summary.csv nor cells.csv."""
+    """The name check tables in `path`, or None when it holds no record: no summary.csv or cells.csv, or none
+    with a row (an empty file is no record, so it never stands in front of another directory's results). A file
+    that cannot be read is a problem of the record, to be shown, not a missing record."""
     if not (path / SUMMARY).is_file() and not (path / CELLS).is_file():
         return None
     tables, problems = {}, []
@@ -97,9 +107,10 @@ def load_record(path: Path) -> NamesRecord | None:
         if (path / filename).is_file():
             try:
                 tables[filename] = read_table(path / filename)
-            except (csv.Error, UnicodeDecodeError, OSError) as e:
+            except (csv.Error, ValueError, OSError) as e:  # ValueError: not UTF-8, or not comma-separated
                 problems.append(f"{filename}: {e}")
-    return NamesRecord(path, tables, tuple(problems))
+    record = NamesRecord(path, tables, tuple(problems))
+    return record if problems or record.summary or record.rows(CELLS) else None
 
 
 def scored_origins(header: Sequence[str]) -> list[str]:
@@ -188,26 +199,69 @@ def origin_classes(origins: Sequence[str]) -> dict[str, str]:
 
 # --- the chart -------------------------------------------------------------------------------------------------
 
-# Geometry in SVG user units. The chart is one column wide (W) and scales with its container, so on a phone it is
-# shown at about its natural size and the text stays readable; hcai.site puts the cells side by side when there
-# is room. Text widths are estimates (no font metrics at build time): labels longer than their room are cut
-# with an ellipsis, and the full text is in the row's <title> and in the table.
+# Geometry in SVG user units. The chart is one column wide (W) and scales with its container: a 320px phone shows
+# it at 0.9 of its size (its smallest text at about 10px), a 360px one at full size, and wider screens at up to
+# 1.2; hcai.site puts the cells side by side when there is room. The text sizes are the font-size of the nc-*
+# classes in style.css: change them together.
 W = 320
-HEAD = 30  # column titles (baseline 10) and threshold labels (baseline 24)
-NAME_H, ROW_H, BAR_H, GAP = 18, 16, 10, 8  # name line, model row, bar thickness, space after a name
+NAME_PX, MODEL_PX, HEAD_PX = 13, 12, 11  # .nc-name, .nc-model, .nc-head / .nc-tick / .nc-none
+HEAD = 32  # column titles (baseline 11) and threshold labels (baseline 26)
+NAME_H, ROW_H, BAR_H, GAP = 19, 16, 10, 8  # name line, model row, bar thickness, space after a name
 GENDER_W = 56
 MARK_W = 20
-LABEL_MIN, LABEL_MAX, MODEL_CHAR, NAME_CHAR = 48, 104, 6.4, 7.0  # model label column; px per character (11px, 12px)
-SEG_GAP = 1.5  # surface gap between two origin segments
+LABEL_MIN, LABEL_MAX = 44, 108  # the model label column
+SEG_GAP = 1.5  # gap in the page colour between two origin segments
 CHECK, CROSS = "l3.2 3.2 6-7", "l7 7m0-7l-7 7"  # the pass and fail marks, in a 12 x 12 box
+ELLIPSIS = "…"
 
 
 def _n(x: float) -> str:
     return f"{x:.2f}".rstrip("0").rstrip(".")
 
 
-def _clip(text: str, chars: int) -> str:
-    return text if len(text) <= chars else text[: max(1, chars - 1)].rstrip() + "…"
+def text_width(text: str, px: float, *, bold: bool = False) -> float:
+    """An upper estimate of a label's width: there are no font metrics at build time, so each character counts
+    as its class in a wide sans-serif (the widest a browser is likely to pick for system-ui). A label that fits
+    by this estimate fits; one that does not is cut, with its full text in the row's <title> and in the table."""
+    def em(ch: str) -> float:
+        if ch in " .,:;'|!ijlI/-()[]":
+            return 0.37
+        if ch in "tfr":
+            return 0.43
+        if ch in "mwMW@%":
+            return 1.0
+        return 0.77 if ch.isupper() else 0.65
+    return sum(em(ch) for ch in text) * px * (1.12 if bold else 1.0)
+
+
+def fit(text: str, px: float, width: float, *, bold: bool = False, keep_end: bool = False) -> str:
+    """`text` if it fits `width`, else cut with an ellipsis: at its end, or with `keep_end` in the middle, since
+    the ids of one vendor's models differ at their end."""
+    if text_width(text, px, bold=bold) <= width:
+        return text
+    room = width - text_width(ELLIPSIS, px, bold=bold)
+    head_room = room / 2 if keep_end else room
+    head = ""
+    for ch in text:
+        if text_width(head + ch, px, bold=bold) > head_room:
+            break
+        head += ch
+    tail = ""
+    if keep_end:
+        for ch in reversed(text[len(head):]):
+            if text_width(head + ch + tail, px, bold=bold) > room:
+                break
+            tail = ch + tail
+    return (head.rstrip() or text[:1]) + ELLIPSIS + tail
+
+
+def model_labels(models: Sequence[str], width: float) -> dict[str, str]:
+    """model id -> the label drawn beside its rows: at most `width` wide, and never the same for two models (ids
+    that are still alike once cut are numbered in their order), so a mark can always be told to its model."""
+    labels = {m: fit(m, MODEL_PX, width, keep_end=True) for m in models}
+    if len(set(labels.values())) < len(labels):
+        labels = {m: fit(f"{k}: {m}", MODEL_PX, width, keep_end=True) for k, m in enumerate(models, start=1)}
+    return labels
 
 
 def _first(rows: list[dict[str, str]], key: str) -> float | None:
@@ -234,8 +288,10 @@ def cell_chart(names: dict[str, list[dict[str, str]]], *, gender: str, origin: s
     its <title>, and described by its <desc>; its values are in the table the page shows after the charts.
     """
     rows = [r for name_rows in names.values() for r in name_rows]
-    longest = max((len(r.get("model", "")) for r in rows), default=0)
-    label_w = min(LABEL_MAX, max(LABEL_MIN, round(MODEL_CHAR * longest) + 4))
+    models = list(dict.fromkeys(r.get("model", "") for r in rows))
+    widest = max((text_width(m, MODEL_PX) for m in models), default=0.0)
+    label_w = min(LABEL_MAX, max(LABEL_MIN, math.ceil(widest) + 2))
+    labels = model_labels(models, label_w)
     gx = label_w + 6
     ox = gx + GENDER_W + 12
     ow = W - ox - MARK_W
@@ -244,20 +300,20 @@ def cell_chart(names: dict[str, list[dict[str, str]]], *, gender: str, origin: s
     threshold = _first(rows, "gender_threshold")
     minimum = None if origin in HOST_ORIGINS else _first(rows, "origin_minimum")
 
-    gender_title = (ui(f"names.chart.p.{gender}", "text", class_="nc-head", x=_n(gx), y="10")
-                    if gender in SCORED_GENDERS else f'<text class="nc-head" x="{_n(gx)}" y="10">p({esc(gender)})</text>')
-    parts = [gender_title, ui("names.chart.origins", "text", class_="nc-head", x=_n(ox), y="10")]
+    gender_title = (ui(f"names.chart.p.{gender}", "text", class_="nc-head", x=_n(gx), y="11")
+                    if gender in SCORED_GENDERS else f'<text class="nc-head" x="{_n(gx)}" y="11">p({esc(gender)})</text>')
+    parts = [gender_title, ui("names.chart.origins", "text", class_="nc-head", x=_n(ox), y="11")]
     lines = [(value, x0, width) for value, x0, width in ((threshold, gx, GENDER_W), (minimum, ox, ow))
              if value is not None]
-    parts += [f'<text class="nc-tick" x="{_n(x0 + value * width)}" y="24">{value:g}</text>' for value, x0, width in lines]
+    parts += [f'<text class="nc-tick" x="{_n(x0 + value * width)}" y="26">{value:g}</text>' for value, x0, width in lines]
 
     y = float(HEAD)
     for name, name_rows in names.items():
-        parts.append(f'<text class="nc-name" x="0" y="{_n(y + 13)}">{esc(_clip(name, int(W / NAME_CHAR)))}</text>')
+        parts.append(f'<text class="nc-name" x="0" y="{_n(y + 14)}">{esc(fit(name, NAME_PX, W, bold=True))}</text>')
         top = y + NAME_H
         for k, row in enumerate(name_rows):
             parts.append(_row(row, top + k * ROW_H, gx=gx, ox=ox, ow=ow, order=order, classes=classes,
-                              origins=origins, label_chars=int(label_w / MODEL_CHAR), threshold=threshold,
+                              origins=origins, label=labels[row.get("model", "")], threshold=threshold,
                               minimum=minimum, ui=ui))
         y = top + len(name_rows) * ROW_H + GAP
     height = _n(y - GAP + 2)
@@ -268,60 +324,77 @@ def cell_chart(names: dict[str, list[dict[str, str]]], *, gender: str, origin: s
 
 
 def _threshold(x: float, y: float) -> str:
-    """A threshold of the pass rule across one row's bar, with a halo in the page colour so it shows on any fill.
-    It is drawn row by row, over a bar only: it never crosses a name or a row that has nothing to compare."""
-    span = f'x1="{_n(x)}" x2="{_n(x)}" y1="{_n(y + 1)}" y2="{_n(y + ROW_H - 1)}"'
-    return f'<line class="nc-thr-halo" {span}/><line class="nc-thr" {span}/>'
+    """A threshold of the pass rule across one row: a hairline over the row's whole height, so it shows above
+    and below the bar whatever the fill, and joins the line of the next row. It is drawn only on a row that has
+    that bar: never across a name, nor across a question with no estimate."""
+    return f'<line class="nc-thr" x1="{_n(x)}" x2="{_n(x)}" y1="{_n(y)}" y2="{_n(y + ROW_H)}"/>'
 
 
 def _row(row: dict[str, str], y: float, *, gx: float, ox: float, ow: float, order: Sequence[str],
-         classes: dict[str, str], origins: Sequence[str], label_chars: int, threshold: float | None,
+         classes: dict[str, str], origins: Sequence[str], label: str, threshold: float | None,
          minimum: float | None, ui: UiFn) -> str:
-    bar_y = _n(y + (ROW_H - BAR_H) / 2)
+    bar_y, text_y = _n(y + (ROW_H - BAR_H) / 2), _n(y + 12)
     out = [f'<g class="nc-row" data-name="{esc(row.get("name", ""))}" data-model="{esc(row.get("model", ""))}">',
            f"<title>{esc(row_reading(row, origins))}</title>",
            f'<rect class="nc-hit" x="0" y="{_n(y)}" width="{W}" height="{ROW_H}"/>',
-           f'<text class="nc-model" x="0" y="{_n(y + 11.5)}">{esc(_clip(row.get("model", ""), label_chars))}</text>',
-           f'<rect class="nc-track" x="{_n(gx)}" y="{bar_y}" width="{GENDER_W}" height="{BAR_H}" rx="2"/>']
+           f'<text class="nc-model" x="0" y="{text_y}">{esc(label)}</text>']
     p = number(row.get("p_intended_gender"))
     if p is not None:
-        out.append(f'<rect class="nc-gender" x="{_n(gx)}" y="{bar_y}" width="{_n(GENDER_W * min(1.0, max(0.0, p)))}" '
+        out.append(f'<rect class="nc-track" x="{_n(gx)}" y="{bar_y}" width="{GENDER_W}" height="{BAR_H}" rx="2"/>'
+                   f'<rect class="nc-gender" x="{_n(gx)}" y="{bar_y}" width="{_n(GENDER_W * min(1.0, max(0.0, p)))}" '
                    f'height="{BAR_H}" rx="2"/>')
-    if threshold is not None:
-        out.append(_threshold(gx + threshold * GENDER_W, y))
+        if threshold is not None:
+            out.append(_threshold(gx + threshold * GENDER_W, y))
+    else:  # no scored gender: every answer missing or all hedge. An empty bar would read as a probability of 0.
+        out.append(ui("names.chart.none.short", "text", class_="nc-none", x=_n(gx), y=text_y))
     shares = [number(row.get(SCORED + o)) for o in order]
     if shares and all(s is not None for s in shares):
         x = ox
         for k, (o, share) in enumerate(zip(order, shares)):
             width = min(ow * max(0.0, share or 0.0), ox + ow - x)  # never past the end of the bar
-            # a gap in the page colour separates two segments; a sliver thinner than the gap keeps what it has
-            drawn = width if k == len(order) - 1 else max(width - SEG_GAP, min(width, 0.75))
+            # The first segment (the intended origin) is drawn to its exact end, where the minimum is read. Each
+            # later one gives up SEG_GAP at its start for the gap in the page colour; a sliver keeps 0.75 of itself.
+            drawn = width if k == 0 else max(width - SEG_GAP, min(width, 0.75))
             if drawn > 0:
-                out.append(f'<rect class="nc-o {classes[o]}" x="{_n(x)}" y="{bar_y}" width="{_n(drawn)}" height="{BAR_H}"/>')
+                out.append(f'<rect class="nc-o {classes[o]}" x="{_n(x + width - drawn)}" y="{bar_y}" '
+                           f'width="{_n(drawn)}" height="{BAR_H}"/>')
             x += width
         if minimum is not None:
             out.append(_threshold(ox + minimum * ow, y))
     else:  # no scored origin distribution: every answer missing or all hedge
-        out.append(ui("names.chart.none", "text", class_="nc-none", x=_n(ox), y=_n(y + 11.5)))
+        out.append(ui("names.chart.none", "text", class_="nc-none", x=_n(ox), y=text_y))
     out.append(mark(is_true(row.get("pass")), W - 13, y + 2))
     return "".join(out) + "</g>"
 
 
-def legend(origins: Sequence[str], ui: UiFn) -> str:
-    """The key of every cell chart: the origin colours, the gender bar, the threshold line and the two marks."""
-    def swatch(inner: str, width: int = 18) -> str:
-        return f'<svg class="names-key" width="{width}" height="12" viewBox="0 0 {width} 12" aria-hidden="true">{inner}</svg>'
+def _swatch(inner: str, width: int = 18) -> str:
+    return f'<svg class="names-key" width="{width}" height="12" viewBox="0 0 {width} 12" aria-hidden="true">{inner}</svg>'
 
+
+def origin_key(origins: Sequence[str], ui: UiFn, *, short: bool = False) -> list[str]:
+    """One legend item per origin: its colour and its name (`short`: the name used in headings and columns)."""
     classes = origin_classes(origins)
-    items = [swatch(f'<rect class="nc-o {classes[o]}" x="0" y="1" width="18" height="10"/>') + origin_label(o, ui)
-             for o in origins]
-    items.append(swatch('<rect class="nc-track" x="0" y="1" width="18" height="10" rx="2"/>'
-                        '<rect class="nc-gender" x="0" y="1" width="13" height="10" rx="2"/>') + ui("names.legend.gender"))
-    items.append(swatch('<rect class="nc-track" x="0" y="1" width="18" height="10" rx="2"/>'
-                        '<line class="nc-thr" x1="12" x2="12" y1="0" y2="12"/>') + ui("names.legend.threshold"))
-    items.append(swatch(mark(True, 0, 0), 12) + ui("names.pass"))
-    items.append(swatch(mark(False, 0, 0), 12) + ui("names.fail"))
+    return [_swatch(f'<rect class="nc-o {classes[o]}" x="0" y="1" width="18" height="10"/>')
+            + origin_label(o, ui, short=short) for o in origins]
+
+
+def legend(origins: Sequence[str], ui: UiFn) -> str:
+    """The key of every cell chart: the origin colours (with the options as the models were asked them), the
+    gender bar, the threshold line and the two marks."""
+    items = origin_key(origins, ui)
+    items.append(_swatch('<rect class="nc-track" x="0" y="1" width="18" height="10" rx="2"/>'
+                         '<rect class="nc-gender" x="0" y="1" width="13" height="10" rx="2"/>') + ui("names.legend.gender"))
+    items.append(_swatch('<rect class="nc-track" x="0" y="1" width="18" height="10" rx="2"/>'
+                         '<line class="nc-thr" x1="12" x2="12" y1="0" y2="12"/>') + ui("names.legend.threshold"))
+    items.append(_swatch(mark(True, 0, 0), 12) + ui("names.pass"))
+    items.append(_swatch(mark(False, 0, 0), 12) + ui("names.fail"))
     return '<ul class="names-legend">' + "".join(f"<li>{item}</li>" for item in items) + "</ul>"
+
+
+def short_legend(origins: Sequence[str], ui: UiFn) -> str:
+    """The origin colours again, in one line, for the charts of one origin: the full key is above the first."""
+    return ('<ul class="names-legend names-legend-short">'
+            + "".join(f"<li>{item}</li>" for item in origin_key(origins, ui, short=True)) + "</ul>")
 
 
 # --- re-asks -----------------------------------------------------------------------------------------------------

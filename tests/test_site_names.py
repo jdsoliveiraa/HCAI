@@ -19,7 +19,10 @@ import pytest
 from conftest import ROOT
 from hcai.namecheck import GENDER_OPTIONS, ORIGIN_KEYS, Perception, score_probabilities, write_outputs
 from hcai.site import NAMES_PAGE, UI, Site, build_site, load_site_config
-from hcai.site_names import MISSING, cell_chart, load_record, reask_chains, shown
+from hcai.site_names import (
+    GENDER_W, LABEL_MAX, MARK_W, MISSING, MODEL_PX, NAME_PX, W, cell_chart, load_record, model_labels, reask_chains,
+    shown, text_width,
+)
 from test_site import broken_links, parse, write_project
 
 MODELS = ("model-a", "model-b")
@@ -131,7 +134,8 @@ def first_table(fragment: str) -> list[list[str]]:
     def cell(inner: str) -> str:
         return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", inner))).strip()
 
-    return [[cell(c) for c in re.findall(r"<td>(.*?)</td>", row, re.S)] for row in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+    return [[cell(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)]
+            for row in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
 
 
 def table_rows(html_text: str, heading_id: str) -> list[list[str]]:
@@ -251,6 +255,72 @@ def test_a_record_without_scored_probabilities_shows_its_tables_only(tmp_path: P
     assert broken_links(out) == []
 
 
+def test_a_choice_mode_record_lists_every_row_on_its_page(tmp_path: Path):
+    config = write_project(tmp_path / "project", results=False)
+    names = tmp_path / "project" / "docs" / "pilot" / "names"
+    names.mkdir(parents=True)
+    rows = [f"Name {k},model-a,{k < 10}" for k in range(64)]  # 54 failing rows
+    (names / "summary.csv").write_text("name,model,pass\n" + "\n".join(rows) + "\n")
+    out = tmp_path / "site"
+    build_site(config, out)
+    text = (out / NAMES_PAGE).read_text()
+    assert len(first_table(text)) == 64 and "Showing the first rows only" not in text
+    assert "probability to" not in text  # the introduction fits a record of single choices too
+    section = (out / "pilot.html").read_text().split('<section id="names"', 1)[1].split("</section>", 1)[0]
+    assert len(first_table(section)) == 40 and "Showing the first rows only" in section and "(54 rows)" in section
+    assert "every name and model</span>" in section and "charts" not in section  # the link promises what is there
+
+
+def test_a_spreadsheet_resave_is_read_or_refused_never_misread(tmp_path: Path):
+    config = write_project(tmp_path / "project", results=False)
+    names = write_record(tmp_path / "project" / "docs" / "pilot" / "names")
+    out = tmp_path / "site"
+    for f in names.glob("*.csv"):  # a byte order mark is dropped
+        f.write_bytes(b"\xef\xbb\xbf" + f.read_bytes())
+    record = load_record(names)
+    assert record is not None and record.probability and record.names[0] == "Gonçalo Figueiredo"
+    build_site(config, out)
+    assert "3 names, 2 failing" in (out / "index.html").read_text() and len(read_page(out / NAMES_PAGE).svgs) == 2
+    # a semicolon export is refused with its reason: read as one column it would be a record of one nameless name
+    summary = names / "summary.csv"
+    summary.write_text(summary.read_text(encoding="utf-8-sig").replace(",", ";"), encoding="utf-8")
+    record = load_record(names)
+    assert record is not None and "summary.csv" not in record.tables and "not comma-separated" in record.problems[0]
+    build_site(config, out)
+    text = (out / NAMES_PAGE).read_text()
+    assert '<p class="error">summary.csv: not comma-separated' in text and "<svg" not in text
+    assert "names, " not in (out / "index.html").read_text()  # no count from a file that was not read
+    assert '<p class="error">summary.csv: not comma-separated' in (out / "pilot.html").read_text()
+
+
+def test_an_empty_committed_summary_does_not_hide_the_local_results(tmp_path: Path):
+    config = write_project(tmp_path / "project", results=False)
+    root = tmp_path / "project"
+    write_record(root / "results" / "names")
+    committed = root / "docs" / "pilot" / "names"
+    committed.mkdir(parents=True)
+    (committed / "summary.csv").write_text("")
+    assert load_record(committed) is None
+    header = (root / "results" / "names" / "summary.csv").read_text().splitlines()[0]
+    (committed / "summary.csv").write_text(header + "\n")
+    assert load_record(committed) is None  # a header with no row is no record either
+    out = tmp_path / "site"
+    build_site(config, out)
+    assert "local results, not committed" in (out / NAMES_PAGE).read_text()
+    assert "3 names, 2 failing" in (out / "index.html").read_text()
+
+
+def test_a_record_outside_the_repository_is_not_called_committed(tmp_path: Path):
+    config = write_project(tmp_path / "project", results=False)
+    write_record(tmp_path / "elsewhere" / "names")
+    config.write_text(config.read_text() + '\n[site]\nnames = "../elsewhere/names"\n')
+    out = tmp_path / "site"
+    build_site(config, out)
+    text = (out / NAMES_PAGE).read_text()
+    assert "Gonçalo Figueiredo" in text and "local results, not committed" in text
+    assert "blob/main" not in text and "committed with the repository" not in text
+
+
 # --- the page ----------------------------------------------------------------------------------------------------
 
 
@@ -308,8 +378,9 @@ def test_the_reask_record_is_shown_per_model_and_per_answer(project: Path, tmp_p
     section = text.split('id="h-reasks"', 1)[1].split('id="h-files"', 1)[0]
     per_model, each = (first_table(part) for part in section.split("<h3", 2)[1:])
     # model, answers, re-asks, answers asked again, ended answered / still all hedge / missing, names
-    assert per_model == [["model-a", "6", "1", "1", "1", "0", "0", "Gonçalo Figueiredo"],
-                         ["model-b", "6", "2", "1", "0", "1", "0", "Ana Lima (2)"]]
+    # the names come with their answers asked again: Ana Lima has one, asked twice (2 re-asks)
+    assert per_model == [["model-a", "6", "1", "1", "1", "0", "0", "Gonçalo Figueiredo (1)"],
+                         ["model-b", "6", "2", "1", "0", "1", "0", "Ana Lima (1)"]]
     assert each == [
         ["Gonçalo Figueiredo", "Male · Portuguese", "model-a", "0", "gender and origin", "1", "answered", "1",
          "0.980", "0.918"],
@@ -330,19 +401,27 @@ def test_charts_are_accessible_static_svg(project: Path, tmp_path: Path):
         assert set(named) | {described} <= parsed.ids  # the caption, the <title> and the <desc> exist
     assert text.count("<title data-i18n=\"names.chart.title\"") == 2 and text.count("<desc data-i18n=\"names.chart.desc\"") == 2
     assert text.count("<figcaption") == 2 and 'class="names-legend"' in text
-    # text labels: every name and model is written in the chart, not only encoded in a mark
-    for label in ("Gonçalo Figueiredo", "Ana Lima", "model-a", "model-b", "p(male)", "p(female)", "origin shares"):
-        assert label in page.text, label
+    # the origin colours are named again beside the charts of each origin, not only above the first chart
+    assert text.count('class="names-legend names-legend-short"') == 2
+    male_pt, female_br = (svg for svg in re.findall(r'<svg class="names-chart".*?</svg>', text, re.S))
+    # text labels: every name and model is written in the chart itself, not only encoded in a mark
+    for chart, labels in ((male_pt, ("Gonçalo Figueiredo", "model-a", "model-b", "p(male)", "origin shares")),
+                          (female_br, ("Ana Lima", "model-a", "model-b", "p(female)", "origin shares"))):
+        written = [t.text for t in ElementTree.fromstring(chart).iter("text")]
+        assert set(labels) <= set(written), written
     # the thresholds: 0.8 on every chart; the origin minimum only where the rule has one (not for Portuguese)
-    male_pt, female_br = text.split("<svg class=\"names-chart\"")[1:3]
     assert male_pt.count('class="nc-tick"') == 1 and ">0.8</text>" in male_pt and ">0.25</text>" not in male_pt
     assert female_br.count('class="nc-tick"') == 2 and ">0.8</text>" in female_br and ">0.25</text>" in female_br
     # the intended origin is the first segment of every bar: Portuguese (1st column) there, Brazilian (2nd) here
     assert re.findall(r'<rect class="nc-o (nc-o\d)"', male_pt.split("</g>")[0]) == ["nc-o1", "nc-o2", "nc-o3", "nc-o4"]
     assert re.findall(r'<rect class="nc-o (nc-o\d)"', female_br.split("</g>")[0]) == ["nc-o2", "nc-o1", "nc-o3", "nc-o4"]
-    assert "no estimate" in female_br  # Ana Lima, model-b: nothing to draw
+    assert ">no estimate</text>" in female_br and ">no estimate</text>" not in male_pt  # Ana Lima, model-b
     # a threshold line lies over a bar only: 2 gender bars there; here 4 gender bars and the 3 origin bars drawn
-    assert male_pt.count('class="nc-thr"') == 2 and female_br.split("</svg>")[0].count('class="nc-thr"') == 4 + 3
+    assert male_pt.count('class="nc-thr"') == 2 and female_br.count('class="nc-thr"') == 4 + 3
+    # the tables that hold the charts' values are named regions, and their rows are named by their first cell
+    for label in ("cap-cells", "cap-summary", "cap-per-model", "cap-each"):
+        assert f'role="region" aria-labelledby="{label}"' in text and f'<caption id="{label}">' in text
+    assert text.count('<th scope="row">') == 6 + 2 + 2  # summary rows, models, answers asked again
     # static: no script but the site's own, nothing loaded from elsewhere, and a table of the same values follows
     assert re.findall(r'<script[^>]*src="([^"]+)"', text) == ["../assets/site.js"]
     assert "<img" not in text and "<link rel=\"stylesheet\" href=\"../assets/style.css\">" in text
@@ -362,7 +441,8 @@ def test_names_are_escaped_everywhere(project: Path, tmp_path: Path):
     text = (out / NAMES_PAGE).read_text()
     assert "<b>" not in text and '"Faria"' not in text  # never as markup, never closing an attribute
     escaped = "Zé &lt;b&gt;&quot;Faria&quot; &amp; Cª"
-    assert f'data-name="{escaped}"' in text and f">{escaped}</text>" in text and f"<td>{escaped}</td>" in text
+    assert f'data-name="{escaped}"' in text and f">{escaped}</text>" in text
+    assert f'<th scope="row">{escaped}</th>' in text  # its rows in the summary table
     assert f"<title>{escaped} · model-a: " in text
     page = read_page(out / NAMES_PAGE)
     assert HOSTILE in page.text and {r["name"] for r in page.rows} == {"Gonçalo Figueiredo", HOSTILE, "Ana Lima"}
@@ -385,23 +465,132 @@ def test_names_are_escaped_everywhere(project: Path, tmp_path: Path):
         assert "<i>" not in shown_text and "&lt;i&gt;x&lt;/i&gt;" in shown_text
 
 
+def fake_ui(seen: list[str] | None = None):
+    """A stand-in for hcai.site.ui that writes the key as the text (and notes it in `seen`)."""
+    def ui(key: str, tag: str = "span", **attrs: str) -> str:
+        if seen is not None:
+            seen.append(key)
+        return f"<{tag}>{key}</{tag}>"
+    return ui
+
+
+def test_bars_and_threshold_lines_are_drawn_to_the_csv_values(project: Path, tmp_path: Path):
+    """The geometry of every chart row against summary.csv: the gender bar is p long, each origin segment ends
+    where its cumulative share ends (the intended one drawn from 0 to exactly its share), and the lines stand at
+    0.8 and 0.25 of their bars."""
+    out = tmp_path / "site"
+    build_site(project, out)
+    summary = {(r["name"], r["model"]): r for r in rows_of(project.parents[1] / "docs" / "pilot" / "names" / "summary.csv")}
+    text = (out / NAMES_PAGE).read_text()
+    charts = [ElementTree.fromstring(svg) for svg in re.findall(r'<svg class="names-chart".*?</svg>', text, re.S)]
+    checked = []
+    for chart in charts:
+        ticks = {t.text: float(t.get("x", "nan")) for t in chart.iter("text") if t.get("class") == "nc-tick"}
+        starts = set()
+        for g in chart.iter("g"):
+            source = summary[(g.get("data-name", ""), g.get("data-model", ""))]
+            rects: dict[str, list[tuple[float, float]]] = {}
+            for rect in g.iter("rect"):
+                kind = (rect.get("class") or "").split()[0]
+                rects.setdefault(kind, []).append((float(rect.get("x", "nan")), float(rect.get("width", "nan"))))
+            lines = [float(line.get("x1", "nan")) for line in g.iter("line")]
+            words = [t.text for t in g.iter("text")]
+            (gx, track), = rects["nc-track"]
+            assert track == GENDER_W and rects["nc-gender"] == [(gx, pytest.approx(GENDER_W * float(source["p_intended_gender"]), abs=0.01))]
+            assert lines[0] == pytest.approx(gx + 0.8 * GENDER_W, abs=0.01) and ticks["0.8"] == pytest.approx(lines[0])
+            intended = source["intended_origin"]
+            order = [intended] + [o for o in ("portuguese", "brazilian", "palop", "eastern_european") if o != intended]
+            if not source["scored_p_portuguese"]:  # no origin estimate: words, no bar, no line
+                assert "nc-o" not in rects and "no estimate" in words and len(lines) == 1
+                checked.append("none")
+                continue
+            shares = [float(source[f"scored_p_{o}"]) for o in order]
+            segments = rects["nc-o"]
+            assert len(segments) == 4 and "no estimate" not in words
+            ox = segments[0][0]
+            starts.add(ox)
+            ow = W - MARK_W - ox
+            assert segments[0][1] == pytest.approx(ow * shares[0], abs=0.01)  # the intended share, exactly
+            end = ox
+            for (x, width), share in zip(segments, shares):
+                end += ow * share
+                assert x + width == pytest.approx(end, abs=0.02) and width <= ow * share + 0.01
+            assert end == pytest.approx(ox + ow, abs=0.02)  # the shares fill the bar
+            if intended == "portuguese":
+                assert len(lines) == 1 and "0.25" not in ticks
+            else:
+                assert lines[1:] == [pytest.approx(ox + 0.25 * ow, abs=0.01)] and ticks["0.25"] == pytest.approx(lines[1])
+            checked.append(intended)
+        assert len(starts) == 1  # every bar of a chart starts at the same x
+    assert sorted(checked) == ["brazilian"] * 3 + ["none"] + ["portuguese"] * 2
+    # the failing origin row is seen to fail: its intended share ends left of the minimum line, the passing ones right
+    hostile = {g.get("data-model"): g for chart in charts for g in chart.iter("g") if g.get("data-name") == HOSTILE}
+    for model, passes in (("model-a", True), ("model-b", False)):
+        first = next(r for r in hostile[model].iter("rect") if (r.get("class") or "").startswith("nc-o "))
+        line = [float(line.get("x1", "nan")) for line in hostile[model].iter("line")][1]
+        assert (float(first.get("x", "nan")) + float(first.get("width", "nan")) > line) is passes
+
+
+def chart_of(rows: list[dict[str, str]], origin: str = "palop", seen: list[str] | None = None) -> str:
+    names: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        names.setdefault(row["name"], []).append(row)
+    return cell_chart(names, gender="male", origin=origin, origins=["portuguese", "palop"], uid="c", ui=fake_ui(seen))
+
+
 def test_long_labels_are_cut_in_the_chart_and_whole_in_its_title():
     row = {"name": "N" * 80, "model": "a-very-long-model-name-indeed", "intended_gender": "male",
            "intended_origin": "palop", "p_intended_gender": "1.2", "scored_p_portuguese": "0.5", "scored_p_palop": "0.7",
            "gender_threshold": "0.8", "origin_minimum": "0.25", "pass": "False"}
     seen: list[str] = []
-
-    def ui(key: str, tag: str = "span", **attrs: str) -> str:
-        seen.append(key)
-        return f"<{tag}>{key}</{tag}>"
-
-    svg = cell_chart({row["name"]: [row]}, gender="male", origin="palop", origins=["portuguese", "palop"], uid="c", ui=ui)
-    assert "N" * 80 in svg and f'>{"N" * 44}…</text>' in svg  # whole in the title, cut where it is drawn
-    assert ">a-very-long-mod…</text>" in svg
+    svg = chart_of([row], seen=seen)
+    chart = ElementTree.fromstring(svg)
+    title = next(chart.iter("g")).find("title")
+    assert title is not None and title.text is not None and title.text.startswith("N" * 80 + " · a-very-long-model-name-indeed: ")
+    name, = [t.text or "" for t in chart.iter("text") if t.get("class") == "nc-name"]
+    assert name.endswith("…") and ("N" * 80).startswith(name[:-1]) and 20 < len(name) < 45
+    assert text_width(name, NAME_PX, bold=True) <= W  # by the chart's own (wide) estimate
+    label, = [t.text or "" for t in chart.iter("text") if t.get("class") == "nc-model"]
+    assert label.startswith("a-very") and label.endswith("indeed") and "…" in label  # cut in the middle
+    assert text_width(label, MODEL_PX) <= LABEL_MAX
     widths = [float(w) for w in re.findall(r'<rect class="nc-(?:gender|o nc-o\d)"[^>]* width="([\d.]+)"', svg)]
-    assert widths[0] == 56  # a probability above 1 is drawn as 1
-    assert sum(widths[1:]) <= 320 - 104 - 6 - 56 - 12 - 20  # shares over 1 never run past the end of the bar
+    assert widths[0] == GENDER_W  # a probability above 1 is drawn as 1
+    assert sum(widths[1:]) <= W - (LABEL_MAX + 6 + GENDER_W + 12) - MARK_W  # shares over 1 never run past the bar's end
     assert {"names.chart.title", "names.chart.desc", "names.chart.p.male", "names.chart.origins"} <= set(seen)
+
+
+def test_two_models_never_get_the_same_label():
+    base = {"intended_gender": "male", "intended_origin": "palop", "p_intended_gender": "0.9",
+            "scored_p_portuguese": "0.5", "scored_p_palop": "0.5", "pass": "True"}
+    # ids of one vendor differ at their end: cut in the middle, they stay apart
+    models = ["anthropic/claude-3.5-sonnet", "anthropic/claude-3.5-haiku"]
+    labels = model_labels(models, LABEL_MAX)
+    assert len(set(labels.values())) == 2 and labels[models[0]].endswith("sonnet") and labels[models[1]].endswith("haiku")
+    assert all(text_width(label, MODEL_PX) <= LABEL_MAX for label in labels.values())
+    # ids alike at both ends are numbered in their order
+    twins = ["vendor/model-alpha-2026-01-01-preview", "vendor/model-bravo-2026-01-01-preview"]
+    numbered = model_labels(twins, LABEL_MAX)
+    assert [numbered[m][:2] for m in twins] == ["1:", "2:"] and len(set(numbered.values())) == 2
+    assert model_labels(["model-a", "model-b"], LABEL_MAX) == {"model-a": "model-a", "model-b": "model-b"}
+    # and so in the chart: one label per model, each on its rows
+    chart = ElementTree.fromstring(chart_of([base | {"name": "A B", "model": m} for m in models]))
+    drawn = {g.get("data-model"): [t.text for t in g.iter("text") if t.get("class") == "nc-model"] for g in chart.iter("g")}
+    assert drawn == {m: [labels[m]] for m in models}
+
+
+def test_a_question_with_no_estimate_has_words_and_no_bar():
+    """An empty gender bar would read as a probability of 0, and a line across nothing as a threshold failed."""
+    row = {"name": "A B", "model": "m", "intended_gender": "male", "intended_origin": "palop", "p_intended_gender": "",
+           "scored_p_portuguese": "0.2", "scored_p_palop": "0.8", "gender_threshold": "0.8", "origin_minimum": "0.25",
+           "pass": "False"}
+    row_g, = ElementTree.fromstring(chart_of([row])).iter("g")
+    classes = [(e.get("class") or "").split()[0] for e in row_g.iter() if e.tag in ("rect", "line")]
+    assert "nc-track" not in classes and "nc-gender" not in classes
+    assert classes.count("nc-o") == 2 and classes.count("nc-thr") == 1  # the origin bar and its line only
+    assert [t.text for t in row_g.iter("text")] == ["m", "names.chart.none.short"]
+    nothing, = ElementTree.fromstring(chart_of([row | {"scored_p_portuguese": "", "scored_p_palop": ""}])).iter("g")
+    assert [(e.get("class") or "").split()[0] for e in nothing.iter() if e.tag in ("rect", "line")] == ["nc-hit"]
+    assert [t.text for t in nothing.iter("text")] == ["m", "names.chart.none.short", "names.chart.none"]
 
 
 def test_every_interface_string_has_both_languages():
@@ -418,8 +607,9 @@ def test_the_committed_record_renders_and_its_marks_match(tmp_path: Path):
     """The real site config and the record committed in docs/pilot/names (the Pages build has nothing else)."""
     record = ROOT / "docs" / "pilot" / "names"
     assert load_site_config(ROOT / "configs" / "core.toml").names == "docs/pilot/names"
-    if not (record / "summary.csv").is_file():
-        pytest.skip("no committed name check record")
+    loaded = load_record(record)
+    if loaded is None or not loaded.probability:  # the site shows such a record too, but without marks to compare
+        pytest.skip("no committed probability-mode name check record")
     summary = rows_of(record / "summary.csv")
     root = tmp_path / "repo"  # the committed inputs only: no results/, as in CI
     shutil.copytree(ROOT / "configs", root / "configs")
@@ -436,7 +626,8 @@ def test_the_committed_record_renders_and_its_marks_match(tmp_path: Path):
     failing = {r["name"] for r in summary if r["pass"] != "True"}
     assert f"<strong>{len(names) - len(failing)} / {len(names)}</strong>" in text
     assert "committed with the repository" in text and "class=\"error\"" not in text
-    reasked = rows_of(record / "reasked.csv")
-    section = text.split('id="h-reasks"', 1)[1].split('id="h-files"', 1)[0]
-    per_model = first_table(section.split("<h3", 2)[1])  # model, answers, re-asks, ...
-    assert sum(int(row[2]) for row in per_model) == len(reasked) == sum(int(r["reasks"]) for r in summary)
+    if (record / "reasked.csv").is_file():  # a run with --reasks: its re-asks, per model, add up to the files'
+        section = text.split('id="h-reasks"', 1)[1].split('id="h-files"', 1)[0]
+        per_model = first_table(section.split("<h3", 2)[1])  # model, answers, re-asks, ...
+        assert sum(int(row[2]) for row in per_model) == len(rows_of(record / "reasked.csv")) == sum(
+            int(r["reasks"]) for r in summary)

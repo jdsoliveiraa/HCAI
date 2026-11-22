@@ -34,10 +34,14 @@ from the committed repository, so the deployed page said "not generated yet" for
 
 - **The record is committed, like the review.** The site reads the name check from `docs/pilot/names/`
   (`[site] names`): the CSV files `hcai names` wrote, copied there and committed. That commit is the record the
-  site shows. `<results>/names` is read only when that directory has no name check tables, as a local preview of
-  a run not yet committed; the page then says the files are local and links none of them. The copy is a hand
-  step: nothing checks that the committed record is the latest run, and its `prompt_version`, rule parameters and
-  re-ask limit are on the page so that a stale record can be told.
+  site shows. `<results>/names` is read only when that directory holds no record (no summary.csv or cells.csv
+  with a row: an empty file does not stand in front of the local results), as a local preview of a run not yet
+  committed; the page then says the files are local and links none of them, as it does for a `names` directory
+  outside the project root. The copy is a hand step: nothing checks that the committed record is the latest run,
+  and its `prompt_version`, rule parameters and re-ask limit are on the page so that a stale record can be told.
+  The files must stay as `hcai names` wrote them (UTF-8, commas, decimal points). A byte order mark is dropped; a
+  file that is not comma-separated (a spreadsheet's semicolon export) is refused and the page says why, since
+  read as one column it would pass for a record with nothing in it.
 - **Its own page.** `pilot/names.html` has the pass rule in plain words, the cell table, one chart per gender ×
   origin cell, the table of every name × model, the re-ask record and links to the CSV files on GitHub; the pilot
   page keeps the headline, the cells over all models and the link.
@@ -49,12 +53,18 @@ from the committed repository, so the deployed page said "not generated yet" for
 - **Charts are inline SVG written by Python at build time** (`hcai.site_names`): no chart library, no CDN and no
   JavaScript, so they work with scripts off and from disk. Each is one image for assistive technology (named by
   its caption and `<title>`, described by its `<desc>`), with the names and models written as text, and the table
-  after the charts holds every value they draw. Interface strings in them switch language like the rest.
-- **Reading the origin bar.** The intended origin is always the first segment, so its share starts at 0 and the
-  rule's minimum (0.25) can be read against its end; the line is drawn only where the rule has a minimum (not for
-  Portuguese names). Any two origins can therefore touch, so the four origin colours were chosen as a set that
-  keeps every pair apart for protan and deutan vision, and for normal vision, with 3:1 contrast against the page,
-  in the light and in the dark theme. A pass or fail is a check or a cross, told apart by shape as well as colour.
+  after the charts holds every value they draw: a captioned table in a named scrolling region, each row headed
+  by its name. Interface strings in them switch language like the rest; a row's hover `<title>` reads the row in
+  the CSV's own words (its column names), in English.
+- **Reading the origin bar.** The intended origin is always the first segment, drawn from 0 to exactly its
+  share, so the rule's minimum (0.25) can be read against its end; the line is drawn only where the rule has a
+  minimum (not for Portuguese names). A bar is about 130 units long, so a difference under about 0.01 cannot be
+  seen: at a threshold the mark and the table say whether a row passes, and the page says so. A question with no
+  estimate gets words in place of a bar and no line, since an empty bar would read as a probability of 0. Any
+  two origins can touch, so the four origin colours were chosen as a set that keeps every pair apart for protan
+  and deutan vision, and for normal vision, with 3:1 contrast against the page, in the light and in the dark
+  theme; they are named again beside the charts of each origin. A pass or fail is a check or a cross, told apart
+  by shape as well as colour. Model ids too long for their column are cut in the middle and never drawn alike.
 - **Considered:** committing a rendered image (it would go stale, and has no text or theme); a JS chart library
   (a dependency and a CDN for eight small charts, and nothing without scripts); making CI run `hcai names` (it
   needs API keys and calls, which the site build must never make).

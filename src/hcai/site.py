@@ -18,7 +18,8 @@ relative to the project root.
 
 The name check (`pilot/names.html`, drawn by `hcai.site_names`) is read from the committed record, `[site] names`
 (default docs/pilot/names): `results/` is gitignored, so the Pages build never has it. Only when that directory
-has no name check tables is `<results>/names` read instead, for a local preview of a run not yet committed.
+holds no record (no summary.csv or cells.csv with a row) is `<results>/names` read instead, for a local preview of
+a run not yet committed. Files are linked on GitHub only for a record inside the project root.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from hcai.review import (
 )
 from hcai.site_names import (
     CELLS, MISSING, PERCEPTIONS, SCORED, SUMMARY, Chain, NamesRecord, by_cell, cell_chart, count, gender_label,
-    is_true, legend, load_record, mark, origin_label, reask_chains, shown,
+    is_true, legend, load_record, mark, origin_label, reask_chains, short_legend, shown,
 )
 from hcai.variants import TemplateError, pick_name, render_variant
 
@@ -173,14 +174,16 @@ UI: dict[str, tuple[str, str]] = {
     # The name check page (pilot/names.html). Option labels of the check ("unsure", "Other or unsure") stay as asked.
     "names.open": ("Open the full name check: every name, the charts and the answers that were asked again",
                    "Abrir a verificação completa: todos os nomes, os gráficos e as respostas perguntadas de novo"),
+    "names.open.plain": ("Open the name check page: every name and model",
+                         "Abrir a página da verificação: todos os nomes e modelos"),
     "names.what": ("Does each name of the name bank signal the gender and origin it stands for? Each pipeline model saw "
-                   "every name several times, with no other information, and gave a probability to each gender option "
-                   "and each origin option for “a job applicant in Portugal”. The audit attributes score gaps to what "
-                   "a name signals, so a name has to pass for every model before it is used.",
+                   "every name several times, with no other information, and was asked the gender and the origin of "
+                   "“a job applicant in Portugal” with that name. The audit attributes score gaps to what a name "
+                   "signals, so a name has to pass for every model before it is used.",
                    "Cada nome do banco de nomes sinaliza o género e a origem que representa? Cada modelo do pipeline viu "
-                   "cada nome várias vezes, sem mais informação, e deu uma probabilidade a cada opção de género e a cada "
-                   "opção de origem para «um candidato a emprego em Portugal». A auditoria atribui as diferenças de "
-                   "pontuação ao que o nome sinaliza, por isso um nome tem de passar em todos os modelos antes de ser usado."),
+                   "cada nome várias vezes, sem mais informação, e foi-lhe perguntado o género e a origem de «um "
+                   "candidato a emprego em Portugal» com esse nome. A auditoria atribui as diferenças de pontuação ao "
+                   "que o nome sinaliza, por isso um nome tem de passar em todos os modelos antes de ser usado."),
     "names.none": ("The site reads the check from the committed record, or else from the local results. After running "
                    "the check, copy its CSV files to",
                    "O site lê a verificação do registo no repositório ou, se não existir, dos resultados locais. Depois "
@@ -199,12 +202,14 @@ UI: dict[str, tuple[str, str]] = {
     "names.record.committed": ("committed with the repository", "registado no repositório"),
     "names.record.local": ("local results, not committed", "resultados locais, fora do repositório"),
     "names.rule": ("Pass rule", "Regra de aprovação"),
-    "names.rule.scored": ("Scores: each answer is scored without its hedge options (“unsure” for gender, “Other or "
-                          "unsure” for origin). The other probabilities are rescaled to sum to 1, then averaged over "
-                          "the answers of a name and model.",
-                          "Pontuação: cada resposta é pontuada sem as opções de incerteza («unsure» no género, «Other or "
-                          "unsure» na origem). As outras probabilidades são reescaladas para somarem 1 e depois é feita "
-                          "a média das respostas de cada nome e modelo."),
+    "names.rule.scored": ("Scores: each answer gives a probability to every gender option and every origin option. It "
+                          "is scored without its hedge options (“unsure” for gender, “Other or unsure” for origin): "
+                          "the other probabilities are rescaled to sum to 1, then averaged over the answers of a name "
+                          "and model.",
+                          "Pontuação: cada resposta dá uma probabilidade a cada opção de género e a cada opção de origem. "
+                          "É pontuada sem as opções de incerteza («unsure» no género, «Other or unsure» na origem): as "
+                          "outras probabilidades são reescaladas para somarem 1 e depois é feita a média das respostas de "
+                          "cada nome e modelo."),
     "names.rule.gender": ("Gender: the mean probability of the intended gender is at least",
                           "Género: a probabilidade média do género pretendido é pelo menos"),
     "names.rule.host": ("Origin of a Portuguese name: Portuguese is, on its own, the most likely of all the origins.",
@@ -250,12 +255,16 @@ UI: dict[str, tuple[str, str]] = {
                          "from 0 to 1. The coloured bar splits the origin probability among the origins, the intended "
                          "origin first, so its share starts at the left edge. The vertical lines are the thresholds of "
                          "the pass rule; the origin line is drawn only for the names that have a minimum (not the "
-                         "Portuguese ones). Every value is in the table after the charts.",
+                         "Portuguese ones). A bar cannot show a difference smaller than about 0.01: where it ends at a "
+                         "line, the mark and the table say whether the row passes. Every value is in the table after "
+                         "the charts.",
                          "Uma linha por nome e modelo. A barra cinzenta é a probabilidade do género pretendido, numa escala "
                          "de 0 a 1. A barra colorida reparte a probabilidade de origem pelas origens, com a origem "
                          "pretendida primeiro, por isso a sua parcela começa na margem esquerda. As linhas verticais são os "
                          "limiares da regra de aprovação; a linha da origem só é desenhada para os nomes que têm um mínimo "
-                         "(não para os portugueses). Todos os valores estão na tabela a seguir aos gráficos."),
+                         "(não para os portugueses). Uma barra não mostra diferenças menores do que cerca de 0,01: quando "
+                         "acaba numa linha, são a marca e a tabela que dizem se a linha passa. Todos os valores estão na "
+                         "tabela a seguir aos gráficos."),
     "names.chart.title": ("Probability of the intended gender and origin shares, per name and model",
                           "Probabilidade do género pretendido e parcelas de origem, por nome e modelo"),
     "names.chart.desc": ("Each row is one name and one model: a bar for the probability of the intended gender with the "
@@ -268,6 +277,7 @@ UI: dict[str, tuple[str, str]] = {
     "names.chart.p.female": ("p(female)", "p(fem.)"),
     "names.chart.origins": ("origin shares", "origens"),
     "names.chart.none": ("no estimate", "sem estimativa"),
+    "names.chart.none.short": ("none", "nenhuma"),  # the same under the gender column, which is narrower
     "names.legend.gender": ("probability of the intended gender", "probabilidade do género pretendido"),
     "names.legend.threshold": ("threshold of the pass rule", "limiar da regra de aprovação"),
     "names.pass": ("pass", "passa"),
@@ -318,7 +328,17 @@ UI: dict[str, tuple[str, str]] = {
     "names.col.ended_answered": ("Ended answered", "Acabaram respondidas"),
     "names.col.ended_hedge": ("Ended still all hedge", "Acabaram ainda só com incerteza"),
     "names.col.ended_missing": ("Ended missing", "Acabaram em falta"),
-    "names.col.names": ("Names", "Nomes"),
+    "names.col.names": ("Names (answers asked again)", "Nomes (respostas perguntadas de novo)"),
+    "names.cap.cells": ("Mean scores per gender × origin cell and model (cells.csv)",
+                        "Pontuações médias por célula género × origem e modelo (cells.csv)"),
+    "names.cap.cells.all": ("Mean scores per gender × origin cell, over all models (cells.csv)",
+                            "Pontuações médias por célula género × origem, em todos os modelos (cells.csv)"),
+    "names.cap.summary": ("Scores and result of every name and model (summary.csv)",
+                          "Pontuações e resultado de cada nome e modelo (summary.csv)"),
+    "names.cap.per_model": ("Re-asks per model (reasked.csv, summary.csv)",
+                            "Novas perguntas por modelo (reasked.csv, summary.csv)"),
+    "names.cap.each": ("One row per answer that was asked again (reasked.csv), with the answer on record (perceptions.csv)",
+                       "Uma linha por resposta perguntada de novo (reasked.csv), com a resposta registada (perceptions.csv)"),
     "names.col.repeat": ("Repeat", "Repetição"),
     "names.col.no_estimate": ("No estimate for", "Sem estimativa para"),
     "names.col.ended": ("Ended", "Acabou"),
@@ -488,13 +508,25 @@ def render_markdown(text: str, *, trusted: bool, shift: int = 0) -> str:
     return out.replace(OPEN, '<mark class="slot">').replace(CLOSE, "</mark>")
 
 
-def table(header: Sequence[str], rows: Sequence[Sequence[Any]], caption: str = "", cls: str = "") -> str:
-    cap = f"<caption>{esc(caption)}</caption>" if caption else ""
-    wrap = f"table-wrap {cls}" if cls else "table-wrap"
-    head = "".join(f'<th scope="col">{h if isinstance(h, Raw) else esc(h)}</th>' for h in header)
-    body = "".join("<tr>" + "".join(f"<td>{c if isinstance(c, Raw) else esc(c)}</td>" for c in row) + "</tr>"
-                   for row in rows)
-    return f'<div class="{wrap}" tabindex="0"><table>{cap}<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+def table(header: Sequence[str], rows: Sequence[Sequence[Any]], caption: str = "", cls: str = "", *,
+          row_header: bool = False, label: str = "") -> str:
+    """A table in a box that scrolls sideways when it is too wide. Cells, headers and the caption are escaped
+    unless they are `Raw`. With `row_header` the first cell of each row is its header (and stays in view while
+    the box scrolls); `label` is an id for the caption, which then names the box as a region."""
+    def html_of(value: Any) -> str:
+        return value if isinstance(value, Raw) else esc(value)
+
+    named = bool(caption and label)
+    cap_id = f' id="{esc(label)}"' if named else ""
+    cap = f"<caption{cap_id}>{html_of(caption)}</caption>" if caption else ""
+    wrap = " ".join(["table-wrap", *([cls] if cls else []), *(["row-headers"] if row_header else [])])
+    region = f' role="region" aria-labelledby="{esc(label)}"' if named else ""
+    head = "".join(f'<th scope="col">{html_of(h)}</th>' for h in header)
+    body = "".join(
+        "<tr>" + "".join(f'<th scope="row">{html_of(c)}</th>' if row_header and k == 0 else f"<td>{html_of(c)}</td>"
+                         for k, c in enumerate(row)) + "</tr>" for row in rows)
+    return (f'<div class="{wrap}" tabindex="0"{region}><table>{cap}<thead><tr>{head}</tr></thead>'
+            f"<tbody>{body}</tbody></table></div>")
 
 
 class Raw(str):
@@ -550,7 +582,7 @@ class Site:
         self.results = self.root / self.cfg.results
         self.pages: list[str] = []
         self._review: tuple[dict[str, Any] | None] | None = None  # review_data, built once
-        self._names: tuple[tuple[NamesRecord, bool] | None] | None = None  # names_record, read once
+        self._names: tuple[tuple[NamesRecord, str | None] | None] | None = None  # names_record, read once
 
     # paths and links
 
@@ -704,7 +736,7 @@ class Site:
             state = "not committed yet"
         rows.append([Raw(f'<a href="{esc(self.link(path, "review.html"))}">{ui("status.review")}</a>'), state])
         found = self.names_record()
-        if found and SUMMARY in found[0].tables:
+        if found and found[0].summary:
             state = f"{len(found[0].names)} names, {len(found[0].failing)} failing"
         else:
             state = Raw(not_generated())
@@ -1033,38 +1065,43 @@ class Site:
 
     # name check (the record is read and drawn by hcai.site_names)
 
-    def names_record(self) -> tuple[NamesRecord, bool] | None:
-        """The name check tables and whether they are the committed record: `[site] names` (docs/pilot/names) when
-        it holds any, else `<results>/names`, the output of a local run (gitignored, so never there in CI)."""
+    def names_record(self) -> tuple[NamesRecord, str | None] | None:
+        """The name check tables, and their path in the repository when they are the committed record: `[site]
+        names` (docs/pilot/names) when it holds a record, else `<results>/names`, the output of a local run
+        (gitignored, so never there in CI). A `names` directory outside the project root is read too, but it is
+        not in the repository: like the local results it gets no path, so the page links none of its files."""
         if self._names is None:
             found = None
-            for path, committed in ((self.root / self.cfg.names, True), (self.results / "names", False)):
+            for path, configured in ((self.root / self.cfg.names, True), (self.results / "names", False)):
                 record = load_record(path)
                 if record is not None:
-                    found = (record, committed)
+                    inside = configured and path.resolve().is_relative_to(self.root.resolve())
+                    found = (record, path.resolve().relative_to(self.root.resolve()).as_posix() if inside else None)
                     break
             self._names = (found,)
         return self._names[0]
 
     def _names_plain(self, record: NamesRecord, *, every_row: bool) -> str:
-        """A record without scored probabilities (the choice mode, ADR 0009): its tables as they are, with all the
-        name x model rows or only the failing ones."""
+        """A record without scored probabilities (the choice mode, ADR 0009, or a file that could not be read): its
+        tables as they are, with every name x model row (the name check page) or only the failing ones, at most
+        MAX_ROWS of them (the pilot page)."""
         body = "".join(f'<p class="error">{esc(p)}</p>' for p in record.problems)
         if CELLS in record.tables:
             body += csv_table(record.path / CELLS, "Per gender × origin cell and model (cells.csv)")
         if SUMMARY in record.tables:
             summary = record.tables[SUMMARY]
-            header = summary.header or ["name", "model", "pass"]
             rows = [r for r in summary.rows if every_row or not is_true(r.get("pass"))]
-            listed = [[r.get(h, "") for h in header] for r in rows[:MAX_ROWS]]
-            if every_row:
-                body += table(header, listed, f"Name × model ({len(summary.rows)} rows, summary.csv)")
+            listed = [[r.get(h, "") for h in summary.header] for r in (rows if every_row else rows[:MAX_ROWS])]
+            if not summary.rows:
+                body += f"<p>{esc(SUMMARY)}: empty.</p>"
+            elif every_row:
+                body += table(summary.header, listed, f"Name × model ({len(summary.rows)} rows, summary.csv)")
             elif rows:
-                body += table(header, listed, f"Failing names × model ({len(rows)} of {len(summary.rows)} rows, summary.csv)")
+                body += table(summary.header, listed, f"Failing names × model ({len(rows)} of {len(summary.rows)} rows, summary.csv)")
+                if len(rows) > MAX_ROWS:
+                    body += f'<p class="muted">{ui("table.truncated")} ({len(rows)} rows)</p>'
             else:
                 body += f"<p>Every name passes for every model ({len(summary.rows)} name × model rows).</p>"
-            if len(rows) > MAX_ROWS:
-                body += f'<p class="muted">{ui("table.truncated")} ({len(rows)} rows)</p>'
         return body
 
     def _names_section(self, path: str) -> str:
@@ -1073,7 +1110,8 @@ class Site:
         if found is None:
             return not_generated(f"uv run hcai names {self.config_path}")
         record, _ = found
-        link = f'<p><a href="{esc(self.link(path, NAMES_PAGE))}">{ui("names.open")}</a></p>'
+        key = "names.open" if record.probability else "names.open.plain"
+        link = f'<p><a href="{esc(self.link(path, NAMES_PAGE))}">{ui(key)}</a></p>'
         if not record.probability:
             return self._names_plain(record, every_row=False) + link
         names, models = record.names, list(dict.fromkeys(r.get("model", "") for r in record.summary))
@@ -1092,17 +1130,17 @@ class Site:
             body = (f'<p>{ui("names.what")}</p><p class="muted">{ui("names.other_mode")}</p>'
                     + self._names_plain(found[0], every_row=True) + self._names_files(*found))
         else:
-            record, committed = found
+            record, repo_path = found
             sections = [
                 ("names.rule", "h-rule", self._names_rule(path, record)),
                 ("names.cells", "h-cells", f'<p class="muted">{ui("names.cells.help")}</p>' + self._names_cells(record)),
                 ("names.chart", "h-chart", f'<p class="muted">{ui("names.chart.help")}</p>' + self._names_charts(record)),
                 ("names.summary", "h-summary", f'<p class="muted">{ui("names.summary.help")}</p>' + self._names_summary(record)),
                 ("names.reasks", "h-reasks", self._names_reasks(record)),
-                ("names.files", "h-files", self._names_files(record, committed)),
+                ("names.files", "h-files", self._names_files(record, repo_path)),
             ]
             body = (f'<p>{ui("names.what")}</p>' + "".join(f'<p class="error">{esc(p)}</p>' for p in record.problems)
-                    + self._names_facts(record, committed)
+                    + self._names_facts(record, repo_path is not None)
                     + "".join(f'<section aria-labelledby="{hid}">{ui(key, "h2", id=hid)}{content}</section>'
                               for key, hid, content in sections))
         self.write(path, "Name manipulation check", back + body, title_key="pilot.names")
@@ -1154,7 +1192,8 @@ class Site:
                  shown(r["mean_p_intended_gender"]), shown(r["mean_p_intended_origin"]), shown(r["mean_gender_hedge"]),
                  shown(r["mean_origin_hedge"]), *([f'{r.get("names_answered", "")} / {r["names"]}'] if answered else []),
                  f'{r["names_passing"]} / {r["names"]}'] for r in rows]
-        return table(header, body, cls=NAMES_TABLE)
+        return table(header, body, th("names.cap.cells.all" if overall_only else "names.cap.cells"), NAMES_TABLE,
+                     label="cap-cells")
 
     def _names_charts(self, record: NamesRecord) -> str:
         """One chart per gender x origin cell, the cells of an origin side by side where there is room."""
@@ -1177,7 +1216,8 @@ class Site:
             stands_for = (f' <span class="muted names-bank">· {ui("names.bank")} <span lang="en">{esc(bank[origin])}</span></span>'
                           if origin in bank else "")
             out.append(f'<section aria-labelledby="h-origin-{n}"><h3 id="h-origin-{n}">'
-                       f'{origin_label(origin, ui, short=True)}{stands_for}</h3><div class="names-grid">{figures}</div></section>')
+                       f'{origin_label(origin, ui, short=True)}{stands_for}</h3>{short_legend(origins, ui)}'
+                       f'<div class="names-grid">{figures}</div></section>')
         return "".join(out)
 
     @staticmethod
@@ -1211,7 +1251,7 @@ class Site:
                          self._verdict(r, "gender_pass"), *shares, self._verdict(r, "origin_pass"),
                          shown(r.get("gender_hedge")), shown(r.get("origin_hedge")), r.get("answers", MISSING),
                          r.get("missing", MISSING), hedged, r.get("reasks", MISSING)])
-        return table(header, rows, cls=NAMES_TABLE)
+        return table(header, rows, th("names.cap.summary"), NAMES_TABLE, row_header=True, label="cap-summary")
 
     def _names_reasks(self, record: NamesRecord) -> str:
         """The re-ask record (reasked.csv, ADR 0011): per model, and each answer that was asked again."""
@@ -1224,33 +1264,35 @@ class Site:
         if REASKED_FILE not in record.tables:
             return (out + f'<p class="placeholder">{esc(REASKED_FILE)}: {ui("not_generated")}</p>'
                     + table([th("names.col.model"), th("names.col.answers"), th("names.col.reasks")],
-                            [[m, answers[m], counted[m]] for m in counted], cls=NAMES_TABLE))
+                            [[m, answers[m], counted[m]] for m in counted], th("names.cap.per_model"), NAMES_TABLE,
+                            row_header=True, label="cap-per-model"))
         chains = reask_chains(record)
         rows = []
         for model in dict.fromkeys([*counted, *(c.model for c in chains)]):
             mine = [c for c in chains if c.model == model]
-            per_name: dict[str, int] = {}
-            for c in mine:
-                per_name[c.name] = per_name.get(c.name, 0) + c.reasks
-            made = sum(per_name.values())
+            made = sum(c.reasks for c in mine)
             if model in counted and made != counted[model]:
                 out += (f'<p class="error">{esc(model)}: {esc(REASKED_FILE)} has {made} re-asks, summary.csv counts '
                         f"{counted[model]}.</p>")
+            per_name: dict[str, int] = {}  # name -> its answers that were asked again
+            for c in mine:
+                per_name[c.name] = per_name.get(c.name, 0) + 1
+            listed = ", ".join(f"{name} ({n})" for name, n in per_name.items())
             rows.append([model, answers.get(model, MISSING), made, len(mine),
                          *(sum(c.ended == how for c in mine) if all(c.ended for c in mine) else MISSING
                            for how in ("answered", "hedge", "missing")),
-                         Raw(f'<span class="names-list">{esc(", ".join(name if n == 1 else f"{name} ({n})" for name, n in per_name.items()))}</span>')
-                         if per_name else MISSING])
+                         Raw(f'<span class="names-list">{esc(listed)}</span>') if per_name else MISSING])
         out += f'{ui("names.reasks.per_model", "h3")}' + table(
             [th("names.col.model"), th("names.col.answers"), th("names.col.reasks"), th("names.col.asked_again"),
              th("names.col.ended_answered"), th("names.col.ended_hedge"), th("names.col.ended_missing"),
-             th("names.col.names")], rows, cls=NAMES_TABLE)
+             th("names.col.names")], rows, th("names.cap.per_model"), NAMES_TABLE, row_header=True, label="cap-per-model")
         if not chains:
             return out + f'<p>{ui("names.reasks.none")}</p>'
         return out + f'{ui("names.reasks.each", "h3")}' + table(
             [th("corpus.name"), th("names.col.intended"), th("names.col.model"), th("names.col.repeat"),
              th("names.col.no_estimate"), th("names.col.reasks"), th("names.col.ended"), th("names.col.attempt"),
-             th("names.col.p_gender"), th("names.col.p_origin")], [self._chain_row(c) for c in chains], cls=NAMES_TABLE)
+             th("names.col.p_gender"), th("names.col.p_origin")], [self._chain_row(c) for c in chains],
+            th("names.cap.each"), NAMES_TABLE, row_header=True, label="cap-each")
 
     @staticmethod
     def _chain_row(chain: Chain) -> list[Any]:
@@ -1262,17 +1304,18 @@ class Site:
                 Raw(ui(f"names.ended.{chain.ended}")) if chain.ended else MISSING, final.get("attempt", MISSING),
                 shown(final.get(SCORED + chain.gender)), shown(final.get(SCORED + chain.origin))]
 
-    def _names_files(self, record: NamesRecord, committed: bool) -> str:
-        """The CSV files of the record, linked on GitHub when they are the committed ones."""
+    def _names_files(self, record: NamesRecord, repo_path: str | None) -> str:
+        """The CSV files of the record, linked on GitHub when it is the committed one (`repo_path`: where)."""
         described = ((CELLS, "names.file.cells"), (SUMMARY, "names.file.summary"),
                      (PERCEPTIONS, "names.file.perceptions"), (REASKED_FILE, "names.file.reasked"))
-        base = f"{self.cfg.github}/blob/main/{quote(self.cfg.names.strip('/'))}"
+        base = f"{self.cfg.github}/blob/main/{quote(repo_path or '')}"
         items = "".join(
-            "<li>" + (f'<a href="{esc(f"{base}/{filename}")}">{esc(filename)}</a>' if committed
+            "<li>" + (f'<a href="{esc(f"{base}/{filename}")}">{esc(filename)}</a>' if repo_path is not None
                       else f"<code>{esc(filename)}</code>")
             + f': {ui(key)} ({len(record.rows(filename))} {ui("names.file.rows")})</li>'
             for filename, key in described if filename in record.tables)
-        local = "" if committed else f'<p class="muted">{ui("names.local")} <code>{esc(self.cfg.names)}/</code></p>'
+        local = ("" if repo_path is not None
+                 else f'<p class="muted">{ui("names.local")} <code>{esc(self.cfg.names)}/</code></p>')
         return f"<ul>{items}</ul>{local}"
 
     # results

@@ -102,6 +102,10 @@ table { border-collapse: collapse; font-size: .92rem; }
 caption { text-align: left; color: var(--muted); padding: .25rem 0; }
 th, td { border: 1px solid var(--border); padding: .3rem .5rem; text-align: left; vertical-align: top; }
 thead th { background: var(--surface); }
+/* A table whose first column names its rows (table(row_header=True)): that column stays in view while the box
+   scrolls sideways. The shadow redraws its right border, which a collapsed border does not carry along. */
+tbody th { font-weight: 400; background: var(--bg); }
+.row-headers thead th:first-child, .row-headers tbody th { position: sticky; left: 0; box-shadow: 1px 0 0 var(--border); }
 
 dl.rqs dt { font-weight: 700; margin-top: .5rem; }
 dl.rqs dd { margin-left: 0; }
@@ -140,27 +144,29 @@ details > summary { cursor: pointer; font-weight: 600; margin: .5rem 0; }
 
 /* Name check (pilot/names.html): one inline SVG per gender x origin cell, drawn by hcai.site_names. Each chart is
    one column wide and scales with its container; the cells of an origin sit side by side where there is room. */
-.names-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 24rem)); gap: 1rem 2.5rem; }
-.names-cell { margin: 0; min-width: 0; }
+.names-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 1rem 2.5rem; max-width: 52rem; }
+.names-cell { margin: 0; min-width: 0; max-width: 24rem; }
 .names-cell figcaption { color: var(--text); font-weight: 600; font-size: .95rem; margin-bottom: .25rem; }
 .names-cell figcaption .muted { font-weight: 400; }
 .names-chart { display: block; width: 100%; height: auto; }
 .names-bank { font-weight: 400; font-size: .9rem; }
 .names-legend { list-style: none; margin: .5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; font-size: .92rem; }
 .names-legend li { display: flex; align-items: center; gap: .4rem; }
+.names-legend-short { margin: 0 0 .6rem; gap: .15rem 1rem; font-size: .85rem; color: var(--muted); }
 .names-key { flex: none; vertical-align: -.1rem; }
 .names-table th, .names-table td { overflow-wrap: normal; }
 .names-table th { min-width: 4.75rem; }
-.names-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.names-table td, .names-table tbody th { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .names-table td .names-list { display: inline-block; min-width: 14rem; white-space: normal; }
 .names-verdict { white-space: nowrap; }
 .names-verdict .names-key { margin-right: .25rem; }
 .names-fail { color: var(--error); font-weight: 600; }
-.nc-name { font-size: 12px; font-weight: 600; fill: var(--text); }
-.nc-model { font-size: 11px; fill: var(--muted); }
-.nc-head, .nc-none { font-size: 10px; fill: var(--muted); }
+/* The chart's text sizes: hcai.site_names sizes its label columns for exactly these (NAME_PX, MODEL_PX, HEAD_PX). */
+.nc-name { font-size: 13px; font-weight: 600; fill: var(--text); }
+.nc-model { font-size: 12px; fill: var(--muted); }
+.nc-head, .nc-none { font-size: 11px; fill: var(--muted); }
 .nc-none { font-style: italic; }
-.nc-tick { font-size: 10px; fill: var(--text); text-anchor: middle; }
+.nc-tick { font-size: 11px; fill: var(--text); text-anchor: middle; }
 .nc-track { fill: var(--tag); }
 .nc-gender { fill: var(--muted); }
 .nc-o0 { fill: var(--border); }
@@ -169,7 +175,6 @@ details > summary { cursor: pointer; font-weight: 600; margin: .5rem 0; }
 .nc-o3 { fill: var(--origin-3); }
 .nc-o4 { fill: var(--origin-4); }
 .nc-thr { stroke: var(--text); stroke-width: 1; }
-.nc-thr-halo { stroke: var(--bg); stroke-width: 3; }
 .nc-mark { fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nc-fail { stroke: var(--error); stroke-width: 2.4; }
 .nc-hit { fill: transparent; }
@@ -183,6 +188,7 @@ figcaption { color: var(--muted); font-size: .9rem; }
   h1 { font-size: 1.4rem; }
   dl.names-facts { grid-template-columns: 1fr; gap: 0; }
   dl.names-facts dt { color: var(--muted); font-size: .9rem; margin-top: .4rem; }
+  .names-table.row-headers tbody th { white-space: normal; min-width: 6rem; max-width: 7.5rem; }
   .toolbar { position: static; }
   .toolbar .toggle { margin-left: 0; }
   .checks label, .variant-controls label { white-space: normal; }
