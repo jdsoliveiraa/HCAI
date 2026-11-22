@@ -11,7 +11,8 @@ from hcai.cli import main, names_command
 from hcai.config import load_design
 from hcai.llm import FakeLLMClient, LLMRequest, ProviderError, ProviderExhausted
 from hcai.namecheck import (
-    GENDER_OPTIONS, MAX_CONSECUTIVE_ERRORS, ORIGIN_KEYS, PROBABILITY_PROMPT_VERSION, ORIGIN_LABELS, OTHER, OTHER_LABEL, NameCheckAborted,
+    DEFAULT_REASKS, GENDER_OPTIONS, MAX_CONSECUTIVE_ERRORS, ORIGIN_KEYS, PROBABILITY_PROMPT_VERSION, ORIGIN_LABELS,
+    OTHER, OTHER_LABEL, REASK_SEED_STEP, NameCheckAborted,
     Perception, ProbabilityRule, bank_names, build_probability_request, build_request, option_order, parse_answer,
     parse_probabilities, perceive, score, score_probabilities,
 )
@@ -585,13 +586,16 @@ def test_names_command_in_probability_mode_writes_the_probabilities(tmp_path):
     # p(gender) 0.9 / 0.95 with "unsure" (0.05) left out; the scored origins 0.5, 0.3, 0.2; no origin hedge
     assert all(x in failing_line for x in ("0.947", "0.050", "0.500", "0.300", "0.200", "origin"))
     rows = list(csv.DictReader((tmp_path / "out" / "perceptions.csv").open(encoding="utf-8")))
-    assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "prompt_version",
-                             "p_male", "p_female",
+    assert list(rows[0]) == ["name", "intended_gender", "intended_origin", "model", "repeat", "attempt",
+                             "prompt_version", "p_male", "p_female",
                              "p_unsure", "gender_sum", "p_portuguese", "p_brazilian", "p_palop", "p_eastern_european",
                              "p_other_or_unsure", "origin_sum", "gender_hedge", "origin_hedge", "scored_p_male",
                              "scored_p_female", "scored_p_portuguese", "scored_p_brazilian", "scored_p_palop",
                              "scored_p_eastern_european"]
     assert {r["prompt_version"] for r in rows} == {PROBABILITY_PROMPT_VERSION}
+    assert {r["attempt"] for r in rows} == {"0"}  # no answer was all hedge, so none was asked again
+    assert (tmp_path / "out" / "reasked.csv").read_text().splitlines() == [",".join(rows[0])]  # only its header
+    assert "re-asks of all-hedge answers: none" in report and "and 0 re-asks" in report
     odair = next(r for r in rows if r["name"] == "Odair Monteiro" and r["model"] == first)
     assert (odair["p_male"], odair["gender_sum"], odair["p_portuguese"], odair["origin_sum"]) == (
         "0.900000", "50.000000", "0.500000", "2.000000")
@@ -814,3 +818,290 @@ def test_names_command_reports_all_hedge_answers(tmp_path):
     before = len(client.calls)
     names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=2)
     assert len(client.calls) == before
+
+
+# --- re-asks of all-hedge answers (ADR 0011, amendment of 2026-11-22) ---
+
+SEED = 42  # [design] seed of configs/core.toml and configs/skeleton.toml
+SKELETON_MODEL = "openai/gpt-4o-mini"
+ALL_HEDGE = {"gender": {"male": 0, "female": 0, "unsure": 1}, "origin": _labels(other=1)}
+
+
+def _ask(request: LLMRequest) -> tuple[str, int, int]:
+    """(name, repeat, attempt) of a probability request of a design with seed `SEED`."""
+    prompt = request.messages[0]["content"]
+    name = next(n for n in _intended() if f"full name is: {n}\n" in prompt)
+    attempt, repeat = divmod((request.seed or 0) - SEED, REASK_SEED_STEP)
+    return name, repeat, attempt
+
+
+def hedging_oracle(hedge_at):
+    """A `prob_oracle` that answers all hedge on the questions `hedge_at(name, repeat, attempt)` names."""
+    good = prob_oracle()
+
+    def respond(request: LLMRequest) -> dict:
+        answer = good.responder(request)
+        assert isinstance(answer, dict)
+        for question in hedge_at(*_ask(request)):
+            answer[question] = ALL_HEDGE[question]
+        return answer
+
+    return FakeLLMClient(respond)
+
+
+def _csv(path: Path) -> list[dict[str, str]]:
+    return list(csv.DictReader(path.open(encoding="utf-8")))
+
+
+def test_attempt_0_of_the_probability_request_is_byte_identical_to_the_request_before_reasks():
+    bank = list(ORIGIN_LABELS)
+    # The cache keys (sha256 of the canonical request) the prob-v2 requests had before re-asks existed, computed
+    # at commit 7854fd7; the last two are entries of the pilot's cache (core.toml: seed 42, temperature 0). Only a
+    # change of the prompt, with a new PROBABILITY_PROMPT_VERSION, may change them.
+    before = {
+        ("X Y", "m", 0, 7): "ec08a75d9b1c69faddd1ce9640914fb4ce6b0effea47951475e7bde9d3b73cad",
+        ("Nuno Fonseca", "gpt-5.6-luna", 1, 42): "737e14bf82784bf84921b0d3226dcb12d970697a30812793f0cdde0595a77ecf",
+        ("Inês Coelho", "gpt-5.6-luna", 2, 42): "6ff70cf809c17c3dc6da607ef3f52a22924ca7361c4d3ffc25bb14a17065c025",
+    }
+    assert PROBABILITY_PROMPT_VERSION == "prob-v2"
+    for (name, model, repeat, seed), key in before.items():
+        request = build_probability_request(name, model, repeat, bank_origins=bank, temperature=0.0, seed=seed)
+        assert request.cache_key() == key
+        assert request.seed == seed + repeat
+        assert build_probability_request(name, model, repeat, bank_origins=bank, temperature=0.0, seed=seed,
+                                         attempt=0) == request
+
+
+def test_a_reask_is_the_request_of_its_repeat_with_another_seed_and_its_own_cache_key():
+    bank = list(ORIGIN_LABELS)
+
+    def build(repeat: int, attempt: int) -> LLMRequest:
+        return build_probability_request("X Y", "m", repeat, bank_origins=bank, temperature=0.0, seed=7,
+                                         attempt=attempt)
+
+    for repeat in range(5):
+        first = build(repeat, 0)
+        for attempt in (1, 2, 3):
+            again = build(repeat, attempt)
+            # the same wording, options, option order, schema, model and temperature: only the seed moves
+            assert replace(again, seed=first.seed) == first
+            assert (first.seed, again.seed) == (7 + repeat, 7 + repeat + attempt * REASK_SEED_STEP)
+            assert again.cache_key() != first.cache_key()
+    keys = {build(repeat, attempt).cache_key() for repeat in range(60) for attempt in range(6)}
+    assert len(keys) == 60 * 6  # no attempt of a repeat is another repeat's request
+    with pytest.raises(ValueError, match="attempt"):
+        build(0, -1)
+    with pytest.raises(ValueError, match="re-ask"):
+        build(REASK_SEED_STEP, 1)  # its seed would be that of attempt 2 of repeat 0
+    assert build(REASK_SEED_STEP, 0).seed == 7 + REASK_SEED_STEP  # attempt 0 is never restricted
+
+
+def test_an_all_hedge_answer_is_asked_again_and_the_reask_is_the_answer_scored(tmp_path):
+    hedges = {("Tiago Martins", 1, 0): ["origin"],  # a clear gender, nothing on the origins: asked again once
+              ("Ana Clara Souza", 0, 0): ["gender", "origin"], ("Ana Clara Souza", 0, 1): ["gender"]}  # twice
+    client = hedging_oracle(lambda *ask: hedges.get(ask, []))
+
+    report, all_pass = names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=2)
+
+    assert all_pass  # every answer scored is a clear one
+    asks = [_ask(r) for r in client.calls]
+    assert asks == [("Tiago Martins", 0, 0), ("Tiago Martins", 1, 0), ("Tiago Martins", 1, 1),
+                    ("Ana Clara Souza", 0, 0), ("Ana Clara Souza", 0, 1), ("Ana Clara Souza", 0, 2),
+                    ("Ana Clara Souza", 1, 0)]
+    assert len({r.cache_key() for r in client.calls}) == 7  # every attempt is its own cache entry
+    first, again = client.calls[1], client.calls[2]  # Tiago Martins, repeat 1: the request asked again
+    assert replace(again, seed=first.seed) == first
+    assert (first.seed, again.seed) == (SEED + 1, SEED + 1 + REASK_SEED_STEP)
+    assert f"4 answers (0 missing) and 3 re-asks (up to {DEFAULT_REASKS} per all-hedge answer), 7 LLM calls, " \
+           "0 from cache" in report
+    assert f"{SKELETON_MODEL}: 3 for 2 answers, 0 still all hedge" in report and "reasked.csv" in report
+    rows = _csv(tmp_path / "o" / "perceptions.csv")
+    assert [(r["name"], r["repeat"], r["attempt"]) for r in rows] == [
+        ("Tiago Martins", "0", "0"), ("Tiago Martins", "1", "1"), ("Ana Clara Souza", "0", "2"),
+        ("Ana Clara Souza", "1", "0")]
+    # one row per answer, each the re-ask's clear answer: nothing is left of the all-hedge ones in the scores
+    assert all(r["scored_p_male"] and r["scored_p_portuguese"] and r["origin_hedge"] == "0.000000" for r in rows)
+    assert (rows[1]["p_portuguese"], rows[2]["p_female"]) == ("0.756757", "0.900000")
+    reasked = _csv(tmp_path / "o" / "reasked.csv")
+    assert list(reasked[0]) == list(rows[0])
+    assert [(r["name"], r["repeat"], r["attempt"], r["gender_hedge"], r["origin_hedge"]) for r in reasked] == [
+        ("Tiago Martins", "1", "0", "0.050000", "1.000000"), ("Ana Clara Souza", "0", "0", "1.000000", "1.000000"),
+        ("Ana Clara Souza", "0", "1", "1.000000", "0.000000")]
+    # the replaced answers are shown whole: the clear gender that went with an all-hedge origin, and the reverse
+    assert (reasked[0]["scored_p_male"], reasked[0]["scored_p_portuguese"]) == ("0.947368", "")
+    assert (reasked[2]["scored_p_female"], reasked[2]["scored_p_brazilian"]) == ("", "0.756757")
+    summary = {r["name"]: r for r in _csv(tmp_path / "o" / "summary.csv")}
+    assert [(s["reasks"], s["answers"], s["missing"], s["gender_all_hedge"], s["origin_all_hedge"], s["pass"])
+            for s in summary.values()] == [("1", "2", "0", "0", "0", "True"), ("2", "2", "0", "0", "0", "True")]
+    assert summary["Tiago Martins"]["gender_hedge"] == "0.050000"  # the mean of its two answers, not of three
+
+    again_report, again_pass = names_command(SKELETON, client, out_dir=tmp_path / "o2", cache_dir=tmp_path / "c",
+                                             repeats=2)
+
+    assert again_pass and len(client.calls) == 7  # the attempts replay from the cache: no call
+    assert "4 answers (0 missing) and 3 re-asks" in again_report and "0 LLM calls, 7 from cache" in again_report
+    for name in ("perceptions.csv", "reasked.csv", "summary.csv", "cells.csv"):
+        assert (tmp_path / "o2" / name).read_text() == (tmp_path / "o" / name).read_text()
+
+
+def test_an_answer_still_all_hedge_after_the_reasks_stays_missing_and_fails_the_name(tmp_path):
+    # Tiago Martins, repeat 0: all hedge on gender at attempts 0 to 4, clear from attempt 5 on
+    client = hedging_oracle(lambda name, repeat, attempt:
+                            ["gender"] if (name, repeat) == ("Tiago Martins", 0) and attempt < 5 else [])
+
+    def run(out: str, reasks: int = DEFAULT_REASKS) -> tuple[str, bool]:
+        return names_command(SKELETON, client, out_dir=tmp_path / out, cache_dir=tmp_path / "c", repeats=2,
+                             reasks=reasks)
+
+    report, all_pass = run("o")
+
+    assert not all_pass and len(client.calls) == 4 + 3  # asked again three times, by default, and no more
+    assert [r.seed for r in client.calls[:4]] == [SEED + k * REASK_SEED_STEP for k in range(4)]
+    assert len({r.cache_key() for r in client.calls}) == 7
+    line = next(x for x in report.splitlines() if x.startswith("Tiago Martins"))
+    assert "all-hedge(gender)" in line and "everything on a hedge option" in report
+    assert f"{SKELETON_MODEL}: 3 for 1 answers, 1 still all hedge" in report
+    assert "4 answers (0 missing) and 3 re-asks (up to 3 per all-hedge answer), 7 LLM calls" in report
+    row = _csv(tmp_path / "o" / "perceptions.csv")[0]
+    # the last attempt is the answer on record: valid, but with nothing to score for gender
+    assert (row["name"], row["repeat"], row["attempt"], row["gender_hedge"], row["scored_p_male"]) == (
+        "Tiago Martins", "0", "3", "1.000000", "")
+    assert row["scored_p_portuguese"] == "0.756757"
+    assert [(r["repeat"], r["attempt"], r["gender_hedge"]) for r in _csv(tmp_path / "o" / "reasked.csv")] == [
+        ("0", "0", "1.000000"), ("0", "1", "1.000000"), ("0", "2", "1.000000")]
+    tiago = _csv(tmp_path / "o" / "summary.csv")[0]
+    assert (tiago["reasks"], tiago["missing"], tiago["gender_all_hedge"], tiago["gender_pass"], tiago["pass"]) == (
+        "3", "0", "1", "True", "False")  # the strict rule: its other answer is clear, the name still fails
+
+    run("o")
+    assert len(client.calls) == 7  # a rerun replays the four all-hedge attempts: no call, the same result
+    assert _csv(tmp_path / "o" / "perceptions.csv")[0]["attempt"] == "3"
+
+    # fewer re-asks replay a shorter chain of the same attempts; none at all keeps the first answer
+    run("o1", reasks=1)
+    assert _csv(tmp_path / "o1" / "perceptions.csv")[0]["attempt"] == "1"
+    assert len(_csv(tmp_path / "o1" / "reasked.csv")) == 1
+    report, _ = run("o0", reasks=0)
+    assert _csv(tmp_path / "o0" / "perceptions.csv")[0]["attempt"] == "0"
+    assert _csv(tmp_path / "o0" / "reasked.csv") == [] and "re-asks of all-hedge answers: none" in report
+    assert "and 0 re-asks (up to 0 per all-hedge answer)" in report and len(client.calls) == 7
+
+    # more re-asks continue the chain where it stopped: attempts 4 (all hedge) and 5 (clear) are the only calls
+    report, all_pass = run("o5", reasks=5)
+    assert all_pass and [_ask(r) for r in client.calls[7:]] == [("Tiago Martins", 0, 4), ("Tiago Martins", 0, 5)]
+    assert "and 5 re-asks (up to 5 per all-hedge answer), 2 LLM calls, 7 from cache" in report
+    assert _csv(tmp_path / "o5" / "perceptions.csv")[0]["attempt"] == "5"
+    assert [r["attempt"] for r in _csv(tmp_path / "o5" / "reasked.csv")] == ["0", "1", "2", "3", "4"]
+
+
+def test_a_reask_that_fails_or_is_invalid_is_missing_and_asked_again_on_a_rerun(tmp_path):
+    good = hedging_oracle(lambda *ask: ["origin"] if ask == ("Tiago Martins", 0, 0) else [])
+    state = {"reask": "raises"}
+
+    def respond(request: LLMRequest):
+        if _ask(request) == ("Tiago Martins", 0, 1) and state["reask"] != "answers":
+            if state["reask"] == "raises":
+                raise ProviderError("boom")
+            return {"gender": {"male": 1, "female": 0, "unsure": 0}, "origin": {"Portuguese": 1}}  # an option short
+        return good.responder(request)
+
+    client = FakeLLMClient(respond)
+
+    def run() -> tuple[str, bool]:
+        return names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=1)
+
+    report, all_pass = run()
+
+    assert not all_pass and "(1 missing) and 1 re-asks" in report
+    assert "1 failed calls, e.g. ProviderError: boom" in report
+    assert [_ask(r) for r in client.calls] == [("Tiago Martins", 0, 0), ("Tiago Martins", 0, 1),
+                                               ("Ana Clara Souza", 0, 0)]
+    row = _csv(tmp_path / "o" / "perceptions.csv")[0]
+    assert (row["attempt"], row["prompt_version"], row["p_male"]) == ("1", PROBABILITY_PROMPT_VERSION, "")
+    assert [(r["attempt"], r["origin_hedge"]) for r in _csv(tmp_path / "o" / "reasked.csv")] == [("0", "1.000000")]
+    tiago = _csv(tmp_path / "o" / "summary.csv")[0]
+    assert (tiago["reasks"], tiago["missing"], tiago["pass"]) == ("1", "1", "False")
+
+    state["reask"] = "invalid"
+    report, all_pass = run()
+    # only the re-ask is asked again (the same request), and an invalid answer does not move to attempt 2
+    assert not all_pass and "(1 missing) and 1 re-asks" in report and "1 LLM calls, 2 from cache" in report
+    assert [_ask(r) for r in client.calls[3:]] == [("Tiago Martins", 0, 1)]
+    assert client.calls[3].cache_key() == client.calls[1].cache_key()
+
+    state["reask"] = "answers"
+    report, all_pass = run()
+    assert all_pass and "(0 missing) and 1 re-asks" in report and "1 LLM calls, 2 from cache" in report
+    assert [_ask(r) for r in client.calls[4:]] == [("Tiago Martins", 0, 1)]
+    run()
+    assert len(client.calls) == 5
+
+
+def test_the_replaced_all_hedge_answers_are_counted_and_never_scored():
+    hedge = {"male": 0.0, "female": 0.0, "unsure": 1.0}
+    first = _pp("A", "m1", 0, hedge, _origin(other=1.0))
+    assert first.all_hedge == ("gender", "origin")
+    answer = replace(_pp("A", "m1", 0, {"male": 0.8, "female": 0.0, "unsure": 0.2}, _origin(pt=1.0)), attempt=1,
+                     reasked=(first,))
+    assert answer.all_hedge == () and _pp("A", "m1", 0, M, _origin(other=1.0)).all_hedge == ("origin",)
+    assert _pp("A", "m1", 0, None, None).all_hedge == () and _p("A", "m1", 0, "unsure", OTHER).all_hedge == ()
+
+    check = score_probabilities([answer, _pp("A", "m1", 1, M, _origin(pt=1.0))])
+
+    s = check.scores[0]
+    assert (s.answers, s.missing, s.reasks, s.gender_all_hedge, s.origin_all_hedge, s.passed) == (2, 0, 1, 0, 0, True)
+    # the means are over the two answers: the replaced one is in neither the scores nor the hedge shares
+    assert s.p_gender == pytest.approx(1.0) and s.gender_hedge == pytest.approx(0.1)
+    assert s.origin_hedge == pytest.approx(0.0)
+    assert check.cells[0].gender_hedge == pytest.approx(0.1)
+
+
+def test_the_choice_mode_never_asks_again(tmp_path):
+    client = oracle({("Tiago Martins", SKELETON_MODEL): ("unsure", OTHER_LABEL)})
+
+    report, all_pass = names_command(SKELETON, client, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", repeats=2,
+                                     mode="choice", reasks=3)
+
+    assert not all_pass and len(client.calls) == 4  # one call per answer: "unsure" is an answer in this mode
+    assert "re-ask" not in report and "4 answers (0 missing), 4 LLM calls, 0 from cache" in report
+    assert not (tmp_path / "o" / "reasked.csv").exists()
+    assert "attempt" not in (tmp_path / "o" / "perceptions.csv").read_text().splitlines()[0]
+    perceptions = perceive(load_design(SKELETON), client, repeats=2, mode="choice", reasks=3)
+    assert {(p.attempt, p.reasked, p.all_hedge) for p in perceptions} == {(0, (), ())}
+
+
+def test_perceive_keeps_the_replaced_answers_and_validates_the_reasks():
+    design = load_design(SKELETON)
+    client = hedging_oracle(lambda name, repeat, attempt: ["gender", "origin"] if name == "Tiago Martins" else [])
+
+    perceptions = perceive(design, client, repeats=1, reasks=2)
+
+    tiago, ana = perceptions
+    assert (tiago.attempt, tiago.all_hedge, len(tiago.reasked)) == (2, ("gender", "origin"), 2)
+    assert [(e.attempt, e.all_hedge, e.reasked) for e in tiago.reasked] == [(0, ("gender", "origin"), ()),
+                                                                            (1, ("gender", "origin"), ())]
+    assert (ana.attempt, ana.reasked) == (0, ())
+    assert len(client.calls) == 3 + 1
+    calls = len(client.calls)
+    with pytest.raises(ValueError, match="reasks"):
+        perceive(design, client, repeats=1, reasks=-1)
+    with pytest.raises(ValueError, match="repeats"):
+        perceive(design, client, repeats=REASK_SEED_STEP + 1)  # a re-ask's seed would be another repeat's
+    assert len(client.calls) == calls  # both refused before any call
+
+
+def test_cli_names_reasks_with_the_fake_llm(tmp_path, capsys):
+    # the fake model answers all hedge whatever the attempt: every answer is asked again 3 times, then stays missing
+    common = ["names", str(SKELETON), "--repeats", "1", "--fake-llm", "--cache", str(tmp_path / "c")]
+    assert main([*common, "--out", str(tmp_path / "d")]) == 2
+    out = capsys.readouterr().out
+    assert "2 answers (0 missing) and 6 re-asks (up to 3 per all-hedge answer), 8 LLM calls, 0 from cache" in out
+    assert f"{SKELETON_MODEL}: 6 for 2 answers, 2 still all hedge" in out
+    assert [r["attempt"] for r in _csv(tmp_path / "d" / "perceptions.csv")] == ["3", "3"]
+    assert [r["attempt"] for r in _csv(tmp_path / "d" / "reasked.csv")] == ["0", "1", "2", "0", "1", "2"]
+    assert main([*common, "--reasks", "0", "--out", str(tmp_path / "z")]) == 2
+    out = capsys.readouterr().out
+    assert "and 0 re-asks (up to 0 per all-hedge answer), 0 LLM calls, 2 from cache" in out
+    assert _csv(tmp_path / "z" / "reasked.csv") == []
+    assert main([*common, "--reasks", "-1"]) == 1
+    assert "--reasks >= 0" in capsys.readouterr().err

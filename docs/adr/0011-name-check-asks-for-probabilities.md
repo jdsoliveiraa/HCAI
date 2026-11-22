@@ -30,6 +30,7 @@ check unchanged.
   of the answer's normalised distribution, is reported beside the scores. An answer with nothing on the
   substantive options of a question (all hedge) is missing for that question: it is left out of that question's
   mean and fails the name like a missing answer, but it is a valid answer, so it is cached and a rerun replays it.
+  (Amended 2026-11-22, see below: it is first asked again, up to `--reasks` times.)
 - **Aggregation.** Per name x model, the scored distributions are averaged over the answers that have one, and the
   full normalised distributions and hedge shares over the valid answers (unweighted means over repeats).
 - **Pass rule** (`ProbabilityRule`, on the mean scored distributions; comparisons with 1e-9 float slack):
@@ -40,8 +41,10 @@ check unchanged.
   A tie is not "the highest". A name passes when it passes for every model with no answer missing for either
   question.
 - **Outputs.** `perceptions.csv` has the normalised probabilities over all options and raw sums per answer, its
-  hedge shares (`gender_hedge`, `origin_hedge`) and its scored distributions (`scored_p_<option>`); `summary.csv`
-  per name x model the counts of all-hedge answers per question, the mean full distribution, mean hedge shares,
+  hedge shares (`gender_hedge`, `origin_hedge`) and its scored distributions (`scored_p_<option>`), and (since
+  2026-11-22) its `attempt`; `reasked.csv` (since 2026-11-22) the all-hedge answers that were asked again;
+  `summary.csv` per name x model the re-asks (`reasks`, since 2026-11-22), the counts of all-hedge answers per
+  question, the mean full distribution, mean hedge shares,
   mean scored distribution, scored p(intended gender) and p(intended origin), the rule's parameters and the gender,
   origin and overall pass flags; `cells.csv` the mean scored p(intended) and the mean hedge shares per gender x
   origin cell, per model and over all (each name weighs the same: its mean over the models with a value, then the
@@ -80,13 +83,78 @@ and changed the probability prompt instead:
   `summary.csv` (`prompt_version`). The first prompt is "prob-v1"; its outputs have no `prompt_version` column.
 - The new prompt has new cache keys: the prob-v1 answers stay in the cache, unused, and the check asks again.
 
-A model can still answer all-hedge under prob-v2; that answer is still missing and fails the name. Asking for a
+A model can still answer all-hedge under prob-v2; that answer is still missing and fails the name (since
+2026-11-22 it is asked again first, see the next amendment). Asking for a
 best estimate pushes a model towards committing to a reading, so a pass under prob-v2 is not directly comparable
 with one under prob-v1: compare results of the same `prompt_version` only.
 "Other or unsure" also means an origin outside the four listed; by keeping it for names with no signal, prob-v2
 may move the probability of a name that points elsewhere (an Italian- or Spanish-sounding surname, say) onto
 the listed origins, which can help such a name pass. Read origin passes under prob-v2 with that in mind. Failed
 calls carry the prompt version too (the version of the request that failed).
+
+### Amendment (2026-11-22): an all-hedge answer is asked again (re-asks, `--reasks`)
+
+Under prob-v2, gpt-5.6-luna still put 100% on "unsure" and/or "Other or unsure" in 10 of its 160 answers
+(qwen3.8-flash: in none of 160): 8 on both questions and 2 on origin only, with a clear gender. They are spread
+over every repeat (0-4) and every intended origin, on 9 of the 32 names (8 names once, one name twice). Each of
+the 9 passes gender and origin on its other answers (p(intended gender) at least 0.99, p(intended origin) 0.61
+to 0.99) and fails only because an answer is missing for a question; no other name fails. The same name is
+answered clearly at its other repeats and the same option order is answered clearly for other names, and neither
+pipeline model is deterministic at temperature 0 (`configs/core.toml`). So the check was failing names on
+answers in which the model gave no estimate at all, not on what it perceives in the name.
+
+The researcher decided to treat an all-hedge answer like a failed call and ask it again as a fresh attempt:
+
+- **What is asked again.** In probability mode, a valid answer with nothing on the substantive options of gender
+  or of origin: exactly the answers the scoring already counts as missing for a question. There is no threshold
+  on the hedge share: an answer with any probability on a substantive option is an estimate and is scored as
+  before, however much it hedges.
+- **The re-ask.** The same name, model and repeat, with the same prompt (prob-v2: the text is unchanged, so the
+  version is too), options, option order of that repeat and JSON schema. Only the seed changes: the design seed +
+  the repeat + 1000 x the attempt (`REASK_SEED_STEP`), which gives every attempt its own cache key, as the
+  attempt number in the prompt does in ADR 0006. The pipeline models do not honour the seed, so it is not what
+  makes the new answer differ: a re-ask is a new draw of the same question. Attempt 0 adds nothing to the seed,
+  so its request and cache key are what they were, and the answers already cached replay (a test pins the keys).
+- **The chain.** Up to `--reasks` re-asks per answer (default 3; 0 turns them off). The first attempt that is not
+  all hedge is the answer, whole and whatever it says, and the chain stops there. If every attempt is all hedge,
+  the last one is the answer on record: still missing for that question, so the name still fails. The strict
+  rule is unchanged.
+- **The whole answer is replaced.** An answer that is all hedge on one question only is asked again for both, and
+  its clear answer to the other question is not scored (it is kept in `reasked.csv`). One answer is one request:
+  the two questions are never put together from different attempts.
+- **Failures.** A re-ask whose call fails, or whose answer is not valid, is a missing answer at that attempt, as
+  before: not cached, so a rerun replays the attempts before it from the cache and asks that attempt again. Only
+  a valid all-hedge answer moves the chain to the next attempt.
+- **Cache.** Every attempt is a valid answer and is cached on its own, so a rerun with the same settings makes no
+  call and gives the same tables. A higher `--reasks` continues a chain where it stopped; a lower one replays
+  the start of it.
+- **Record.** `perceptions.csv` keeps one row per answer and gains `attempt` (0, or k for the k-th re-ask).
+  `reasked.csv` has one row, with the same columns, per all-hedge answer that was asked again, so the two files
+  hold every valid answer received. `summary.csv` gains `reasks` per name x model. The printed report gives per
+  model the re-asks made, for how many answers, and how many of those stayed all hedge; its last line counts the
+  answers, the re-asks, the LLM calls and what came from the cache (answers + re-asks = calls + from cache).
+- **Choice mode** is unchanged: "unsure" and "Other or unsure" are answers there and are never asked again.
+
+This is a retry of non-answers, with a record, not a filter on content. What decides a re-ask is that an answer
+gives no estimate for a question; the intended labels, and which gender or origin an answer favours, play no part
+in it. An answer that gives an estimate is never asked again, whether or not it suits the name, and the first one
+that does is kept: nothing chooses between two estimates. What it does change is stated here so that it is read
+with the results:
+
+- The scores describe what a model perceives when it gives an estimate. How often it gives none is a property of
+  the model (10 of 160 answers for gpt-5.6-luna, none for qwen3.8-flash) and stays in the outputs: report the
+  re-asks per model beside the pass rates.
+- The prompt keeps the hedges for a name that gives no signal at all, so an all-hedge answer can be the model's
+  reading of the name, not a refusal. Re-asks do not hide that case as long as it is the model's usual answer:
+  the name then stays all hedge and fails. But one estimate in up to four attempts now replaces the all-hedge
+  answers before it, so a name the model declines to place fairly often can pass. `attempt` and `reasks` show how
+  many re-asks a pass needed; a name that needed several, or on several repeats, deserves a look in `reasked.csv`.
+- Results with and without re-asks differ on the names that needed one. `--reasks 0` gives the earlier behaviour
+  from the same cache; compare runs of the same `--reasks` only.
+- As in ADR 0006, a chain depends on what the model answered when it was asked: two people starting from empty
+  caches may see different chains. The outputs and the cache are the record.
+- A re-ask costs one call, at most `--reasks` per all-hedge answer. With re-asks on, `--repeats` is at most 1000,
+  so that no attempt has the seed of another repeat.
 
 ## Consequences
 

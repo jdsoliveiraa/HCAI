@@ -18,8 +18,16 @@ answer that puts everything on the hedge of a question is missing for that quest
 scored distributions, p(intended gender) is at least the threshold, and p(intended origin) is the highest of the
 four origins for a host origin (Portuguese), or the highest of the non-host origins and at least a minimum (0.25
 by default) for any other. The hedge shares are reported beside them. Missing answers (a provider error, or one
-outside the schema) are not cached, so a rerun asks them again; an all-hedge answer is valid and cached. Nothing
-here changes the name bank: failing names are reported for the researcher to replace.
+outside the schema) are not cached, so a rerun asks them again; an all-hedge answer is valid and cached.
+
+Re-asks (probability mode, ADR 0011): an all-hedge answer gives nothing to score for a question, so it is asked
+again as a new attempt of the same repeat, up to `reasks` times (`DEFAULT_REASKS`): the same prompt, options and
+option order, with a seed that moves by `REASK_SEED_STEP` per attempt, so every attempt has its own cache entry
+and a rerun replays the whole chain. Attempt 0 is the request it always was. The first attempt that is not all
+hedge is the answer; if none is, the last attempt is, still missing for that question, and the name fails. The
+answers it replaced stay on record (`Perception.reasked`, reasked.csv), with the attempt of every answer
+(perceptions.csv) and the re-asks per name x model (summary.csv) and per model (the report). The choice mode
+never re-asks. Nothing here changes the name bank: failing names are reported for the researcher to replace.
 """
 
 from __future__ import annotations
@@ -63,6 +71,11 @@ SCORED_ORIGINS = tuple(ORIGIN_LABELS)
 # first prompt, ADR 0011) wrote no version column; "prob-v2" asks for a best estimate and keeps the hedges for
 # names with no signal at all (ADR 0011, 2026-11-19). A new prompt changes the cache key, so old answers are unused.
 PROBABILITY_PROMPT_VERSION = "prob-v2"
+DEFAULT_REASKS = 3  # probability mode: times an all-hedge answer is asked again before it stays missing (ADR 0011)
+# A re-ask is the request of its repeat with the seed moved by this much per attempt, and nothing else changed: a
+# new cache key, and a seed no other repeat or attempt of the name has as long as the repeats are fewer than
+# this. Attempt 0 adds nothing, so its request and cache key are what they were before re-asks existed.
+REASK_SEED_STEP = 1000
 EPS = 1e-9  # float slack for the pass comparisons (a mean of 0.8s may come out as 0.7999999999)
 
 
@@ -86,6 +99,10 @@ class Perception:
     gender_sum: float | None = None
     origin_sum: float | None = None
     prompt_version: str = ""  # probability mode: the prompt the answer was asked with (PROBABILITY_PROMPT_VERSION)
+    # probability mode: which ask of its repeat this answer is (0 the first, k after k re-asks), and the all-hedge
+    # answers of the attempts before it, which it replaced (each with its own attempt and no `reasked`)
+    attempt: int = 0
+    reasked: tuple[Perception, ...] = ()
 
     @property
     def missing(self) -> bool:
@@ -115,6 +132,14 @@ class Perception:
         """Probability mode: the four origin options renormalised to sum 1; None when the answer is missing or puts
         everything on "Other or unsure" (then the answer is missing for the origin question)."""
         return None if self.missing else _renormalise(self.origin_p, SCORED_ORIGINS)
+
+    @property
+    def all_hedge(self) -> tuple[str, ...]:
+        """Probability mode: the questions ("gender", "origin") a valid answer puts everything on the hedge of,
+        so there is nothing to score for them; () for a missing answer, and in the choice mode."""
+        if self.mode != PROBABILITY or self.missing:
+            return ()
+        return tuple(q for q, d in (("gender", self.gender_scored), ("origin", self.origin_scored)) if d is None)
 
 
 def _renormalise(d: dict[str, float] | None, keys: Sequence[str]) -> dict[str, float] | None:
@@ -240,12 +265,20 @@ def parse_answer(parsed: object) -> tuple[str, str]:
 
 
 def build_probability_request(name: str, model: str, repeat: int, *, bank_origins: list[str], temperature: float,
-                              seed: int | None) -> LLMRequest:
+                              seed: int | None, attempt: int = 0) -> LLMRequest:
     """The probability-mode request for `name` at `repeat`: the same context, options, order and seed as
     `build_request`, asking for a probability per option instead of one choice. It takes no intended label.
 
     Prompt `PROBABILITY_PROMPT_VERSION`: it asks for a best estimate, the uncertainty spread over the substantive
-    options, and keeps "unsure" / "Other or unsure" for a name that gives no signal at all for that question."""
+    options, and keeps "unsure" / "Other or unsure" for a name that gives no signal at all for that question.
+
+    `attempt` k > 0 is the k-th re-ask of an all-hedge answer: the request of attempt 0 with `REASK_SEED_STEP` * k
+    added to the seed and nothing else changed, so it has its own cache key. Attempt 0 is unchanged."""
+    if attempt < 0:
+        raise ValueError("attempt must be at least 0")
+    if attempt and not 0 <= repeat < REASK_SEED_STEP:
+        raise ValueError(f"a re-ask needs a repeat below {REASK_SEED_STEP}, not {repeat} (its seed would be "
+                         "another repeat's)")
     genders, origins = option_order(repeat, bank_origins)
     prompt = (
         f"Consider {CONTEXT} whose full name is: {name}\n\n"
@@ -272,7 +305,8 @@ def build_probability_request(name: str, model: str, repeat: int, *, bank_origin
         "additionalProperties": False,
     }
     return LLMRequest(model=model, messages=[{"role": "user", "content": prompt}], temperature=temperature,
-                      seed=(seed if seed is not None else 0) + repeat, response_schema=schema)
+                      seed=(seed if seed is not None else 0) + repeat + attempt * REASK_SEED_STEP,
+                      response_schema=schema)
 
 
 @dataclass(frozen=True)
@@ -339,49 +373,72 @@ class ValidAnswersOnly:
 
 
 def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: float | None = None,
-             mode: str = DEFAULT_MODE) -> list[Perception]:
-    """Ask every pipeline model about every name `repeats` times, in `mode` (probability or choice).
+             mode: str = DEFAULT_MODE, reasks: int = DEFAULT_REASKS) -> list[Perception]:
+    """Ask every pipeline model about every name `repeats` times, in `mode` (probability or choice): one
+    `Perception` per name x model x repeat.
 
     A call that raises is a missing answer (its error kept); `MAX_CONSECUTIVE_ERRORS` of them in a row for one
     model raise `NameCheckAborted`. `ProviderExhausted` (a BaseException) stops the check as in `hcai run`.
+
+    Probability mode: an all-hedge answer (`Perception.all_hedge`) is asked again as the next attempt of its
+    repeat (`build_probability_request`), up to `reasks` times. The first attempt that is not all hedge is the
+    answer, whatever it says; if none is, the last attempt is. The answers it replaced are in its `reasked`.
+    Only a valid all-hedge answer moves to the next attempt: a re-ask that fails or is not valid is a missing
+    answer at that attempt, not cached, so a rerun replays the attempts before it and asks it again. The
+    choice mode never re-asks.
     """
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
+    if reasks < 0:
+        raise ValueError("reasks must be at least 0")
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
-    build = build_probability_request if mode == PROBABILITY else build_request
+    last_attempt = reasks if mode == PROBABILITY else 0
+    if last_attempt and repeats > REASK_SEED_STEP:
+        raise ValueError(f"repeats must be at most {REASK_SEED_STEP} when all-hedge answers are asked again")
     version = PROBABILITY_PROMPT_VERSION if mode == PROBABILITY else ""  # failed calls included
     names = bank_names(design)
     bank_origins = list(dict.fromkeys(o for _, _, o in names))
     temperature = design.temperature if temperature is None else temperature
-    out = []
     failures = dict.fromkeys(design.models, 0)  # consecutive failed calls per model
+
+    def ask(name: str, gender: str, origin: str, model: str, repeat: int, attempt: int) -> Perception:
+        if mode == PROBABILITY:
+            request = build_probability_request(name, model, repeat, bank_origins=bank_origins,
+                                                temperature=temperature, seed=design.seed, attempt=attempt)
+        else:
+            request = build_request(name, model, repeat, bank_origins=bank_origins, temperature=temperature,
+                                    seed=design.seed)
+        try:
+            response = client.complete(request)
+        except Exception as e:  # noqa: BLE001 - a failed call is a missing answer, asked again on a rerun
+            failures[model] += 1
+            error = f"{type(e).__name__}: {e}"
+            if failures[model] >= MAX_CONSECUTIVE_ERRORS:
+                raise NameCheckAborted(f"{model}: {failures[model]} calls in a row failed, the last with "
+                                       f"{error}") from e
+            return Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode,
+                              prompt_version=version, attempt=attempt)
+        failures[model] = 0
+        if mode == PROBABILITY:
+            a = parse_probabilities(response.parsed)
+            return Perception(name, gender, origin, model, repeat, "", "", cached=response.cached, mode=mode,
+                              gender_p=a and a.gender_p, origin_p=a and a.origin_p,
+                              gender_sum=a and a.gender_sum, origin_sum=a and a.origin_sum,
+                              prompt_version=version, attempt=attempt)
+        return Perception(name, gender, origin, model, repeat, *parse_answer(response.parsed),
+                          cached=response.cached)
+
+    out = []
     for name, gender, origin in names:
         for model in design.models:
             for repeat in range(repeats):
-                request = build(name, model, repeat, bank_origins=bank_origins, temperature=temperature,
-                                seed=design.seed)
-                try:
-                    response = client.complete(request)
-                except Exception as e:  # noqa: BLE001 - a failed call is a missing answer, asked again on a rerun
-                    failures[model] += 1
-                    error = f"{type(e).__name__}: {e}"
-                    if failures[model] >= MAX_CONSECUTIVE_ERRORS:
-                        raise NameCheckAborted(f"{model}: {failures[model]} calls in a row failed, the last with "
-                                               f"{error}") from e
-                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode,
-                                          prompt_version=version))
-                    continue
-                failures[model] = 0
-                if mode == PROBABILITY:
-                    a = parse_probabilities(response.parsed)
-                    out.append(Perception(name, gender, origin, model, repeat, "", "", cached=response.cached,
-                                          mode=mode, gender_p=a and a.gender_p, origin_p=a and a.origin_p,
-                                          gender_sum=a and a.gender_sum, origin_sum=a and a.origin_sum,
-                                          prompt_version=version))
-                else:
-                    out.append(Perception(name, gender, origin, model, repeat, *parse_answer(response.parsed),
-                                          cached=response.cached))
+                answer = ask(name, gender, origin, model, repeat, 0)
+                reasked: list[Perception] = []
+                while answer.all_hedge and answer.attempt < last_attempt:
+                    reasked.append(answer)
+                    answer = ask(name, gender, origin, model, repeat, answer.attempt + 1)
+                out.append(replace(answer, reasked=tuple(reasked)) if reasked else answer)
     return out
 
 
@@ -484,6 +541,7 @@ class ProbabilityScore:
     gender_all_hedge: int = 0  # valid answers with everything on "unsure": missing for the gender question
     origin_all_hedge: int = 0  # valid answers with everything on "Other or unsure": missing for the origin question
     prompt_version: str = ""  # the prompt version(s) of its answers, "+"-joined if they differ
+    reasks: int = 0  # all-hedge answers that were asked again, over its answers (each is in its answer's `reasked`)
 
     @property
     def p_gender(self) -> float | None:
@@ -543,7 +601,9 @@ def _mean_distribution(ds: list[dict[str, float]]) -> dict[str, float] | None:
 def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | None = None) -> ProbabilityCheck:
     """Mean distributions, hedge shares and pass flags per name x model, and mean p(intended) and hedge shares per
     gender x origin cell. The rule sees the scored distributions (hedges out); an answer with nothing on the
-    substantive options of a question is missing for that question, which fails the name like a missing answer."""
+    substantive options of a question is missing for that question, which fails the name like a missing answer.
+    Each perception is the answer of its repeat: the all-hedge answers it replaced (`reasked`) are counted
+    (`reasks`), never scored."""
     rule = rule or ProbabilityRule()
     if any(p.mode != PROBABILITY for p in perceptions):
         raise ValueError("score_probabilities needs probability-mode perceptions")
@@ -567,7 +627,8 @@ def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | N
             _mean_distribution([p.origin_p for p in valid if p.origin_p is not None]),
             g_ok, o_ok, g_ok and o_ok and complete, gender_scored=g, origin_scored=o,
             gender_all_hedge=len(valid) - len(g_scored), origin_all_hedge=len(valid) - len(o_scored),
-            prompt_version="+".join(sorted({p.prompt_version for p in ps}))))
+            prompt_version="+".join(sorted({p.prompt_version for p in ps})),
+            reasks=sum(len(p.reasked) for p in ps)))
     cells = [ProbabilityCell(*c) for c in _cells(scores, [lambda s: s.p_gender, lambda s: s.p_origin,
                                                           lambda s: s.gender_hedge, lambda s: s.origin_hedge],
                                                  answered=lambda s: s.gender_p is not None)]
@@ -637,21 +698,26 @@ def _probability_tables(check: ProbabilityCheck) -> dict[str, tuple[list[str], l
     o_cols = [f"p_{o}" for o in ORIGIN_KEYS]
     scored_cols = [f"scored_p_{k}" for k in (*SCORED_GENDERS, *SCORED_ORIGINS)]
     r = check.rule
+    answer_cols = ["name", "intended_gender", "intended_origin", "model", "repeat", "attempt", "prompt_version",
+                   *g_cols, "gender_sum", *o_cols, "origin_sum", "gender_hedge", "origin_hedge", *scored_cols]
+
+    def answer_row(p: Perception) -> list:
+        return [p.name, p.intended_gender, p.intended_origin, p.model, p.repeat, p.attempt, p.prompt_version,
+                *_dist(p.gender_p, GENDER_OPTIONS), _p(p.gender_sum), *_dist(p.origin_p, ORIGIN_KEYS),
+                _p(p.origin_sum), _p(p.gender_hedge), _p(p.origin_hedge), *_dist(p.gender_scored, SCORED_GENDERS),
+                *_dist(p.origin_scored, SCORED_ORIGINS)]
+
     return {
-        "perceptions.csv": (["name", "intended_gender", "intended_origin", "model", "repeat", "prompt_version",
-                             *g_cols, "gender_sum", *o_cols, "origin_sum", "gender_hedge", "origin_hedge",
-                             *scored_cols],
-                            [[p.name, p.intended_gender, p.intended_origin, p.model, p.repeat, p.prompt_version,
-                              *_dist(p.gender_p, GENDER_OPTIONS), _p(p.gender_sum),
-                              *_dist(p.origin_p, ORIGIN_KEYS), _p(p.origin_sum), _p(p.gender_hedge),
-                              _p(p.origin_hedge), *_dist(p.gender_scored, SCORED_GENDERS),
-                              *_dist(p.origin_scored, SCORED_ORIGINS)] for p in check.perceptions]),
+        "perceptions.csv": (answer_cols, [answer_row(p) for p in check.perceptions]),
+        "reasked.csv": (answer_cols, [answer_row(e) for p in check.perceptions for e in p.reasked]),
         "summary.csv": (["name", "intended_gender", "intended_origin", "model", "prompt_version", "answers",
-                         "missing", "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols, "gender_hedge", "origin_hedge",
+                         "missing", "reasks", "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols,
+                         "gender_hedge", "origin_hedge",
                          *scored_cols, "p_intended_gender", "p_intended_origin", "gender_threshold",
                          "origin_minimum", "gender_pass", "origin_pass", "pass"],
                         [[s.name, s.intended_gender, s.intended_origin, s.model, s.prompt_version, s.answers,
-                          s.missing, s.gender_all_hedge, s.origin_all_hedge, *_dist(s.gender_p, GENDER_OPTIONS),
+                          s.missing, s.reasks, s.gender_all_hedge, s.origin_all_hedge,
+                          *_dist(s.gender_p, GENDER_OPTIONS),
                           *_dist(s.origin_p, ORIGIN_KEYS), _p(s.gender_hedge), _p(s.origin_hedge),
                           *_dist(s.gender_scored, SCORED_GENDERS), *_dist(s.origin_scored, SCORED_ORIGINS),
                           _p(s.p_gender), _p(s.p_origin), r.gender_threshold, r.origin_minimum, s.gender_passed,
@@ -666,9 +732,11 @@ def _probability_tables(check: ProbabilityCheck) -> dict[str, tuple[list[str], l
 def write_outputs(check: NameCheck | ProbabilityCheck, out_dir: str | Path) -> list[Path]:
     """perceptions.csv (one row per answer), summary.csv (per name x model), cells.csv (per gender x origin).
 
-    Probability mode: the normalised probabilities per answer with their raw sums, hedge shares and scored
-    (hedges-out) distributions; the same means per name x model with the pass flags; and the mean scored
-    p(intended) and hedge shares per cell. Blank where there is nothing to show (a missing or all-hedge answer).
+    Probability mode: the normalised probabilities per answer with its attempt, raw sums, hedge shares and scored
+    (hedges-out) distributions; the same means per name x model with its re-asks and the pass flags; and the mean
+    scored p(intended) and hedge shares per cell. Blank where there is nothing to show (a missing or all-hedge
+    answer). It also writes reasked.csv: one row, with the columns of perceptions.csv, per all-hedge answer that
+    was asked again (only its header when there was none), so the two files hold every valid answer received.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -709,6 +777,23 @@ ORIGIN_SHORT = {"portuguese": "pt", "brazilian": "br", "palop": "palop", "easter
 SUM_TOLERANCE = 0.01  # a raw sum further than this from 1 is reported as normalised
 
 
+def _format_reasks(perceptions: list[Perception]) -> str:
+    """Per model: the all-hedge answers that were asked again, for how many answers, and how many of those ended
+    all hedge on a question all the same."""
+    counts: dict[str, list[int]] = {}
+    for p in perceptions:
+        n = counts.setdefault(p.model, [0, 0, 0])
+        n[0] += len(p.reasked)
+        n[1] += bool(p.reasked)
+        n[2] += bool(p.reasked and p.all_hedge)
+    if not any(n[0] for n in counts.values()):
+        return "re-asks of all-hedge answers: none"
+    return ("re-asks of all-hedge answers (the same question asked again as a new attempt; the answers they "
+            "replaced are in reasked.csv): "
+            + "; ".join(f"{model}: {n[0]} for {n[1]} answers, {n[2]} still all hedge" if n[0] else f"{model}: 0"
+                        for model, n in counts.items()))
+
+
 def _format_probability_check(check: ProbabilityCheck) -> str:
     lines = [f"gender x origin cells, mean p(intended) with the hedges left out, and the mean hedge shares "
              f"(p(unsure), p(Other or unsure)), over names and models (a name passes when, for every model, "
@@ -722,6 +807,7 @@ def _format_probability_check(check: ProbabilityCheck) -> str:
     if off:
         lines.append(f"\n{len(off)} answers had probabilities not summing to 1 (normalised; raw sums in "
                      "perceptions.csv)")
+    lines.append("\n" + _format_reasks(check.perceptions))
     failing = [s for s in check.scores if not s.passed]
     total = len(dict.fromkeys(s.name for s in check.scores))
     if not failing:
@@ -750,7 +836,8 @@ def _format_probability_check(check: ProbabilityCheck) -> str:
     hedged = list(dict.fromkeys(s.name for s in failing if s.gender_all_hedge or s.origin_all_hedge))
     if hedged:
         lines.append(f"\n{len(hedged)} names have answers with everything on a hedge option (missing for that "
-                     "question; valid and cached, so a rerun replays them)")
+                     "question; valid and cached, so a rerun replays them, and asks them again only with a higher "
+                     "--reasks)")
     lines += _errors(check.perceptions)
     return "\n".join(lines)
 
