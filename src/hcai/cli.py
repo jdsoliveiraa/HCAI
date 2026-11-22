@@ -35,9 +35,9 @@ from hcai.corpus import (
 )
 from hcai.llm import CachedClient, FakeLLMClient, LLMClient, LLMRequest, MeteredClient, ProviderExhausted
 from hcai.namecheck import (
-    DEFAULT_MODE, DEFAULT_ORIGIN_MINIMUM, DEFAULT_THRESHOLD, MODES, PROBABILITY, NameCheck, NameCheckAborted,
-    ProbabilityCheck, ProbabilityRule, ValidAnswersOnly, format_check, perceive, score, score_probabilities,
-    write_outputs,
+    DEFAULT_MODE, DEFAULT_ORIGIN_MINIMUM, DEFAULT_REASKS, DEFAULT_THRESHOLD, MODES, PROBABILITY, NameCheck,
+    NameCheckAborted, ProbabilityCheck, ProbabilityRule, ValidAnswersOnly, format_check, perceive, score,
+    score_probabilities, write_outputs,
 )
 from hcai.names import NameBankError
 from hcai.oversight import uses_rubric
@@ -201,27 +201,32 @@ def check_command(config: str | Path, client: LLMClient, listings: dict[str, lis
 
 def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path, cache_dir: str | Path,
                   repeats: int = 5, threshold: float = DEFAULT_THRESHOLD, temperature: float | None = None,
-                  mode: str = DEFAULT_MODE, origin_minimum: float = DEFAULT_ORIGIN_MINIMUM) -> tuple[str, bool]:
+                  mode: str = DEFAULT_MODE, origin_minimum: float = DEFAULT_ORIGIN_MINIMUM,
+                  reasks: int = DEFAULT_REASKS) -> tuple[str, bool]:
     """Run the name manipulation check through `client` (cached in `cache_dir`); (report, every name passes).
 
     `mode` is "probability" (ADR 0011: `threshold` is the minimum mean p(intended gender), `origin_minimum` the
-    minimum mean p(intended origin) of a non-Portuguese name) or "choice" (ADR 0009: `threshold` is the minimum
-    gender and origin hit rate)."""
+    minimum mean p(intended origin) of a non-Portuguese name, and an all-hedge answer is asked again up to
+    `reasks` times) or "choice" (ADR 0009: `threshold` is the minimum gender and origin hit rate; no re-asks).
+    The last line counts every ask: the answers and the re-asks are the LLM calls plus those from the cache."""
     design = load_design(config)
     rule = ProbabilityRule(threshold, origin_minimum) if mode == PROBABILITY else None  # validated before any call
     metered = MeteredClient(client)
     # a missing answer (unparseable, or outside the options) is not cached, so a rerun asks it again
     cached = CachedClient(ValidAnswersOnly(metered, mode), cache_dir, cache_unparseable=False)
-    perceptions = perceive(design, cached, repeats=repeats, temperature=temperature, mode=mode)
-    check: NameCheck | ProbabilityCheck = (score_probabilities(perceptions, rule) if rule is not None
-                                           else score(perceptions, threshold))
+    perceptions = perceive(design, cached, repeats=repeats, temperature=temperature, mode=mode, reasks=reasks)
+    check: NameCheck | ProbabilityCheck = (score_probabilities(perceptions, rule, max_reasks=reasks)
+                                           if rule is not None else score(perceptions, threshold))
     paths = write_outputs(check, out_dir)
     calls = sum(metered.calls.values())
     missing = sum(p.missing for p in check.perceptions)
-    from_cache = sum(p.cached for p in check.perceptions)
+    reasked = [e for p in check.perceptions for e in p.reasked]  # the all-hedge answers that were asked again
+    from_cache = sum(p.cached for p in [*check.perceptions, *reasked])
+    asked = f"{len(check.perceptions)} answers ({missing} missing)"
+    if mode == PROBABILITY:
+        asked += f" and {len(reasked)} re-asks (up to {reasks} per all-hedge answer)"
     report = (format_check(check)
-              + f"\n\n{len(check.perceptions)} answers ({missing} missing), {calls} LLM calls, "
-              f"{from_cache} from cache -> " + ", ".join(str(p) for p in paths))
+              + f"\n\n{asked}, {calls} LLM calls, {from_cache} from cache -> " + ", ".join(str(p) for p in paths))
     return report, not check.failing
 
 
@@ -303,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="probability mode: minimum mean p(intended origin) of a non-Portuguese name, which must "
                             "also be the highest non-Portuguese origin, both scored without the hedge options "
                             f"(default {DEFAULT_ORIGIN_MINIMUM})")
+    names.add_argument("--reasks", type=int, default=DEFAULT_REASKS,
+                       help="probability mode: times an answer with everything on a hedge option (unsure, Other or "
+                            "unsure) is asked again as a new attempt before it stays missing; 0: never "
+                            f"(default {DEFAULT_REASKS})")
     names.add_argument("--temperature", type=float, default=None,
                        help="sampling temperature (default: the design's [design] temperature)")
     names.add_argument("--out", type=Path, default=Path("results/names"), help="output directory (default: results/names)")
@@ -391,8 +400,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "names":
-        if args.repeats < 1 or not 0.0 <= args.threshold <= 1.0 or not 0.0 <= args.origin_min <= 1.0:
-            print("error: --repeats must be >= 1 and --threshold and --origin-min between 0 and 1", file=sys.stderr)
+        if (args.repeats < 1 or args.reasks < 0 or not 0.0 <= args.threshold <= 1.0
+                or not 0.0 <= args.origin_min <= 1.0):
+            print("error: --repeats must be >= 1, --reasks >= 0 and --threshold and --origin-min between 0 and 1",
+                  file=sys.stderr)
             return 1
         cache = args.cache or Path(".cache/llm-fake" if args.fake_llm else ".cache/llm")
         try:
@@ -404,7 +415,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             report, all_pass = names_command(args.config, client, out_dir=args.out, cache_dir=cache,
                                              repeats=args.repeats, threshold=args.threshold,
                                              temperature=args.temperature, mode=args.mode,
-                                             origin_minimum=args.origin_min)
+                                             origin_minimum=args.origin_min, reasks=args.reasks)
         except (ValueError, NameCheckAborted) as e:  # a config error (e.g. an origin with no option), or a model
             # whose calls keep failing (e.g. a wrong model id): answers so far are cached, so a rerun resumes
             print(f"names: {e}", file=sys.stderr)
