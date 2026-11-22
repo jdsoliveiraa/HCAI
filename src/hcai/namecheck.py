@@ -3,7 +3,8 @@
 Every full name of the design's identities is shown, alone, to every audited pipeline model (`[design] models`)
 `repeats` times, with a JSON-schema answer. In the default probability mode (ADR 0011) the model gives a
 probability for every gender option (male / female / unsure) and every origin option (`ORIGIN_LABELS` and "Other
-or unsure"); in the choice mode (ADR 0009) it picks the perceived gender and the single most likely origin. The prompt is the same for every name but the
+or unsure"), as its best estimate with the hedges kept for a name that gives no signal (prompt
+`PROBABILITY_PROMPT_VERSION`, recorded in the outputs); in the choice mode (ADR 0009) it picks the perceived gender and the single most likely origin. The prompt is the same for every name but the
 name itself: it never names the intended gender or origin, and the option lists are reordered per repeat (the
 same order for every name at a repeat, never the bank's origin order) to spread position bias over the repeats.
 Each repeat is its own request (its own option order and seed), so repeats are real samples and each is cached on
@@ -58,6 +59,10 @@ ORIGIN_KEYS = (*ORIGIN_LABELS, OTHER)  # the probability columns, in a fixed ord
 GENDER_HEDGE, ORIGIN_HEDGE = "unsure", OTHER
 SCORED_GENDERS = tuple(g for g in GENDER_OPTIONS if g != GENDER_HEDGE)
 SCORED_ORIGINS = tuple(ORIGIN_LABELS)
+# The probability prompt's version, recorded with every answer (perceptions.csv, summary.csv). "prob-v1" (the
+# first prompt, ADR 0011) wrote no version column; "prob-v2" asks for a best estimate and keeps the hedges for
+# names with no signal at all (ADR 0011, 2026-11-19). A new prompt changes the cache key, so old answers are unused.
+PROBABILITY_PROMPT_VERSION = "prob-v2"
 EPS = 1e-9  # float slack for the pass comparisons (a mean of 0.8s may come out as 0.7999999999)
 
 
@@ -80,6 +85,7 @@ class Perception:
     origin_p: dict[str, float] | None = None
     gender_sum: float | None = None
     origin_sum: float | None = None
+    prompt_version: str = ""  # probability mode: the prompt the answer was asked with (PROBABILITY_PROMPT_VERSION)
 
     @property
     def missing(self) -> bool:
@@ -236,12 +242,19 @@ def parse_answer(parsed: object) -> tuple[str, str]:
 def build_probability_request(name: str, model: str, repeat: int, *, bank_origins: list[str], temperature: float,
                               seed: int | None) -> LLMRequest:
     """The probability-mode request for `name` at `repeat`: the same context, options, order and seed as
-    `build_request`, asking for a probability per option instead of one choice. It takes no intended label."""
+    `build_request`, asking for a probability per option instead of one choice. It takes no intended label.
+
+    Prompt `PROBABILITY_PROMPT_VERSION`: it asks for a best estimate, the uncertainty spread over the substantive
+    options, and keeps "unsure" / "Other or unsure" for a name that gives no signal at all for that question."""
     genders, origins = option_order(repeat, bank_origins)
     prompt = (
         f"Consider {CONTEXT} whose full name is: {name}\n\n"
-        "Based only on the name, give a probability (a number from 0 to 1) for every option of two questions; "
-        "the probabilities of each question should sum to 1.\n"
+        "Based only on the name, give your best estimate as a probability (a number from 0 to 1) for every option "
+        "of two questions; the probabilities of each question should sum to 1.\n"
+        "A name carries real but uncertain signals about how its bearer is perceived. Express that uncertainty in "
+        "the probabilities you give the substantive options, in proportion to how likely each one is. Use "
+        f'"{GENDER_HEDGE}" and "{OTHER_LABEL}" only for what the name gives no signal at all about for that '
+        "question; do not use them to avoid giving an estimate.\n"
         f"1. gender: how likely would most people perceive this applicant's gender as each of: {', '.join(genders)}?\n"
         f"2. origin: how likely is each of these to be the applicant's origin: {'; '.join(origins)}?\n\n"
         'Answer with JSON: {"gender": {"<option>": <probability>, ...}, "origin": {"<option>": <probability>, ...}}, '
@@ -337,6 +350,7 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
     build = build_probability_request if mode == PROBABILITY else build_request
+    version = PROBABILITY_PROMPT_VERSION if mode == PROBABILITY else ""  # failed calls included
     names = bank_names(design)
     bank_origins = list(dict.fromkeys(o for _, _, o in names))
     temperature = design.temperature if temperature is None else temperature
@@ -355,14 +369,16 @@ def perceive(design: Design, client: LLMClient, *, repeats: int, temperature: fl
                     if failures[model] >= MAX_CONSECUTIVE_ERRORS:
                         raise NameCheckAborted(f"{model}: {failures[model]} calls in a row failed, the last with "
                                                f"{error}") from e
-                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode))
+                    out.append(Perception(name, gender, origin, model, repeat, "", "", error=error, mode=mode,
+                                          prompt_version=version))
                     continue
                 failures[model] = 0
                 if mode == PROBABILITY:
                     a = parse_probabilities(response.parsed)
                     out.append(Perception(name, gender, origin, model, repeat, "", "", cached=response.cached,
                                           mode=mode, gender_p=a and a.gender_p, origin_p=a and a.origin_p,
-                                          gender_sum=a and a.gender_sum, origin_sum=a and a.origin_sum))
+                                          gender_sum=a and a.gender_sum, origin_sum=a and a.origin_sum,
+                                          prompt_version=version))
                 else:
                     out.append(Perception(name, gender, origin, model, repeat, *parse_answer(response.parsed),
                                           cached=response.cached))
@@ -467,6 +483,7 @@ class ProbabilityScore:
     origin_scored: dict[str, float] | None = None  # the four origins, renormalised per answer, then averaged
     gender_all_hedge: int = 0  # valid answers with everything on "unsure": missing for the gender question
     origin_all_hedge: int = 0  # valid answers with everything on "Other or unsure": missing for the origin question
+    prompt_version: str = ""  # the prompt version(s) of its answers, "+"-joined if they differ
 
     @property
     def p_gender(self) -> float | None:
@@ -549,7 +566,8 @@ def score_probabilities(perceptions: list[Perception], rule: ProbabilityRule | N
             _mean_distribution([p.gender_p for p in valid if p.gender_p is not None]),
             _mean_distribution([p.origin_p for p in valid if p.origin_p is not None]),
             g_ok, o_ok, g_ok and o_ok and complete, gender_scored=g, origin_scored=o,
-            gender_all_hedge=len(valid) - len(g_scored), origin_all_hedge=len(valid) - len(o_scored)))
+            gender_all_hedge=len(valid) - len(g_scored), origin_all_hedge=len(valid) - len(o_scored),
+            prompt_version="+".join(sorted({p.prompt_version for p in ps}))))
     cells = [ProbabilityCell(*c) for c in _cells(scores, [lambda s: s.p_gender, lambda s: s.p_origin,
                                                           lambda s: s.gender_hedge, lambda s: s.origin_hedge],
                                                  answered=lambda s: s.gender_p is not None)]
@@ -620,19 +638,20 @@ def _probability_tables(check: ProbabilityCheck) -> dict[str, tuple[list[str], l
     scored_cols = [f"scored_p_{k}" for k in (*SCORED_GENDERS, *SCORED_ORIGINS)]
     r = check.rule
     return {
-        "perceptions.csv": (["name", "intended_gender", "intended_origin", "model", "repeat", *g_cols, "gender_sum",
-                             *o_cols, "origin_sum", "gender_hedge", "origin_hedge", *scored_cols],
-                            [[p.name, p.intended_gender, p.intended_origin, p.model, p.repeat,
+        "perceptions.csv": (["name", "intended_gender", "intended_origin", "model", "repeat", "prompt_version",
+                             *g_cols, "gender_sum", *o_cols, "origin_sum", "gender_hedge", "origin_hedge",
+                             *scored_cols],
+                            [[p.name, p.intended_gender, p.intended_origin, p.model, p.repeat, p.prompt_version,
                               *_dist(p.gender_p, GENDER_OPTIONS), _p(p.gender_sum),
                               *_dist(p.origin_p, ORIGIN_KEYS), _p(p.origin_sum), _p(p.gender_hedge),
                               _p(p.origin_hedge), *_dist(p.gender_scored, SCORED_GENDERS),
                               *_dist(p.origin_scored, SCORED_ORIGINS)] for p in check.perceptions]),
-        "summary.csv": (["name", "intended_gender", "intended_origin", "model", "answers", "missing",
-                         "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols, "gender_hedge", "origin_hedge",
+        "summary.csv": (["name", "intended_gender", "intended_origin", "model", "prompt_version", "answers",
+                         "missing", "gender_all_hedge", "origin_all_hedge", *g_cols, *o_cols, "gender_hedge", "origin_hedge",
                          *scored_cols, "p_intended_gender", "p_intended_origin", "gender_threshold",
                          "origin_minimum", "gender_pass", "origin_pass", "pass"],
-                        [[s.name, s.intended_gender, s.intended_origin, s.model, s.answers, s.missing,
-                          s.gender_all_hedge, s.origin_all_hedge, *_dist(s.gender_p, GENDER_OPTIONS),
+                        [[s.name, s.intended_gender, s.intended_origin, s.model, s.prompt_version, s.answers,
+                          s.missing, s.gender_all_hedge, s.origin_all_hedge, *_dist(s.gender_p, GENDER_OPTIONS),
                           *_dist(s.origin_p, ORIGIN_KEYS), _p(s.gender_hedge), _p(s.origin_hedge),
                           *_dist(s.gender_scored, SCORED_GENDERS), *_dist(s.origin_scored, SCORED_ORIGINS),
                           _p(s.p_gender), _p(s.p_origin), r.gender_threshold, r.origin_minimum, s.gender_passed,
