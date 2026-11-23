@@ -84,6 +84,10 @@ notebook = "notebooks/analysis.ipynb"
 report = "report/report.pdf"
 results = "results"
 review = "docs/pilot/cv-realism-review"
+# The committed record of the name check (`hcai names`): the CSV files copied from results/names. The site reads
+# it from here, since results/ is gitignored and the Pages build has only the repository; results/names is read
+# only when this directory has no name check tables.
+names = "docs/pilot/names"
 repo = "jdsoliveiraa/HCAI"
 
 # Which provider serves each model (pipeline models, generator, judge): "opencode-go" (the OpenCode Go
