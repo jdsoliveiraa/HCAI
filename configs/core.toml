@@ -67,8 +67,22 @@ repeats = 1
 rate_limit_backoff = 30
 rate_limit_max_backoff = 900
 rate_limit_max_wait = 21600
-# HTTP read timeout in seconds: the Blinder's long answers (up to ~11k tokens on PT CVs) timed out at the old 120 s.
-request_timeout = 600
+# HTTP read timeout in seconds. 120 s until the pilot, then 600 s (ADR 0005), now 1200 s for the full run (#12):
+# qwen3.8-flash as the PT Blinder writes up to ~16k completion tokens per call (pilot: median 7,117, max 11,218),
+# more than 600 s leaves room for. A timed-out call is not cached, so every rerun would wait for it again.
+request_timeout = 1200
+# Run guards (ADR 0005, amendment of 2026-11-23); these are the defaults.
+# The first fresh answer billed outside these sources (OpenCode Go's usage.opencode.billing_source, e.g. "balance"
+# once Extra Usage kicks in) is cached, then the run stops (progress.json, exit 3). [] checks nothing.
+allowed_billing = ["go"]
+# Failed calls in a row on one model (a call counts once however often it is retried; any answer resets) that stop
+# the run (exit 3).
+max_consecutive_failures = 10
+# Waits before repeating a call that failed with HTTP 5xx, a timeout or a dropped connection (instead of
+# retry_backoff); such a call is repeated up to max(retries, 3) times, so an outage of about 10 min is ridden out.
+transient_backoff = [30, 120, 480]
+# Warn when more than this share of the results rows is missing (#12 target: under 2%).
+missing_target = 0.02
 
 # Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
 [pilot]

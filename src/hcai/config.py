@@ -84,12 +84,39 @@ class RunSettings:
     # rows are missing). Not part of a request: changing it changes no cache key. The default leaves room for
     # the longest answers of the pilot (the Blinder's).
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    # Billing sources a call may be paid from (OpenCode Go's `usage.opencode.billing_source`). The first fresh
+    # answer billed elsewhere (e.g. "balance", the pay-as-you-go balance once Extra Usage kicks in) is cached,
+    # then the run stops cleanly (exit 3). Answers that name no billing source (e.g. OpenRouter) are never
+    # checked; an empty list checks nothing.
+    allowed_billing: tuple[str, ...] = ("go",)
+    # Failed calls in a row on one model (a call counts once however often it is retried; any provider answer resets
+    # it) that stop the run cleanly (exit 3, rerun to resume) instead of recording row after row as missing. 0: never.
+    max_consecutive_failures: int = 10
+    # Seconds before each repeat of a call that failed transiently (HTTP 5xx, timeout, dropped connection), in
+    # place of `retry_backoff`; such a call is repeated up to max(retries, len(transient_backoff)) times.
+    transient_backoff: tuple[float, ...] = (30.0, 120.0, 480.0)
+    # Share of missing rows above which the run warns (stderr and `missing.above_target` in run_summary.json).
+    missing_target: float = 0.02
 
     def __post_init__(self) -> None:
         try:
             http_timeout(self.request_timeout)
         except ValueError as e:
             raise ValueError(f"[run] {e}") from None
+        if isinstance(self.allowed_billing, str) or not all(isinstance(b, str) for b in self.allowed_billing):
+            raise ValueError(f"[run] allowed_billing must be a list of billing sources, not {self.allowed_billing!r}")
+        object.__setattr__(self, "allowed_billing", tuple(self.allowed_billing))
+        n = self.max_consecutive_failures
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise ValueError(f"[run] max_consecutive_failures must be a whole number >= 0, not {n!r}")
+        b = self.transient_backoff
+        if (isinstance(b, (str, bytes)) or not all(
+                isinstance(x, (int, float)) and not isinstance(x, bool) and x >= 0 for x in b)):
+            raise ValueError(f"[run] transient_backoff must be a list of seconds >= 0, not {b!r}")
+        object.__setattr__(self, "transient_backoff", tuple(float(x) for x in b))
+        t = self.missing_target
+        if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 <= t <= 1:
+            raise ValueError(f"[run] missing_target must be a share between 0 and 1, not {t!r}")
 
 
 @dataclass(frozen=True)

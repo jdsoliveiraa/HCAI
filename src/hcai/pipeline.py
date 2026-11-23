@@ -111,11 +111,21 @@ class Retry:
     A malformed answer (unparseable, or failing the agent's validation) is asked again with a note naming
     the problem appended to the prompt; the note gives the retry its own cache key, so a rerun replays the
     same attempts. A call that raises is repeated as is, after `backoff` seconds (doubled each time).
+
+    A transient failure (`ProviderError.transient`: HTTP 5xx, a timeout, a dropped connection) waits
+    `transient_backoff[k]` seconds instead before its (k+1)-th repeat (the last value once they run out), and
+    may be repeated up to `max(retries, len(transient_backoff))` times, so a short outage is ridden out. The
+    requests are the same either way: only the waits and the number of repeats of a raised call differ.
     """
 
     retries: int = 2
     backoff: float = 0.0
     sleep: Callable[[float], None] = time.sleep
+    transient_backoff: tuple[float, ...] = ()
+
+
+def _is_transient(error: BaseException) -> bool:
+    return bool(getattr(error, "transient", False))
 
 
 class ClientLLM(BaseLLM):
@@ -152,18 +162,28 @@ class ClientLLM(BaseLLM):
             messages = [{"role": "user", "content": messages}]
         base = [{"role": str(m["role"]), "content": str(m["content"])} for m in messages]
         note = ""
-        failures = 0
-        for attempt in range(1, self._retry.retries + 2):
+        failures = 0  # raised calls so far (the doubling `backoff`)
+        transient = 0  # transient ones among them (`transient_backoff`)
+        schedule = self._retry.transient_backoff
+        attempt = 0
+        while True:
+            attempt += 1
             request = self._request(base, note)
             self._attempts += 1
             try:
                 response = self._client.complete(request)
             except Exception as e:  # noqa: BLE001 - provider/network failure: retried, then the crew fails
                 self._last_error = f"call failed: {type(e).__name__}: {e}"
-                if attempt > self._retry.retries:
-                    raise
-                if self._retry.backoff:
-                    self._retry.sleep(self._retry.backoff * 2 ** failures)
+                if schedule and _is_transient(e):
+                    if attempt > max(self._retry.retries, len(schedule)):
+                        raise
+                    self._retry.sleep(schedule[min(transient, len(schedule) - 1)])
+                    transient += 1
+                else:
+                    if attempt > self._retry.retries:
+                        raise
+                    if self._retry.backoff:
+                        self._retry.sleep(self._retry.backoff * 2 ** failures)
                 failures += 1
                 continue
             self._responses.append(response)
@@ -171,7 +191,7 @@ class ClientLLM(BaseLLM):
                 self._last_error = self._validate(response.parsed)
             except Exception as e:  # noqa: BLE001 - an answer the validator chokes on is malformed
                 self._last_error = f"invalid output: {type(e).__name__}: {e}"
-            if not self._last_error:
+            if not self._last_error or attempt > self._retry.retries:
                 break
             note = (f"\n\n(Attempt {attempt + 1}. The previous answer was rejected: {self._last_error}. "
                     "Respond only with JSON matching the required schema.)")

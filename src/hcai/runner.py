@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import sys
+import time
 from datetime import UTC, datetime
 from dataclasses import asdict, dataclass, field, fields, replace
 from itertools import zip_longest
@@ -15,7 +17,10 @@ from typing import Any
 
 from hcai.blinding import BLINDING_CONDITIONS, blind_variant, proxy_leak_summary, proxy_leaks
 from hcai.config import Design
-from hcai.llm import CachedClient, LLMClient, MeteredClient, ProviderExhausted
+from hcai.llm import (
+    BillingGuard, BillingStop, CachedClient, FailureGuard, LLMClient, MeteredClient, ProviderExhausted,
+    TooManyFailures,
+)
 from hcai.oversight import escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
@@ -115,7 +120,8 @@ class Run:
     proxy_leaks: list[dict[str, Any]] = field(default_factory=list)  # C1: what survives blinding (summary)
 
 
-def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path) -> Run:
+def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path,
+            log: Callable[[str], None] | None = None) -> Run:
     """Run the design and write its outputs to `out_dir`.
 
     `results.csv` is the results table and `run_summary.json` its token, call and cost totals. With a
@@ -124,26 +130,41 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     survived blinding per blinded CV and `proxy_leaks.json` its summary per model x condition x language.
     With a rubric condition (C2, C3), `review_queue.csv` holds the escalated Evaluator rows, counted under
     `oversight` in the totals.
+
+    The tables of paid answers (`results.csv`, `review_queue.csv`, `repeats.csv`) are written as soon as the
+    calls are done, before any summary is computed, so a failing summary step leaves them on disk. After each
+    role x language x condition x model block, one progress line goes to `log` (stderr by default).
     """
     out_dir = Path(out_dir)
+    log = log or _stderr
     meter = MeteredClient(client)
     progress = out_dir / "progress.json"
+    started = time.monotonic()
+
+    def on_block(i: int, n: int, label: str, rows: list[ResultRow], repeats: list[ResultRow]) -> None:
+        log(_progress_line(i, n, label, rows, repeats, meter, time.monotonic() - started))
+
     try:
-        rows, repeats = _run(design, meter, cache_dir)
+        rows, repeats = _run(design, meter, cache_dir, on_block=on_block)
     except ProviderExhausted as e:
         _record_stop(progress, e, meter, cache_dir)
         raise
     progress.unlink(missing_ok=True)
-    totals = run_totals(rows, repeats, meter, design)
-    if design.pilot_of is not None:
-        totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
-    report = stability_report(rows, repeats)
     write_results(rows, out_dir / "results.csv")
     if any(uses_rubric(c) for c in design.conditions):
         write_results([r for r in rows if r.escalated], out_dir / "review_queue.csv")
-    (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
     if repeats:
         write_results(repeats, out_dir / "repeats.csv")
+    totals = run_totals(rows, repeats, meter, design)
+    if design.pilot_of is not None:
+        totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
+    (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
+    if totals["missing"]["above_target"]:
+        log(f"WARNING: {totals['missing']['missing']} of {totals['missing']['rows']} rows are missing "
+            f"({100 * totals['missing']['share']:.2f}%), above [run] missing_target = "
+            f"{100 * totals['missing']['target']:.2f}%; failed calls are not cached, so a rerun asks them again")
+    report = stability_report(rows, repeats)
+    if repeats:
         (out_dir / "stability.json").write_text(json.dumps(report, indent=2) + "\n")
     leaks = proxy_leaks(design, rows)
     leak_summary = proxy_leak_summary(leaks)
@@ -153,16 +174,55 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     return Run(rows=rows, repeats=repeats, totals=totals, stability=report, proxy_leaks=leak_summary)
 
 
+def _stderr(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def _sum(by_model: dict[str, float]) -> float:
+    return round(sum(by_model.values()), 6)
+
+
+def _sources(meter: MeteredClient) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for by_source in meter.billing.values():
+        for source, n in by_source.items():
+            out[source] = out.get(source, 0) + n
+    return dict(sorted(out.items()))
+
+
+def _progress_line(i: int, n: int, label: str, rows: list[ResultRow], repeats: list[ResultRow],
+                   meter: MeteredClient, elapsed: float) -> str:
+    """One stderr line after a role x language x condition x model block: where the run is and what it spent."""
+    calls = sum(meter.calls.values())
+    attempts = sum(r.attempts for r in rows + repeats)
+    missing = sum(r.status == "missing" for r in rows)
+    sources = ", ".join(f"{s} x{k}" for s, k in _sources(meter).items()) or "none"
+    h, rest = divmod(int(elapsed), 3600)
+    return (f"[block {i}/{n}] {label}: {calls} calls, {attempts - calls} cache hits, {missing} of {len(rows)} rows "
+            f"missing so far; allowance ${_sum(meter.allowance):.4f}, balance ${_sum(meter.balance):.4f}, "
+            f"billing {sources}; elapsed {h}:{rest // 60:02d}:{rest % 60:02d}")
+
+
 def _record_stop(path: Path, error: ProviderExhausted, meter: MeteredClient, cache_dir: str | Path) -> None:
     """Write `progress.json` for a run the provider stopped: what it did before stopping and how to resume.
 
     No results table is written for a stopped run; every call it completed is in the cache, so rerunning the
-    same command replays them for free and carries on from the first call not yet made.
+    same command replays them for free and carries on from the first call not yet made. `stop` says what
+    stopped it: "limit" (a rate or usage limit, no credits, a refused key), "billing" (a call billed outside
+    `[run] allowed_billing`) or "failures" (`[run] max_consecutive_failures` provider errors in a row).
     """
+    extra: dict[str, Any] = {}
+    if isinstance(error, BillingStop):
+        extra = dict(model=error.model, billing_source=error.billing_source)
+    elif isinstance(error, TooManyFailures):
+        extra = dict(model=error.model, failures_in_a_row=error.failures)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(dict(
-        status="stopped", reason=str(error), stopped_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        calls_this_run=dict(meter.calls), cache_dir=str(cache_dir),
+        status="stopped", stop=error.kind, **extra, reason=str(error),
+        stopped_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        calls_this_run=dict(meter.calls), billing_sources_this_run=_sources(meter),
+        allowance_spent=_sum(meter.allowance), balance_spent=_sum(meter.balance),
+        failed_calls=dict(meter.failed), timed_out_calls=dict(meter.timed_out), cache_dir=str(cache_dir),
         resume="rerun the same command: completed calls are replayed from the cache, none is repeated",
     ), indent=2) + "\n")
 
@@ -280,6 +340,12 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
       `usage.opencode` block (another provider, older cache entries) add nothing to these.
     - `missing_session_errors`: calls the provider refused for a missing or rejected session header (HTTP 400
       MissingSessionID; a warning is printed the first time). Their rows are missing like any failed call.
+    - `failed_calls`, `timed_out_calls`: this run's calls that raised a provider error, and those among them that
+      got no answer within `[run] request_timeout`.
+    - `allowed_billing` (with the design): the billing sources calls may be paid from; `not_allowed_billing_calls`
+      counts this run's calls billed elsewhere (the one that stopped a run is in its `progress.json` instead).
+    - `missing`: the share of missing rows (of those not `rejected`) overall and per model x condition x language (`by_cell`), the
+      `target` (`[run] missing_target`) and whether the overall share is `above_target`.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
     - `oversight` (rubric conditions only): per condition and model, the Evaluator decisions (every CV not
@@ -312,7 +378,12 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
                     balance_spent=round(sum(meter.balance.get(m, 0.0) for m in models), 6),
                     billing_sources=sources,
                     not_go_calls=sum(n for s, n in sources.items() if s != "go"),
-                    missing_session_errors=sum(meter.missing_session.get(m, 0) for m in models))
+                    not_allowed_billing_calls=sum(n for s, n in sources.items() if allowed and s not in allowed),
+                    missing_session_errors=sum(meter.missing_session.get(m, 0) for m in models),
+                    failed_calls=sum(meter.failed.get(m, 0) for m in models),
+                    timed_out_calls=sum(meter.timed_out.get(m, 0) for m in models))
+
+    allowed = design.run.allowed_billing if design is not None else ()
 
     status: dict[str, int] = {}
     for r in rows:
@@ -326,14 +397,36 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
         if design is not None:
             provider = design.provider_for(m)
             by_model[m].update(provider=provider.name, billing=provider.billing)
-    totals = dict(
+    totals: dict[str, Any] = dict(
         rows=len(rows), status=status, **tally(every), **spent(models, every), by_model=by_model,
         by_agent={a: tally([r for r in every if r.agent == a]) for a in dict.fromkeys(r.agent for r in every)},
         repeat_sample=tally(repeats),
     )
+    if design is not None:
+        totals["allowed_billing"] = list(allowed)
+    totals["missing"] = missing_counts(rows, design.run.missing_target if design is not None else 0.02)
     if any(r.escalated is not None for r in rows):
         totals["oversight"] = oversight_counts(rows)
     return totals
+
+
+def missing_counts(rows: list[ResultRow], target: float) -> dict[str, Any]:
+    """The missing rows of the results table: overall and per model x condition x language ("model/C0/en").
+
+    `rows` counts the rows due an answer (all but `rejected`, the CVs screened out upstream), and `share` is
+    `missing / rows`.
+    """
+    def share(subset: list[ResultRow]) -> dict[str, Any]:
+        missing = sum(r.status == "missing" for r in subset)
+        due = sum(r.status != "rejected" for r in subset)  # screened-out rows were never due an answer
+        return dict(rows=due, missing=missing, share=round(missing / due, 6) if due else 0.0)
+
+    cells: dict[str, list[ResultRow]] = {}
+    for r in rows:
+        cells.setdefault(f"{r.model}/{r.condition}/{r.language}", []).append(r)
+    overall = share(rows)
+    return dict(**overall, target=target, above_target=overall["share"] > target,
+                by_cell={k: share(v) for k, v in cells.items()})
 
 
 def _billed_model(r: ResultRow) -> str:
@@ -363,12 +456,19 @@ def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> 
     return _run(replace(design, run=replace(design.run, repeat_fraction=0.0)), client, cache_dir)[0]
 
 
-def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list[ResultRow], list[ResultRow]]:
+def _run(design: Design, client: LLMClient, cache_dir: str | Path,
+         on_block: Callable[[int, int, str, list[ResultRow], list[ResultRow]], None] | None = None,
+         ) -> tuple[list[ResultRow], list[ResultRow]]:
     """Run the crew on every variant of the design: Screener and Evaluator per CV, then the Ranker per pool,
     plus the stability sample's repeats.
 
     All variants are rendered and pass the demographic-only diff check, and all job ads are read, before
     any LLM call: a bad template, variant, identity or missing file raises without spending anything.
+
+    Below the cache, `FailureGuard` stops the run after `[run] max_consecutive_failures` provider errors in a
+    row on one model; above it, `BillingGuard` stops it on the first fresh answer billed outside
+    `[run] allowed_billing` (that answer cached first). `on_block(i, n, label, rows, repeats)` is called after
+    each role x language x condition x model block.
     """
     variants = build_variants(design)
     job_ads = {  # read up front, so a missing job ad also fails before any LLM call
@@ -385,12 +485,16 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
             criteria[key] = job_criteria(ad)
             if not criteria[key]:
                 raise ValueError(f"job ad {key} lists no criteria (bullet lines) for the rubric Evaluator")
-    cached = CachedClient(client, cache_dir)
+    guarded = FailureGuard(client, design.run.max_consecutive_failures)
+    allowed = design.run.allowed_billing
+    cached = BillingGuard(CachedClient(guarded, cache_dir), allowed)
     # Each repeat is the identical request, cached in its own namespace: paid once, replayed on reruns.
-    repeat_clients = tuple(CachedClient(client, Path(cache_dir) / "repeats" / f"r{k}")
+    repeat_clients = tuple(BillingGuard(CachedClient(guarded, Path(cache_dir) / "repeats" / f"r{k}"), allowed)
                            for k in range(1, design.run.repeats + 1)) if design.run.repeat_fraction > 0 else ()
     rows: list[ResultRow] = []
     repeats: list[ResultRow] = []
+    blocks = len(design.roles) * len(design.languages) * len(design.conditions) * len(design.models)
+    done = 0
     for role in design.roles:
         for language in design.languages:
             job_ad = job_ads[(role, language)]
@@ -427,6 +531,9 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path) -> tuple[list
                         if ctx.sampled(pool.id):
                             for k, again in enumerate(repeat_clients, start=1):
                                 repeats += [replace(r, repeat=k) for r in _rank_pool(ctx.using(again), pool, passed)]
+                    done += 1
+                    if on_block is not None:
+                        on_block(done, blocks, f"{role}/{language}/{condition}/{model}", rows, repeats)
     return rows, repeats
 
 
@@ -451,7 +558,8 @@ class _Context:
 
     @property
     def retry(self) -> Retry:
-        return Retry(retries=self.design.run.retries, backoff=self.design.run.retry_backoff)
+        run = self.design.run
+        return Retry(retries=run.retries, backoff=run.retry_backoff, transient_backoff=run.transient_backoff)
 
     def key(self, v: Variant, agent: str) -> dict[str, Any]:
         return dict(base_cv=v.base_cv, identity=v.identity, gender=v.gender, origin=v.origin,

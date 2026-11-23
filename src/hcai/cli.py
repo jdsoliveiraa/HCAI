@@ -68,6 +68,15 @@ def _go_billing_summary(totals: dict[str, Any]) -> str:
     return out
 
 
+def _missing_summary(missing: dict[str, Any]) -> str:
+    """Missing rows overall and per model x condition x language, flagged above `[run] missing_target`."""
+    out = (f"\nmissing: {missing['missing']} of {missing['rows']} rows ({100 * missing['share']:.2f}%; target "
+           f"under {100 * missing['target']:.2f}%)" + (" ABOVE TARGET" if missing["above_target"] else ""))
+    for cell, c in missing["by_cell"].items():
+        out += f"\n  {cell}: {c['missing']} of {c['rows']} ({100 * c['share']:.2f}%)"
+    return out
+
+
 def run_command(
     config: str | Path, out_dir: str | Path, cache_dir: str | Path, client: LLMClient, pilot: bool = False,
 ) -> str:
@@ -90,6 +99,10 @@ def run_command(
                     f"({totals['unpriced_attempts']} in all): no price reported"
                     + (f" ({', '.join(billing)})" if billing else ""))
     summary += f" -> {Path(out_dir) / 'results.csv'}, {Path(out_dir) / 'run_summary.json'}"
+    summary += _missing_summary(totals["missing"])
+    if totals.get("timed_out_calls"):
+        summary += (f"\n{totals['timed_out_calls']} calls this run timed out ([run] request_timeout = "
+                    f"{design.run.request_timeout:g}s)")
     summary += _go_billing_summary(totals)
     if "pilot" in totals:
         p = totals["pilot"]
