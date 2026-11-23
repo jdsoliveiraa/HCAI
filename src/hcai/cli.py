@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -40,6 +41,9 @@ from hcai.namecheck import (
     score_probabilities, write_outputs,
 )
 from hcai.names import NameBankError
+from hcai.runlog import LEVELS, configure, file_sha256
+
+logger = logging.getLogger("hcai.cli")
 from hcai.oversight import uses_rubric
 from hcai.providers import MissingKey, ProviderRouter, http_client, load_dotenv, provider_client
 from hcai.report import format_proxy_leaks, format_report, format_stability, score_gaps
@@ -83,7 +87,7 @@ def run_command(
     design = load_design(config)
     if pilot:
         design = pilot_design(design)
-    run = execute(design, client, out_dir=out_dir, cache_dir=cache_dir)
+    run = execute(design, client, out_dir=out_dir, cache_dir=cache_dir, config_path=config)
     totals = run.totals
     status = totals["status"]
     reference = design.identities[0].id
@@ -226,6 +230,9 @@ def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path,
     The last line counts every ask: the answers and the re-asks are the LLM calls plus those from the cache."""
     design = load_design(config)
     rule = ProbabilityRule(threshold, origin_minimum) if mode == PROBABILITY else None  # validated before any call
+    logger.info(f"names check starting: config {Path(config).resolve()} sha256 {file_sha256(config)}; models "
+                f"{design.models}; mode {mode}, {repeats} answers per name and model, threshold {threshold:g}; "
+                f"out {out_dir}, cache {cache_dir}")
     metered = MeteredClient(client)
     # a missing answer (unparseable, or outside the options) is not cached, so a rerun asks it again
     cached = CachedClient(ValidAnswersOnly(metered, mode), cache_dir, cache_unparseable=False)
@@ -242,6 +249,8 @@ def names_command(config: str | Path, client: LLMClient, *, out_dir: str | Path,
         asked += f" and {len(reasked)} re-asks (up to {reasks} per all-hedge answer)"
     report = (format_check(check)
               + f"\n\n{asked}, {calls} LLM calls, {from_cache} from cache -> " + ", ".join(str(p) for p in paths))
+    logger.info(f"names check done: {asked}, {calls} LLM calls, {from_cache} from cache; "
+                f"{len(check.failing)} failing names")
     return report, not check.failing
 
 
@@ -335,12 +344,31 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM request cache (default: .cache/llm, or .cache/llm-fake with --fake-llm)",
     )
     names.add_argument("--fake-llm", action="store_true", help="smoke test: a fake LLM perceives nothing, no API calls")
+    for logged in (run, gen, check, names):
+        logged.add_argument("--log-level", choices=LEVELS, default="INFO", type=str.upper,
+                            help="level of the log file (run: <out>/run.log, names: <out>/names.log; default INFO; "
+                                 "DEBUG adds cache hits); stderr shows INFO and up whatever this is")
+        logged.add_argument("--quiet", action="store_true", help="stderr shows warnings and errors only")
     site = sub.add_parser("site", help="write the static project site (realism review + project hub); no API calls")
     site.add_argument("config", type=Path)
     site.add_argument("--out", type=Path, default=Path("site"), help="output directory (default: site)")
     args = parser.parse_args(argv)
     load_dotenv(".env")  # keys from a gitignored .env in the working directory; the environment wins
 
+    with configure(_log_file(args), level=getattr(args, "log_level", "INFO"), quiet=getattr(args, "quiet", False)):
+        return _main(args)
+
+
+def _log_file(args: argparse.Namespace) -> Path | None:
+    """The log file of a command: `hcai run` appends `<out>/run.log`, `hcai names` `<out>/names.log`."""
+    if args.command == "run":
+        return (args.out or Path("results/pilot" if args.pilot else "results")) / "run.log"
+    if args.command == "names":
+        return args.out / "names.log"
+    return None
+
+
+def _main(args: argparse.Namespace) -> int:
     try:
         return _dispatch(args)
     except (MissingKey, FileNotFoundError, NameBankError) as e:
