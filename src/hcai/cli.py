@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     for logged in (run, gen, check, names):
         logged.add_argument("--log-level", choices=LEVELS, default="INFO", type=str.upper,
                             help="level of the log file (run: <out>/run.log, names: <out>/names.log; default INFO; "
-                                 "DEBUG adds cache hits); stderr shows INFO and up")
+                                 "DEBUG adds cache hits); stderr shows INFO and up whatever this is")
         logged.add_argument("--quiet", action="store_true", help="stderr shows warnings and errors only")
     site = sub.add_parser("site", help="write the static project site (realism review + project hub); no API calls")
     site.add_argument("config", type=Path)

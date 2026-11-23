@@ -26,6 +26,8 @@ import contextvars
 import hashlib
 import json
 import logging
+import os
+import re
 import subprocess
 import sys
 import threading
@@ -113,7 +115,7 @@ def configure(log_file: str | Path | None = None, *, level: str = "INFO", quiet:
     The handlers are removed and closed on exit, so a test (or a second command in one process) starts clean.
     """
     file_level = logging.getLevelNamesMapping()[level.upper()]
-    stderr_level = logging.WARNING if quiet else max(logging.INFO, file_level)
+    stderr_level = logging.WARNING if quiet else logging.INFO
     handlers: list[logging.Handler] = []
     err = _CurrentStderr()
     err.setLevel(stderr_level)
@@ -175,6 +177,17 @@ def _now_iso() -> str:
 def _short(text: str, limit: int = ERROR_CHARS) -> str:
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+# The start of a malformed answer that `ClientLLM.output` appends to a missing row's error (`...: 'answer'`),
+# possibly nested ("blinding failed: <error>: '...'"): cut before the error reaches the log.
+_ANSWER_SNIPPET = re.compile(r": (?:'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")$", re.S)
+
+
+def without_answer(error: str) -> str:
+    """`error` without the answer snippet a missing row's error ends with (answer text never reaches the log)."""
+    cut = _ANSWER_SNIPPET.sub("", error)
+    return cut if cut == error else cut + " (answer start in results.csv)"
 
 
 def _sha(text: str) -> str:
@@ -371,6 +384,7 @@ class RunLog:
         self._file: Any = None
         self._write_failed = False
         self._stop = threading.Event()
+        self._closed = False  # set on exit, under the lock: the heartbeat writes nothing after it
         self._thread: threading.Thread | None = None
         self.started = clock()
         self.started_at = datetime.now(UTC)
@@ -404,6 +418,8 @@ class RunLog:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        with self._lock:  # waits for a write in progress; a heartbeat still running after the join writes nothing
+            self._closed = True
         if _ACTIVE is self:
             _ACTIVE = None
         with self._lock:
@@ -420,7 +436,11 @@ class RunLog:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.out_dir / "calls.jsonl"
         # a run killed mid-line leaves a partial last line: start ours on a fresh one
-        partial = path.exists() and path.stat().st_size > 0 and not path.read_bytes()[-1:] == b"\n"
+        partial = False
+        if path.exists() and path.stat().st_size > 0:
+            with path.open("rb") as f:
+                f.seek(-1, os.SEEK_END)
+                partial = f.read(1) != b"\n"
         self._file = path.open("a", encoding="utf-8")
         if partial:
             self._file.write("\n")
@@ -494,7 +514,7 @@ class RunLog:
             if r.status == "missing":
                 self.missing += 1
                 where = r.pool or f"{r.base_cv}:{r.identity}"
-                key = (r.agent, where, _short(r.error, 200))
+                key = (r.agent, where, _short(without_answer(r.error), 200))
                 by[key] = by.get(key, 0) + 1
         for (agent, where, error), k in by.items():
             log.warning("missing: %s%s row%s of %s in block %s: %s", agent, f" x{k}" if k > 1 else "",
@@ -544,13 +564,19 @@ class RunLog:
 
     @_safe
     def write_progress(self, status: str, snapshot: dict[str, Any] | None = None, **extra: Any) -> None:
-        """Rewrite `progress.json` atomically (a reader never sees half a file)."""
+        """Rewrite `progress.json` atomically (a reader never sees half a file).
+
+        Once the run log is closed, a "running" write (a late heartbeat) is dropped, so it cannot overwrite the
+        stop or recreate the file a finished run deleted.
+        """
         if self.out_dir is None:
             return
         data = dict(status=status, **(snapshot or self.snapshot()), **extra)
         path = self.out_dir / "progress.json"
         with self._lock:
-            tmp = path.with_suffix(".json.tmp")
+            if self._closed and status == "running":
+                return
+            tmp = path.with_suffix(f".json.{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps(data, indent=2, default=str) + "\n")
             tmp.replace(path)
 

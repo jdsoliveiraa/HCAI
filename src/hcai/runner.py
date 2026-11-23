@@ -159,13 +159,17 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     snapshot: dict[str, Any] = {}
     rows: list[ResultRow] = []
     repeats: list[ResultRow] = []
+    _log_previous_stop(progress)
     with track:
         track.write_progress("running")
         try:
             rows, repeats = _run(design, meter, cache_dir, on_block=on_block, track=track)
         except BaseException as e:  # noqa: BLE001 - recorded below, after the heartbeat has stopped, then raised
             failure = e
-            snapshot = track.snapshot() or {}
+            try:
+                snapshot = track.snapshot()
+            except Exception:  # noqa: BLE001 - the stop must still be recorded
+                snapshot = {}
     if failure is not None:  # the heartbeat thread has stopped: nothing overwrites what is written here
         if isinstance(failure, ProviderExhausted):
             _record_stop(progress, failure, meter, cache_dir, snapshot)
@@ -174,8 +178,8 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
                          f"command to resume (progress in {progress})")
         else:
             what = "interrupted" if isinstance(failure, KeyboardInterrupt) else "crashed"
-            logger.error(f"run {track.run_id} {what}: {type(failure).__name__}: {failure}",
-                         exc_info=failure if isinstance(failure, Exception) else None)
+            logger.error(f"run {track.run_id} {what}: {type(failure).__name__}: {failure}")
+            logger.debug("traceback", exc_info=failure)  # the CLI prints it, or names the error, on stderr
             track.write_progress(what, snapshot, reason=f"{type(failure).__name__}: {failure}")
         raise failure
     progress.unlink(missing_ok=True)
@@ -202,6 +206,18 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
         _write_table([asdict(x) for x in leaks], out_dir / "proxy_leaks.csv")
         (out_dir / "proxy_leaks.json").write_text(json.dumps(leak_summary, indent=2) + "\n")
     return Run(rows=rows, repeats=repeats, totals=totals, stability=report, proxy_leaks=leak_summary)
+
+
+def _log_previous_stop(progress: Path) -> None:
+    """A rerun replaces the last run's `progress.json`: keep what stopped it in the log first."""
+    try:
+        old = json.loads(progress.read_text())
+    except (OSError, ValueError):
+        return
+    if isinstance(old, dict) and old.get("status") != "running":
+        logger.info(f"previous run {old.get('run_id', '?')} ended {old.get('status')}"
+                    f"{' (' + str(old['stop']) + ')' if old.get('stop') else ''}: {str(old.get('reason', ''))[:300]}; "
+                    f"{old.get('rows_done', '?')} of {old.get('rows_total', '?')} rows were done")
 
 
 def _stats(meter: MeteredClient) -> dict[str, Any]:

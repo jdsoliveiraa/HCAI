@@ -383,3 +383,91 @@ def test_the_guard_logs_through_the_logger_by_default(caplog):
 
     RateLimitGuard(Once(), sleep=lambda s: None, backoff=30).complete(REQ)
     assert any(r.name == "hcai.llm" and "waiting 30s, resuming at" in r.getMessage() for r in caplog.records)
+
+
+# --- review fixes -------------------------------------------------------------------------------------------
+
+
+def test_missing_row_warnings_leave_out_the_answer_text(tmp_path, caplog):
+    def respond(r):
+        if "blinded_cv" in r.response_schema["properties"]:
+            return "CONFIDENTIAL BLINDED CV of Ana"
+        if "passed" in r.response_schema["properties"]:
+            return "CONFIDENTIAL ANSWER about the candidate"
+        return _fake_response(r)
+
+    caplog.set_level(logging.INFO, logger="hcai")
+    execute(load_design(all_conditions(tmp_path)), FakeLLMClient(respond), out_dir=tmp_path / "o",
+            cache_dir=tmp_path / "c")
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "missing: screener" in logged and "missing: blinder" in logged
+    assert "CONFIDENTIAL" not in logged
+    assert "CONFIDENTIAL" not in (tmp_path / "o" / "calls.jsonl").read_text()
+    assert "CONFIDENTIAL" in (tmp_path / "o" / "results.csv").read_text()  # the results keep it, as before
+
+
+def test_without_answer_cuts_only_a_trailing_answer_snippet():
+    assert runlog.without_answer("unparseable Screener output: 'x: \\'y\\''") == (
+        "unparseable Screener output (answer start in results.csv)")
+    assert runlog.without_answer('blinding failed: empty blinded CV: "a\'b"').startswith("blinding failed: empty")
+    assert runlog.without_answer("billed to 'balance' and stopped") == "billed to 'balance' and stopped"
+
+
+def test_the_call_that_trips_the_billing_guard_keeps_its_billing_in_its_record(tmp_path):
+    with pytest.raises(BillingStop):
+        execute(load_design(config(tmp_path)), Billed("evaluator"), out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
+    last = records(tmp_path / "o")[-1]
+    assert last["outcome"] == "exhausted" and last["billing_source"] == "balance"
+    assert last["balance_cost"] == pytest.approx(0.0001) and last["prompt_tokens"] == 1
+
+
+def test_a_late_heartbeat_cannot_overwrite_the_stop_or_recreate_progress(tmp_path):
+    rl = runlog.RunLog(tmp_path, heartbeat_s=0)
+    with rl:
+        pass
+    (tmp_path / "progress.json").write_text('{"status": "stopped"}')
+    rl.heartbeat()
+    assert json.loads((tmp_path / "progress.json").read_text())["status"] == "stopped"
+    (tmp_path / "progress.json").unlink()
+    rl.heartbeat()
+    assert not (tmp_path / "progress.json").exists()
+
+
+def test_the_heartbeat_thread_fires_during_a_run(tmp_path, caplog):
+    import time as t
+
+    caplog.set_level(logging.INFO, logger="hcai")
+    path = with_run(config(tmp_path), "heartbeat_s = 0.05")
+
+    def slow(r):
+        t.sleep(0.1)
+        return _fake_response(r)
+
+    execute(load_design(path), FakeLLMClient(slow), out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
+    assert any(r.getMessage().startswith("heartbeat: rows") for r in caplog.records)
+
+
+def test_a_crash_or_interrupt_is_recorded_and_a_rerun_logs_it(tmp_path, caplog):
+    design = load_design(config(tmp_path))
+
+    class Boom(FakeLLMClient):
+        def complete(self, request):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        execute(design, Boom(_fake_response), out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
+    assert json.loads((tmp_path / "o" / "progress.json").read_text())["status"] == "interrupted"
+    assert any("interrupted" in r.getMessage() and r.levelno == logging.ERROR for r in caplog.records)
+
+    caplog.set_level(logging.INFO, logger="hcai")
+    execute(design, FakeLLMClient(_fake_response), out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
+    assert any(r.getMessage().startswith("previous run ") and "interrupted" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_log_level_never_hides_info_on_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("hcai.cli.make_client", lambda design, models: FakeLLMClient(_fake_response))
+    assert cli_run(tmp_path, config(tmp_path), "--log-level", "ERROR") == 0
+    assert "INFO" in capsys.readouterr().err
+    assert " INFO " not in (tmp_path / "out" / "run.log").read_text() if (tmp_path / "out" / "run.log").exists() else True

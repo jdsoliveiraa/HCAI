@@ -235,10 +235,11 @@ class BillingStop(ProviderExhausted):
 
     kind = "billing"
 
-    def __init__(self, message: str, *, model: str, billing_source: str):
+    def __init__(self, message: str, *, model: str, billing_source: str, usage: Usage | None = None):
         super().__init__(message)
         self.model = model
         self.billing_source = billing_source
+        self.usage = usage  # the usage of the call billed outside allowed_billing (its record in calls.jsonl)
 
 
 class TooManyFailures(ProviderExhausted):
@@ -694,12 +695,13 @@ class BillingGuard:
             response = self.inner.complete(request)
         except ProviderError as e:  # an error the provider billed (an empty answer): checked like an answer
             if e.usage is not None:
-                self._check(request, e.usage.billing_source, cached=False)
+                self._check(request, e.usage, cached=False)
             raise
-        self._check(request, response.usage.billing_source, cached=response.cached)
+        self._check(request, response.usage, cached=response.cached)
         return response
 
-    def _check(self, request: LLMRequest, source: str | None, *, cached: bool) -> None:
+    def _check(self, request: LLMRequest, usage: Usage, *, cached: bool) -> None:
+        source = usage.billing_source
         if self.allowed and not cached and source is not None and source not in self.allowed:
             logger.warning(f"billing guard: a call to {request.model} was billed to {source!r}, outside [run] "
                            f"allowed_billing = {list(self.allowed)}; stopping the run")
@@ -707,7 +709,7 @@ class BillingGuard:
                 f"{request.model}: a call was billed to {source!r}, not to [run] allowed_billing = "
                 f"{list(self.allowed)}; its answer is cached. Stopped so nothing more is paid for that way; add "
                 f"{source!r} to allowed_billing to go on paying for it",
-                model=request.model, billing_source=source)
+                model=request.model, billing_source=source, usage=usage)
 
 
 class FailureGuard:
