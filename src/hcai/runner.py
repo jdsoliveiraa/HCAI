@@ -6,9 +6,11 @@ import csv
 import hashlib
 import json
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from dataclasses import asdict, dataclass, field, fields, replace
+from functools import partial
 from itertools import zip_longest
 from pathlib import Path
 from random import Random
@@ -17,10 +19,11 @@ from typing import Any
 
 from hcai import runlog
 from hcai.blinding import BLINDING_CONDITIONS, blind_variant, proxy_leak_summary, proxy_leaks
+from hcai.concurrency import Task, run_tasks
 from hcai.config import Design
 from hcai.llm import (
-    BillingGuard, BillingStop, CachedClient, FailureGuard, LLMClient, MeteredClient, ProviderExhausted,
-    TooManyFailures,
+    BillingGuard, BillingStop, CachedClient, FailureGuard, LLMClient, MeteredClient, ProviderExhausted, StopGate,
+    TooManyFailures, stop_scope,
 )
 from hcai.oversight import escalation_reasons, job_criteria, judge, shortlist_cutoff, uses_rubric
 from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
@@ -76,6 +79,13 @@ class ResultRow:
     allowance: float | None = None
     billing_source: str = ""
     # A Ranker call covers a whole pool: its tokens and cost sit on the input_position == 1 row only.
+    # Not a column (never written or read): (cache key, served from the cache) of each answer behind the row, so a
+    # concurrent run can set `cached` as the sequential run would (`_sequential_cache_flags`).
+    calls: tuple[tuple[str, bool], ...] = field(default=(), compare=False, repr=False)
+
+
+# The columns of the results tables: every `ResultRow` field but `calls`.
+COLUMNS = [f.name for f in fields(ResultRow) if f.name != "calls"]
 
 
 @dataclass(frozen=True)
@@ -603,9 +613,10 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path,
                 raise ValueError(f"job ad {key} lists no criteria (bullet lines) for the rubric Evaluator")
     guarded = FailureGuard(client, design.run.max_consecutive_failures)
     allowed = design.run.allowed_billing
-    cached = BillingGuard(CachedClient(guarded, cache_dir), allowed)
+    # `StopGate` on top: once a worker stops the run (or Ctrl-C), the others make no new call.
+    cached = StopGate(BillingGuard(CachedClient(guarded, cache_dir), allowed))
     # Each repeat is the identical request, cached in its own namespace: paid once, replayed on reruns.
-    repeat_clients = tuple(BillingGuard(CachedClient(guarded, Path(cache_dir) / "repeats" / f"r{k}"), allowed)
+    repeat_clients = tuple(StopGate(BillingGuard(CachedClient(guarded, Path(cache_dir) / "repeats" / f"r{k}"), allowed))
                            for k in range(1, design.run.repeats + 1)) if design.run.repeat_fraction > 0 else ()
     rows: list[ResultRow] = []
     repeats: list[ResultRow] = []
@@ -618,58 +629,140 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path,
                    for key in groups for condition in design.conditions for _ in design.models),
                blocks=blocks, variants=len(variants), pools=sum(len(p) for p in all_pools.values()))
     done = 0
-    for role in design.roles:
-        for language in design.languages:
-            job_ad = job_ads[(role, language)]
-            group = groups[(role, language)]
-            pools = all_pools[(role, language)]
-            for condition in design.conditions:
-                for model in design.models:
-                    track.block(done + 1, blocks, role=role, language=language, condition=condition, model=model)
-                    rubric = criteria.get((role, language)) if uses_rubric(condition) else None
-                    ctx = _Context(cached, design, job_ad, language, condition, model, rubric, track)
-                    per_cv = _planned_per_cv(condition, rubric) - (condition in BLINDING_CONDITIONS)
-                    crew_group, crew_pools, unblinded = group, pools, {}
-                    if condition in BLINDING_CONDITIONS:  # C1, C3: the crew sees the Blinder's text only
-                        blinder_rows, crew_group, unblinded = _blind_group(ctx, group)
-                        rows += blinder_rows
-                        by_id = {v.id: v for v in crew_group}
-                        crew_pools = [replace(p, members=[by_id[m.id] for m in p.members]) for p in pools]
-                    passed: dict[str, bool | None] = {}
-                    block: list[ResultRow] = []
-                    for v in crew_group:  # under C1/C3, `v.text` is the blinded text the crew and the judge see
-                        with track.item(**_cv_fields(v)):
-                            if v.id in unblinded:
-                                cv_rows = _not_run(ctx, v, unblinded[v.id])
-                                passed[v.id] = None
-                            else:
-                                screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
-                                cv_rows = [screener_row, evaluator_row]
-                                if rubric and evaluator_row.status == "ok":
-                                    cv_rows.append(_judge(ctx, v, evaluator_row))
-                                passed[v.id] = screener_row.screen_pass
-                                if ctx.sampled(v.id):
-                                    for k, again in enumerate(repeat_clients, start=1):
-                                        with track.item(repeat=k):
-                                            repeats += [replace(r, repeat=k)
-                                                        for r in _screen_and_evaluate(ctx.using(again), v)]
-                            block += cv_rows
-                            track.done(cv_rows, per_cv)
-                    rows += _escalate(block, design) if rubric else block
-                    for pool in crew_pools:
-                        with track.item(pool=pool.id, pool_kind=pool.kind):
-                            pool_rows = _rank_pool(ctx, pool, passed)
-                            rows += pool_rows
-                            track.done(pool_rows, len(pool.members))
-                            if ctx.sampled(pool.id):
-                                for k, again in enumerate(repeat_clients, start=1):
-                                    with track.item(repeat=k):
-                                        repeats += [replace(r, repeat=k)
-                                                    for r in _rank_pool(ctx.using(again), pool, passed)]
-                    done += 1
-                    if on_block is not None:
-                        on_block(done, blocks, f"{role}/{language}/{condition}/{model}", rows, repeats)
+    with stop_scope(threading.Event()) as stop:
+        for role in design.roles:
+            for language in design.languages:
+                job_ad = job_ads[(role, language)]
+                group = groups[(role, language)]
+                pools = all_pools[(role, language)]
+                for condition in design.conditions:
+                    for model in design.models:
+                        track.block(done + 1, blocks, role=role, language=language, condition=condition, model=model)
+                        rubric = criteria.get((role, language)) if uses_rubric(condition) else None
+                        ctx = _Context(cached, design, job_ad, language, condition, model, rubric, track)
+                        block_rows, block_repeats = _run_block(ctx, group, pools, repeat_clients, stop)
+                        rows += block_rows
+                        repeats += block_repeats
+                        done += 1
+                        if on_block is not None:
+                            on_block(done, blocks, f"{role}/{language}/{condition}/{model}", rows, repeats)
     return rows, repeats
+
+
+def _run_block(ctx: _Context, group: list[Variant], pools: list[Pool], repeat_clients: tuple[LLMClient, ...],
+               stop: threading.Event) -> tuple[list[ResultRow], list[ResultRow]]:
+    """One role x language x condition x model block: its result rows and stability repeats, in sequential order.
+
+    The work is split into tasks run on up to `[run] concurrency` workers (`hcai.concurrency.run_tasks`): per CV
+    variant the Blinder (C1, C3), then the crew (Screener, Evaluator, judge, and the CV's repeats), and per Ranker
+    pool the Ranker once every member's crew is done (it needs their screening decisions). Every task builds the
+    same requests whatever runs beside it, and the rows are put together in the sequential order: the Blinder rows,
+    the CV rows (escalated together under a rubric condition: the cutoff is the median of the whole block), then the
+    pool rows. With concurrency 1 the tasks run in that order, as a plain loop.
+    """
+    track = ctx.track
+    blinding = ctx.condition in BLINDING_CONDITIONS
+    per_cv = _planned_per_cv(ctx.condition, ctx.criteria) - blinding
+    crew_variant: dict[str, Variant] = {}  # under C1/C3, the variant with the blinded text the crew and judge see
+    unblinded: dict[str, str] = {}  # per variant whose blinding failed, the error
+    passed: dict[str, bool | None] = {}
+
+    def blind(v: Variant) -> ResultRow:
+        row, crew_v, error = _blind_one(ctx, v)
+        crew_variant[v.id] = crew_v
+        if error is not None:
+            unblinded[v.id] = error
+        return row
+
+    def crew(v: Variant) -> tuple[list[ResultRow], list[ResultRow]]:
+        v = crew_variant.get(v.id, v)
+        reps: list[ResultRow] = []
+        with track.item(**_cv_fields(v)):
+            if v.id in unblinded:
+                cv_rows = _not_run(ctx, v, unblinded[v.id])
+                passed[v.id] = None
+            else:
+                screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
+                cv_rows = [screener_row, evaluator_row]
+                if ctx.criteria and evaluator_row.status == "ok":
+                    cv_rows.append(_judge(ctx, v, evaluator_row))
+                passed[v.id] = screener_row.screen_pass
+                if ctx.sampled(v.id):
+                    for k, again in enumerate(repeat_clients, start=1):
+                        with track.item(repeat=k):
+                            reps += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
+            track.done(cv_rows, per_cv)
+        return cv_rows, reps
+
+    def ranker(pool: Pool) -> tuple[list[ResultRow], list[ResultRow]]:
+        if blinding:
+            pool = replace(pool, members=[crew_variant[m.id] for m in pool.members])
+        reps: list[ResultRow] = []
+        with track.item(pool=pool.id, pool_kind=pool.kind):
+            pool_rows = _rank_pool(ctx, pool, passed)
+            track.done(pool_rows, len(pool.members))
+            if ctx.sampled(pool.id):
+                for k, again in enumerate(repeat_clients, start=1):
+                    with track.item(repeat=k):
+                        reps += [replace(r, repeat=k) for r in _rank_pool(ctx.using(again), pool, passed)]
+        return pool_rows, reps
+
+    # Ready Ranker pools first, then crews, then Blinders: a pool's long call starts as soon as it can.
+    tasks: list[Task] = []
+    blind_at: dict[str, int] = {}
+    if blinding:
+        for v in group:
+            blind_at[v.id] = len(tasks)
+            tasks.append(Task(partial(blind, v), priority=2))
+    crew_at: dict[str, int] = {}
+    for v in group:
+        crew_at[v.id] = len(tasks)
+        tasks.append(Task(partial(crew, v), deps=(blind_at[v.id],) if blinding else (), priority=1))
+    pool_at: list[int] = []
+    for pool in pools:
+        pool_at.append(len(tasks))
+        tasks.append(Task(partial(ranker, pool), deps=tuple(sorted({crew_at[m.id] for m in pool.members})),
+                          priority=0))
+    results = run_tasks(tasks, ctx.design.run.concurrency, stop)
+
+    rows: list[ResultRow] = [results[blind_at[v.id]] for v in group] if blinding else []
+    block = [r for v in group for r in results[crew_at[v.id]][0]]
+    repeats = [r for v in group for r in results[crew_at[v.id]][1]]
+    rows += _escalate(block, ctx.design) if ctx.criteria else block
+    for i in pool_at:
+        rows += results[i][0]
+        repeats += results[i][1]
+    if ctx.design.run.concurrency > 1:
+        rows = _sequential_cache_flags(rows)
+        repeats = [r for k in dict.fromkeys(r.repeat for r in repeats)
+                   for r in _sequential_cache_flags([r for r in repeats if r.repeat == k])]
+    return rows, repeats
+
+
+def _sequential_cache_flags(rows: list[ResultRow]) -> list[ResultRow]:
+    """`rows` (in sequential order, one cache namespace) with `cached` as a sequential run would set it.
+
+    Two CVs of a block can send the same request (under C1/C3 two identities' blinded CVs can be the same text).
+    `CachedClient` makes that call once, but under concurrency either CV may be the one that makes it: here the
+    fresh answer goes to the first of them in sequential order, and the others are cache hits. Only `cached`
+    changes: the answer, tokens, cost and attempts are those of the one cached call either way. The other rows of a
+    Ranker pool take the flag of its first row, as they share its call.
+    """
+    fresh = {key for r in rows for key, cached in r.calls if not cached}
+    seen: set[str] = set()
+    pool_flag: dict[str, bool] = {}
+    out = []
+    for r in rows:
+        if r.calls and not (r.agent == "ranker" and r.input_position not in (None, 1)):
+            calls = tuple((key, not (key in fresh and key not in seen)) for key, _ in r.calls)
+            seen.update(key for key, _ in r.calls)
+            r = replace(r, calls=calls, cached=all(c for _, c in calls))
+            if r.agent == "ranker":
+                pool_flag[r.pool] = r.cached
+        elif r.agent == "ranker" and r.pool in pool_flag and r.calls:
+            r = replace(r, cached=pool_flag[r.pool])
+        out.append(r)
+    return out
 
 
 def _planned_per_cv(condition: str, rubric: list[str] | None) -> int:
@@ -715,7 +808,7 @@ class _Context:
 def _usage(out: AgentOutput) -> dict[str, Any]:
     return dict(prompt_tokens=out.usage.prompt_tokens, completion_tokens=out.usage.completion_tokens,
                 cost=out.usage.cost, cached=out.cached, attempts=out.attempts,
-                allowance=out.usage.allowance, billing_source=out.usage.billing_source or "")
+                allowance=out.usage.allowance, billing_source=out.usage.billing_source or "", calls=out.calls)
 
 
 _NO_CALL: dict[str, Any] = dict(prompt_tokens=0, completion_tokens=0, cost=0.0, cached=False, attempts=0,
@@ -792,26 +885,19 @@ def _missing_reason(evaluator_row: ResultRow) -> str:
     return "evaluator missing"
 
 
-def _blind_group(ctx: _Context, group: list[Variant]) -> tuple[list[ResultRow], list[Variant], dict[str, str]]:
-    """C1, C3: blind every CV of the group. Returns the Blinder rows, the variants with the blinded text (the
-    original variant where blinding failed), and, per failed variant id, the error."""
-    rows: list[ResultRow] = []
-    blinded: list[Variant] = []
-    failed: dict[str, str] = {}
-    for v in group:
-        with ctx.track.item(**_cv_fields(v)):
-            out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
-            rows.append(ResultRow(
-                **ctx.key(v, "blinder"), score=None, rationale=out.parsed["blinded_cv"] if out.parsed else "",
-                **_usage(out), status="ok" if text is not None else "missing", error=out.error,
-            ))
-            ctx.track.done(rows[-1:], 1)
-        if text is None:
-            failed[v.id] = f"blinding failed: {out.error}"
-            blinded.append(v)
-        else:
-            blinded.append(replace(v, text=text))
-    return rows, blinded, failed
+def _blind_one(ctx: _Context, v: Variant) -> tuple[ResultRow, Variant, str | None]:
+    """C1, C3: blind one CV. Returns its Blinder row, the variant the crew sees (with the blinded text, or the
+    original where blinding failed) and, if it failed, the error."""
+    with ctx.track.item(**_cv_fields(v)):
+        out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
+        row = ResultRow(
+            **ctx.key(v, "blinder"), score=None, rationale=out.parsed["blinded_cv"] if out.parsed else "",
+            **_usage(out), status="ok" if text is not None else "missing", error=out.error,
+        )
+        ctx.track.done([row], 1)
+    if text is None:
+        return row, v, f"blinding failed: {out.error}"
+    return row, replace(v, text=text), None
 
 
 def _not_run(ctx: _Context, v: Variant, error: str) -> list[ResultRow]:
@@ -837,7 +923,7 @@ def _rank_pool(ctx: _Context, pool: Pool, passed: dict[str, bool | None]) -> lis
         position_rank = ranks.get(position)
         rows.append(ResultRow(
             **ctx.key(v, "ranker"), score=None, rationale=out.parsed["rationale"] if out.parsed else "",
-            **(_usage(out) if position == 1 else {**_NO_CALL, "cached": out.cached}),
+            **(_usage(out) if position == 1 else {**_NO_CALL, "cached": out.cached, "calls": out.calls}),
             status="ok" if out.parsed else "missing", error=out.error, **pool_cols, input_position=position,
             rank=position_rank, top3=None if position_rank is None else position_rank <= 3, order_seed=seed,
         ))
@@ -862,10 +948,10 @@ def write_results(rows: list[ResultRow], path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[fl.name for fl in fields(ResultRow)])
+        writer = csv.DictWriter(f, fieldnames=COLUMNS)
         writer.writeheader()
         for row in rows:
-            writer.writerow(asdict(row))
+            writer.writerow({k: v for k, v in asdict(row).items() if k != "calls"})
 
 
 def read_results(path: str | Path) -> list[ResultRow]:

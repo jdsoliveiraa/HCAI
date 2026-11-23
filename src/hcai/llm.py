@@ -8,6 +8,12 @@ waits `[run] request_timeout` seconds for the answer (`http_timeout`).
 Run guards (ADR 0005, 2026-11-23 amendment): `BillingGuard` stops a run on the first fresh answer billed outside
 `[run] allowed_billing` (after caching it), `FailureGuard` stops it after `[run] max_consecutive_failures`
 provider errors in a row on one model, and `CachedClient` drops a cache file that does not parse.
+
+Concurrency (`[run] concurrency`, ADR 0005 amendment of 2026-11-23 on concurrency): every wrapper here is
+thread-safe. `CachedClient` makes one call per cache key at a time (a second worker asking the same request waits
+and is served from the cache), `RateLimitGuard` pauses every worker on one limit answer, `FailureGuard` counts
+distinct failed requests since the model's last answer, and `StopGate` plus `stop_scope` let a stop in one worker
+end the others at their next call or wait.
 """
 
 from __future__ import annotations
@@ -17,10 +23,13 @@ import json
 import logging
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -253,6 +262,60 @@ class TooManyFailures(ProviderExhausted):
         self.failures = failures
 
 
+class Stopping(ProviderExhausted):
+    """The run is stopping (another worker stopped it, or an interrupt): this call was not made.
+
+    Raised by `StopGate` and by the waits of `interruptible_sleep` callers once the run's stop event is set; the
+    run then re-raises what stopped it, not this.
+    """
+
+    kind = "stopping"
+
+
+# The stop event of the run in progress, if any: set when a worker stops the run (`ProviderExhausted`) or on an
+# interrupt. Worker threads run in a copy of the context that set it (`hcai.concurrency`).
+_STOP: ContextVar[threading.Event | None] = ContextVar("hcai_stop", default=None)
+
+
+@contextmanager
+def stop_scope(event: threading.Event) -> Iterator[threading.Event]:
+    """Make `event` the stop event of the calls made in this context (and of the workers copying it)."""
+    token = _STOP.set(event)
+    try:
+        yield event
+    finally:
+        _STOP.reset(token)
+
+
+def stop_requested() -> bool:
+    event = _STOP.get()
+    return event is not None and event.is_set()
+
+
+def interruptible_sleep(seconds: float) -> None:
+    """Sleep `seconds`, or less when the run's stop event is set meanwhile (then the next call raises `Stopping`)."""
+    event = _STOP.get()
+    if event is None:
+        time.sleep(seconds)
+    else:
+        event.wait(seconds)
+
+
+class StopGate:
+    """Wraps a client: once the run's stop event is set, refuses every new call with `Stopping`.
+
+    A call already past the gate finishes (and its answer is cached below); only new ones are refused.
+    """
+
+    def __init__(self, inner: LLMClient):
+        self.inner = inner
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        if stop_requested():
+            raise Stopping(f"{request.model}: the run is stopping; this call was not made")
+        return self.inner.complete(request)
+
+
 class ProviderError(Exception):
     """The provider answered with an error that is not a rate or usage limit.
 
@@ -409,6 +472,7 @@ class OpenAICompatibleClient:
         self._key = api_key
         self._log = log or _warn
         self._warned_session = False  # the MissingSessionID warning is printed once per client (one per run)
+        self._warn_lock = threading.Lock()
         extra = {k: v for k, v in (headers or {}).items() if k.lower() not in ("authorization", "user-agent")}
         # masked in error text after the key, longest first; values too short to be secrets are left alone
         self._masked = sorted((v for v in extra.values() if len(v) >= 8), key=len, reverse=True)
@@ -450,8 +514,9 @@ class OpenAICompatibleClient:
         if resp.status_code == 429 or (resp.status_code >= 400 and is_limit_error(_json_or_none(resp), text, resp.status_code)):
             raise RateLimited(f"{self.name}: HTTP {resp.status_code}: {text}", _retry_after(resp.headers))
         if resp.status_code == 400 and "missingsessionid" in lowered:
-            if not self._warned_session:
-                self._warned_session = True
+            with self._warn_lock:
+                first, self._warned_session = not self._warned_session, True
+            if first:
                 self._log(f"{self.name}: the session header is missing or rejected (HTTP 400 "
                           f"MissingSessionID); these calls fail and their rows are recorded as missing. "
                           f"This warning is shown once per run.")
@@ -542,42 +607,87 @@ class RateLimitGuard:
     spin), else `backoff` seconds doubling up to `max_backoff`.
     When one call would wait more than `max_wait` seconds in all (or the provider asks for longer), it
     raises `ProviderExhausted`: the run stops cleanly and a rerun resumes from the cache.
+
+    The wait is shared by every worker using this guard (one provider): a limit answer pauses them all until
+    the same moment, and a worker whose call was already under way when the pause began joins it instead of
+    starting a backoff of its own. The doubling counts limit answers since the provider last answered, so
+    sequentially (`[run] concurrency = 1`) each call backs off exactly as before. A wait ends early when the run
+    stops (`interruptible_sleep`), and the call then raises `Stopping` instead of being repeated.
     """
 
     def __init__(self, inner: LLMClient, *, backoff: float = 30.0, max_backoff: float = 900.0,
-                 max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
-                 log: Callable[[str], None] = _warn, name: str = "", min_wait: float = 5.0):
+                 max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] | None = None,
+                 log: Callable[[str], None] = _warn, name: str = "", min_wait: float = 5.0,
+                 clock: Callable[[], float] = time.monotonic):
         self.inner = inner
         self.min_wait = min_wait
         self.backoff = backoff
         self.max_backoff = max_backoff
         self.max_wait = max_wait
-        self.sleep = sleep
+        self.sleep = sleep or interruptible_sleep
         self.log = log
         self.name = name
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._paused_until = 0.0  # clock time every worker waits for before its next call
+        self._paused_at = float("-inf")  # clock time the current pause began
+        self._streak = 0  # limit answers since the provider last answered (the doubling backoff)
+
+    def _check_stop(self) -> None:
+        if stop_requested():
+            raise Stopping(f"{self.name or 'provider'}: the run is stopping; this call was not made")
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         waited = 0.0
-        failures = 0
+        slept = False  # this call has just waited out a pause itself
         while True:
+            if not slept:
+                with self._lock:
+                    left = self._paused_until - self._clock()
+                if left > 0:  # another worker's limit answer paused every call to this provider
+                    self.sleep(left)
+            self._check_stop()
+            sent = self._clock()
             try:
-                return self.inner.complete(request)
+                response = self.inner.complete(request)
             except RateLimited as e:
-                delay = max(self.min_wait, e.retry_after) if e.retry_after is not None else min(
-                    self.backoff * 2 ** failures, self.max_backoff)
-                if waited + delay > self.max_wait:
-                    raise ProviderExhausted(
-                        f"{self.name or 'provider'}: still limited after waiting {waited:.0f}s "
-                        f"(next wait {delay:.0f}s exceeds [run] rate_limit_max_wait = {self.max_wait:.0f}s): {e}"
-                    ) from e
+                with self._lock:
+                    now = self._clock()
+                    joined = self._paused_at >= sent and self._paused_until > now
+                    if joined:  # a limit answer to a call sent later already paused us all: wait with them
+                        delay = self._paused_until - now
+                    else:
+                        delay = max(self.min_wait, e.retry_after) if e.retry_after is not None else min(
+                            self.backoff * 2 ** self._streak, self.max_backoff)
+                    if waited + delay > self.max_wait:
+                        raise ProviderExhausted(
+                            f"{self.name or 'provider'}: still limited after waiting {waited:.0f}s "
+                            f"(next wait {delay:.0f}s exceeds [run] rate_limit_max_wait = {self.max_wait:.0f}s): {e}"
+                        ) from e
+                    if not joined:
+                        self._streak += 1
+                        self._paused_at = now
+                        self._paused_until = max(self._paused_until, now + delay)
                 resume = datetime.now().astimezone() + timedelta(seconds=delay)
-                self.log(f"{self.name or 'provider'} rate/usage limit on {request.model}: waiting {delay:.0f}s, "
-                         f"resuming at {resume.isoformat(timespec='seconds')} (waited {waited:.0f}s of at most "
-                         f"[run] rate_limit_max_wait = {self.max_wait:.0f}s for this call): {str(e)[:200]}")
+                if joined:
+                    logger.info(f"{self.name or 'provider'} rate/usage limit on {request.model}: joining the pause "
+                                f"already under way, {delay:.0f}s left (resuming at "
+                                f"{resume.isoformat(timespec='seconds')})")
+                else:
+                    self.log(f"{self.name or 'provider'} rate/usage limit on {request.model}: waiting {delay:.0f}s, "
+                             f"resuming at {resume.isoformat(timespec='seconds')} (waited {waited:.0f}s of at most "
+                             f"[run] rate_limit_max_wait = {self.max_wait:.0f}s for this call; every call to this "
+                             f"provider waits): {str(e)[:200]}")
                 runlog.rate_limited(request.model, wait=delay, resume_at=resume, waited=waited, error=e)
                 self.sleep(delay)
                 waited += delay
-                failures += 1
+                slept = True
+                continue
+            with self._lock:
+                if sent >= self._paused_at:  # sent after the last pause began: the provider serves again
+                    self._streak = 0
+                    self._paused_until = min(self._paused_until, self._clock())
+            return response
 
 
 class MeteredClient:
@@ -590,6 +700,7 @@ class MeteredClient:
 
     def __init__(self, inner: LLMClient):
         self.inner = inner
+        self._lock = threading.Lock()  # workers update the counters concurrently
         self.calls: dict[str, int] = {}
         self.cost: dict[str, float] = {}  # the known prices only
         self.unpriced: dict[str, int] = {}  # calls the provider gave no price for (cost unknown)
@@ -601,19 +712,22 @@ class MeteredClient:
         self.failed: dict[str, int] = {}  # calls that raised a provider error (timeouts and missing sessions too)
 
     def complete(self, request: LLMRequest) -> LLMResponse:
-        self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
+        with self._lock:
+            self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
         try:
             response = self.inner.complete(request)
         except ProviderError as e:
-            self.failed[request.model] = self.failed.get(request.model, 0) + 1
-            if isinstance(e, MissingSession):
-                self.missing_session[request.model] = self.missing_session.get(request.model, 0) + 1
-            if e.timeout:
-                self.timed_out[request.model] = self.timed_out.get(request.model, 0) + 1
-            if e.usage is not None:  # billed although it is no answer (an empty one): spent all the same
-                self._spend(request.model, e.usage)
+            with self._lock:
+                self.failed[request.model] = self.failed.get(request.model, 0) + 1
+                if isinstance(e, MissingSession):
+                    self.missing_session[request.model] = self.missing_session.get(request.model, 0) + 1
+                if e.timeout:
+                    self.timed_out[request.model] = self.timed_out.get(request.model, 0) + 1
+                if e.usage is not None:  # billed although it is no answer (an empty one): spent all the same
+                    self._spend(request.model, e.usage)
             raise
-        self._spend(request.model, response.usage)
+        with self._lock:
+            self._spend(request.model, response.usage)
         return response
 
     def _spend(self, model: str, u: Usage) -> None:
@@ -640,6 +754,10 @@ class CachedClient:
     failed to parse is not cached, so a rerun draws a fresh one (the corpus generator, at temperature > 0).
     Calls that raise are never cached. A cache file that does not parse (zero bytes, cut short) is deleted with
     a warning and counts as a miss.
+
+    One call per cache key at a time: a worker asking a request another worker is already asking waits for it,
+    then is served from the cache (or, if that call raised, asks itself), exactly as it would have been
+    sequentially. Entries are written to a temporary file of their own, then renamed into place.
     """
 
     def __init__(self, inner: LLMClient, cache_dir: str | Path, *, cache_unparseable: bool = True,
@@ -653,6 +771,10 @@ class CachedClient:
     def complete(self, request: LLMRequest) -> LLMResponse:
         key = request.cache_key()
         path = self.cache_dir / f"{key}.json"
+        with _key_lock(path):
+            return self._complete(request, key, path)
+
+    def _complete(self, request: LLMRequest, key: str, path: Path) -> LLMResponse:
         if path.exists():
             try:
                 cached = json.loads(path.read_text())
@@ -669,10 +791,32 @@ class CachedClient:
         response = self.inner.complete(request)
         if not self.cache_unparseable and request.response_schema is not None and response.parsed is None:
             return response
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps({"request": asdict(request), **asdict(response)}, ensure_ascii=False))
         tmp.replace(path)
         return response
+
+
+_KEY_LOCKS: dict[Path, tuple[threading.Lock, int]] = {}  # per cache file: its lock and how many workers hold or wait
+_KEY_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def _key_lock(path: Path) -> Iterator[None]:
+    """Hold the lock of one cache file (one call per key at a time); dropped once no worker needs it."""
+    with _KEY_LOCKS_GUARD:
+        lock, users = _KEY_LOCKS.get(path, (threading.Lock(), 0))
+        _KEY_LOCKS[path] = (lock, users + 1)
+    try:
+        with lock:
+            yield
+    finally:
+        with _KEY_LOCKS_GUARD:
+            lock, users = _KEY_LOCKS[path]
+            if users <= 1:
+                del _KEY_LOCKS[path]
+            else:
+                _KEY_LOCKS[path] = (lock, users - 1)
 
 
 class BillingGuard:
@@ -717,7 +861,9 @@ class FailureGuard:
 
     Each failed call counts once: repeating the identical request (a retry of a raised call) adds nothing, so
     the count is of distinct calls, and one call that keeps failing (an answer that always times out, a
-    content filter) adds 1, not 3 or 4. Any answer from that model resets its count. At `limit`,
+    content filter) adds 1, not 3 or 4. Any answer from that model resets its count. Under `[run] concurrency`
+    the count is of the distinct requests that failed on the model since its last answer, whichever worker
+    sent them (interleaved retries of one request still count once; sequentially this is the same count). At `limit`,
     `TooManyFailures` stops the run cleanly with the last error, instead of recording row after row as missing
     through an outage, a withdrawn model id or a refused session. Failed calls are not cached, so a rerun asks
     them again. `limit = 0` never stops.
@@ -727,8 +873,9 @@ class FailureGuard:
         self.inner = inner
         self.limit = limit
         self.in_a_row: dict[str, int] = {}
-        self._last_failed: dict[str, str] = {}  # per model, the cache key of the last failed request
+        self._failed: dict[str, set[str]] = {}  # per model, the cache keys that failed since its last answer
         self._warned_at: dict[str, int] = {}  # per model, the count last warned about (one warning per count)
+        self._lock = threading.Lock()
 
     def _warned(self, model: str, n: int) -> bool:
         if self._warned_at.get(model) == n:
@@ -741,11 +888,12 @@ class FailureGuard:
             response = self.inner.complete(request)
         except ProviderError as e:
             key = request.cache_key()
-            if self._last_failed.get(request.model) != key:
-                self.in_a_row[request.model] = self.in_a_row.get(request.model, 0) + 1
-                self._last_failed[request.model] = key
-            n = self.in_a_row[request.model]
-            if n >= 5 and not self._warned(request.model, n):
+            with self._lock:
+                failed = self._failed.setdefault(request.model, set())
+                failed.add(key)
+                n = self.in_a_row[request.model] = len(failed)
+                warn = n >= 5 and not self._warned(request.model, n)
+            if warn:
                 logger.warning(f"{request.model}: {n} failed calls in a row"
                                + (f" (the run stops at [run] max_consecutive_failures = {self.limit})"
                                   if self.limit else "") + f"; last: {str(e)[:200]}")
@@ -754,7 +902,8 @@ class FailureGuard:
                     f"{request.model}: {n} failed calls in a row ([run] max_consecutive_failures = "
                     f"{self.limit}); last: {e}", model=request.model, failures=n) from e
             raise
-        self.in_a_row[request.model] = 0
-        self._last_failed.pop(request.model, None)
-        self._warned_at.pop(request.model, None)
+        with self._lock:
+            self.in_a_row[request.model] = 0
+            self._failed.pop(request.model, None)
+            self._warned_at.pop(request.model, None)
         return response

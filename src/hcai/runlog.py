@@ -13,6 +13,10 @@ human-readable `<out>/run.log` (ISO timestamps with ms, level, logger) at `--log
   rate-limit wait adds its own record (`rate_limited`).
 - a heartbeat thread logs where the run is every `[run] heartbeat_s` seconds and rewrites `progress.json`.
 
+Under `[run] concurrency` several workers record at once: the CV or pool a call is for (`RunLog.item`) is kept per
+worker (a context variable), the counters and `calls.jsonl` are written under one lock (one whole line per record),
+and the `logging` handlers lock per line.
+
 Nothing here touches a request, so no cache key changes. No prompt or answer text is written: a prompt's length,
 an answer's length and hash, and the cache key prefix (the full text stays in the cache). Error texts come from
 `ProviderError`, whose messages are already redacted of the key and header values, and are cut short. No key,
@@ -198,6 +202,8 @@ def outcome_of(error: BaseException) -> str:
     """The `outcome` of an attempt that raised `error`."""
     from hcai.llm import ProviderExhausted, RateLimited  # here, as hcai.llm imports this module
 
+    if getattr(error, "kind", None) == "stopping":  # `hcai.llm.Stopping`: not made, the run was stopping
+        return "abandoned"
     if isinstance(error, ProviderExhausted):
         return "exhausted"
     if isinstance(error, RateLimited):
@@ -269,7 +275,8 @@ class Attempt:
         outcome = outcome_of(error)
         record = self._record(outcome=outcome, usage=getattr(error, "usage", None), retry=retry, wait=wait,
                               error_class=type(error).__name__, error=_short(str(error)))
-        _emit(logging.ERROR if outcome == "exhausted" else logging.WARNING, record)
+        _emit(logging.ERROR if outcome == "exhausted" else logging.INFO if outcome == "abandoned" else logging.WARNING,
+              record)
 
     def _record(self, *, outcome: str, usage: Any, retry: bool, wait: float, error_class: str | None,
                 error: str | None, **extra: Any) -> dict[str, Any]:
@@ -353,6 +360,8 @@ def _emit(level: int, record: dict[str, Any]) -> None:
 
 
 _ACTIVE: RunLog | None = None
+# The CV variant or pool the calls of this worker are for (`RunLog.item`): one per thread / context.
+_ITEM: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("hcai_item", default={})
 
 
 def active() -> RunLog | None:
@@ -397,6 +406,7 @@ class RunLog:
         self.records = 0
         self.hits = 0
         self.misses = 0
+        self._count_lock = threading.Lock()  # the counters above, updated by concurrent workers
         self._activity = "starting"
         self._activity_since = clock()
         self._window: tuple[float, int] = (self.started, 0)  # (time, rows_done) at the last heartbeat
@@ -449,11 +459,12 @@ class RunLog:
     def write(self, record: dict[str, Any]) -> None:
         """Append one record to `calls.jsonl`, flushed; counts cache hits and misses."""
         if record.get("outcome") != "rate_limited":  # a wait is no attempt of its own
-            self.records += 1
-            if record.get("cache") == "hit":
-                self.hits += 1
-            elif record.get("cache") == "miss":
-                self.misses += 1
+            with self._count_lock:
+                self.records += 1
+                if record.get("cache") == "hit":
+                    self.hits += 1
+                elif record.get("cache") == "miss":
+                    self.misses += 1
         with self._lock:
             if self._file is None:
                 return
@@ -474,7 +485,7 @@ class RunLog:
     # where the run is
 
     def scope_fields(self) -> dict[str, Any]:
-        return dict(self.scope)
+        return {**self.scope, **_ITEM.get()}
 
     def activity(self, what: str) -> None:
         self._activity = what
@@ -496,23 +507,27 @@ class RunLog:
 
     @contextmanager
     def item(self, **fields: Any) -> Iterator[None]:
-        """The CV variant (`variant`, `base_cv`, `identity`) or pool (`pool`) the calls inside are for."""
-        before = dict(self.scope)
-        self.scope.update(fields)
+        """The CV variant (`variant`, `base_cv`, `identity`) or pool (`pool`) the calls inside are for.
+
+        Kept per worker (a context variable), on top of the block's `scope`.
+        """
+        token = _ITEM.set({**_ITEM.get(), **fields})
         try:
             yield
         finally:
-            self.scope = before
+            _ITEM.reset(token)
 
     @_safe
     def done(self, rows: list[Any], planned: int) -> None:
         """`rows` were added to the results for a CV or pool that was due `planned` rows; warns about missing ones."""
-        self.rows_done += planned
-        self.rows += len(rows)
+        missing = sum(r.status == "missing" for r in rows)
+        with self._count_lock:
+            self.rows_done += planned
+            self.rows += len(rows)
+            self.missing += missing
         by: dict[tuple[str, str, str], int] = {}
         for r in rows:
             if r.status == "missing":
-                self.missing += 1
                 where = r.pool or f"{r.base_cv}:{r.identity}"
                 key = (r.agent, where, _short(without_answer(r.error), 200))
                 by[key] = by.get(key, 0) + 1
