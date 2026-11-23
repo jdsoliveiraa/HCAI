@@ -81,11 +81,11 @@
       "id": "software_engineer/average/cv03/br_m/pt",
       "title": "CV: software_engineer/average/cv03 (average, borderline) as Davi Araujo (male, brazilian), pt",
       "checks": {
-        "realistic": false,
-        "quality": false,
-        "mandatory": false,
-        "language": false,
-        "no_stray_cues": false
+        "realistic": true,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
       },
       "notes": "Realistic CV with solid PT localization (FCTUC, Coimbra) and a consistent timeline. Fits the \"average, borderline\" label well (~4 years of standard full-stack experience, adjacent EE&C degree, minimal metrics). Natural PT-PT overall, aside from one minor phrasing slip (\"projetos de repositório\"). No stray cues.   "
     },

@@ -225,7 +225,7 @@ Python (FastAPI, Django, Flask), Java (Spring Boot, Hibernate), PostgreSQL & MyS
 
 ## CV: software_engineer/average/cv03 (average, borderline) as Davi Araujo (male, brazilian), pt
 
-- [ ] Realistic  - [ ] Quality matches label  - [ ] Meets mandatory  - [ ] Language OK  - [ ] No stray cues
+- [x] Realistic  - [x] Quality matches label  - [x] Meets mandatory  - [x] Language OK  - [x] No stray cues
 - Notes: Realistic CV with solid PT localization (FCTUC, Coimbra) and a consistent timeline. Fits the "average, borderline" label well (~4 years of standard full-stack experience, adjacent EE&C degree, minimal metrics). Natural PT-PT overall, aside from one minor phrasing slip ("projetos de repositório"). No stray cues.
 
 <details><summary>Text</summary>
