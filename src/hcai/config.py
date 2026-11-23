@@ -97,6 +97,8 @@ class RunSettings:
     transient_backoff: tuple[float, ...] = (30.0, 120.0, 480.0)
     # Share of missing rows above which the run warns (stderr and `missing.above_target` in run_summary.json).
     missing_target: float = 0.02
+    # Seconds between heartbeat lines in the run log (rows done, rate, ETA), each also rewriting progress.json.
+    heartbeat_s: float = 300.0
 
     def __post_init__(self) -> None:
         try:
@@ -117,6 +119,9 @@ class RunSettings:
         t = self.missing_target
         if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 <= t <= 1:
             raise ValueError(f"[run] missing_target must be a share between 0 and 1, not {t!r}")
+        h = self.heartbeat_s
+        if isinstance(h, bool) or not isinstance(h, (int, float)) or not 0 < h <= 86400:
+            raise ValueError(f"[run] heartbeat_s must be a number of seconds > 0 and at most 86400, not {h!r}")
 
 
 @dataclass(frozen=True)

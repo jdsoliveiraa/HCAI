@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import sys
+import logging
 import time
 from datetime import UTC, datetime
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -15,6 +15,7 @@ from random import Random
 from collections.abc import Callable
 from typing import Any
 
+from hcai import runlog
 from hcai.blinding import BLINDING_CONDITIONS, blind_variant, proxy_leak_summary, proxy_leaks
 from hcai.config import Design
 from hcai.llm import (
@@ -26,6 +27,7 @@ from hcai.pipeline import AgentOutput, Retry, rank, screen_and_evaluate
 from hcai.stability import stability_report
 from hcai.variants import Variant, build_variants
 
+logger = logging.getLogger("hcai.runner")
 
 @dataclass(frozen=True)
 class ResultRow:
@@ -121,7 +123,7 @@ class Run:
 
 
 def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: str | Path,
-            log: Callable[[str], None] | None = None) -> Run:
+            log: Callable[[str], None] | None = None, config_path: str | Path | None = None) -> Run:
     """Run the design and write its outputs to `out_dir`.
 
     `results.csv` is the results table and `run_summary.json` its token, call and cost totals. With a
@@ -133,22 +135,49 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
 
     The tables of paid answers (`results.csv`, `review_queue.csv`, `repeats.csv`) are written as soon as the
     calls are done, before any summary is computed, so a failing summary step leaves them on disk. After each
-    role x language x condition x model block, one progress line goes to `log` (stderr by default).
+    role x language x condition x model block, one progress line goes to `log` (the `hcai.runner` logger by
+    default).
+
+    Run logs (`hcai.runlog`): the start lists the config (path, sha256, git commit), corpus, models, providers,
+    timeouts and guards; every agent attempt is one line in the log and one record appended to
+    `out_dir/calls.jsonl`; every `[run] heartbeat_s` a heartbeat line says where the run is and rewrites
+    `progress.json` (status "running"), which a stop turns into "stopped" and a finished run deletes.
     """
     out_dir = Path(out_dir)
-    log = log or _stderr
     meter = MeteredClient(client)
     progress = out_dir / "progress.json"
     started = time.monotonic()
+    say: Callable[[str], None] = log or logger.info
+    warn: Callable[[str], None] = (lambda m: log("WARNING: " + m)) if log else logger.warning
 
     def on_block(i: int, n: int, label: str, rows: list[ResultRow], repeats: list[ResultRow]) -> None:
-        log(_progress_line(i, n, label, rows, repeats, meter, time.monotonic() - started))
+        say(_progress_line(i, n, label, rows, repeats, meter, time.monotonic() - started))
 
-    try:
-        rows, repeats = _run(design, meter, cache_dir, on_block=on_block)
-    except ProviderExhausted as e:
-        _record_stop(progress, e, meter, cache_dir)
-        raise
+    track = runlog.RunLog(out_dir, heartbeat_s=design.run.heartbeat_s, stats=lambda: _stats(meter))
+    _log_start(track, design, out_dir, cache_dir, config_path)
+    failure: BaseException | None = None
+    snapshot: dict[str, Any] = {}
+    rows: list[ResultRow] = []
+    repeats: list[ResultRow] = []
+    with track:
+        track.write_progress("running")
+        try:
+            rows, repeats = _run(design, meter, cache_dir, on_block=on_block, track=track)
+        except BaseException as e:  # noqa: BLE001 - recorded below, after the heartbeat has stopped, then raised
+            failure = e
+            snapshot = track.snapshot() or {}
+    if failure is not None:  # the heartbeat thread has stopped: nothing overwrites what is written here
+        if isinstance(failure, ProviderExhausted):
+            _record_stop(progress, failure, meter, cache_dir, snapshot)
+            logger.error(f"run {track.run_id} stopped ({failure.kind}): {failure}; {track.rows_done} of "
+                         f"{track.rows_total} planned rows done. Every completed call is cached: rerun the same "
+                         f"command to resume (progress in {progress})")
+        else:
+            what = "interrupted" if isinstance(failure, KeyboardInterrupt) else "crashed"
+            logger.error(f"run {track.run_id} {what}: {type(failure).__name__}: {failure}",
+                         exc_info=failure if isinstance(failure, Exception) else None)
+            track.write_progress(what, snapshot, reason=f"{type(failure).__name__}: {failure}")
+        raise failure
     progress.unlink(missing_ok=True)
     write_results(rows, out_dir / "results.csv")
     if any(uses_rubric(c) for c in design.conditions):
@@ -159,8 +188,9 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     if design.pilot_of is not None:
         totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
+    _log_end(track, totals, out_dir, time.monotonic() - started)
     if totals["missing"]["above_target"]:
-        log(f"WARNING: {totals['missing']['missing']} of {totals['missing']['rows']} rows are missing "
+        warn(f"{totals['missing']['missing']} of {totals['missing']['rows']} rows are missing "
             f"({100 * totals['missing']['share']:.2f}%), above [run] missing_target = "
             f"{100 * totals['missing']['target']:.2f}%; failed calls are not cached, so a rerun asks them again")
     report = stability_report(rows, repeats)
@@ -174,8 +204,70 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
     return Run(rows=rows, repeats=repeats, totals=totals, stability=report, proxy_leaks=leak_summary)
 
 
-def _stderr(message: str) -> None:
-    print(message, file=sys.stderr, flush=True)
+def _stats(meter: MeteredClient) -> dict[str, Any]:
+    """This run's calls and spending so far, for the heartbeat (read from its thread: copies only)."""
+    return dict(calls=sum(dict(meter.calls).values()), allowance_spent=_sum(dict(meter.allowance)),
+                balance_spent=_sum(dict(meter.balance)), failed_calls=sum(dict(meter.failed).values()),
+                timed_out_calls=sum(dict(meter.timed_out).values()))
+
+
+def _corpus_version(design: Design) -> str:
+    try:
+        return str(json.loads((design.corpus_dir / "manifest.json").read_text())["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return design.corpus_dir.name
+
+
+def _log_start(track: runlog.RunLog, design: Design, out_dir: Path, cache_dir: str | Path,
+               config_path: str | Path | None) -> None:
+    """What the run is about to do, in the log: config, code, corpus, models, providers, timeouts and guards.
+
+    Provider base URLs only: never a key, a header or the session id.
+    """
+    try:
+        r = design.run
+        logger.info(f"run {track.run_id} starting{' (pilot slice)' if design.pilot_of is not None else ''}: out "
+                    f"{out_dir}, cache {cache_dir}; run.log and calls.jsonl are appended to")
+        where = Path(config_path).resolve().parent if config_path is not None else Path.cwd()
+        commit, dirty = runlog.git_state(where)
+        code = (f"git {commit} ({'dirty: tracked files differ' if dirty else 'clean'})" if commit
+                else "git commit unknown")
+        if config_path is not None:
+            logger.info(f"config {Path(config_path).resolve()} sha256 {runlog.file_sha256(config_path)}; {code}")
+        else:
+            logger.info(f"config: none given; {code}")
+        logger.info(f"corpus {_corpus_version(design)} at {design.corpus_dir}; roles {design.roles}, languages "
+                    f"{design.languages}, conditions {design.conditions}, {len(design.identities)} identities, "
+                    f"temperature {design.temperature}, seed {design.seed}")
+        judge = design.judge_model if any(uses_rubric(c) for c in design.conditions) else None
+        models = list(dict.fromkeys(design.models + ([judge] if judge else [])))
+        providers = "; ".join(f"{m} -> {p.name} {p.base_url} ({p.billing})"
+                              for m in models for p in [design.provider_for(m)])
+        logger.info(f"models {design.models}" + (f", judge {judge}" if judge else "") + f"; providers: {providers}")
+        logger.info(f"timeouts: request_timeout {r.request_timeout:g}s, connect "
+                    f"{min(20.0, float(r.request_timeout)):g}s; retries {r.retries}, retry_backoff "
+                    f"{r.retry_backoff:g}s, transient_backoff {list(r.transient_backoff)}; rate limits: backoff "
+                    f"{r.rate_limit_backoff:g}s up to {r.rate_limit_max_backoff:g}s, max wait {r.rate_limit_max_wait:g}s")
+        logger.info(f"guards: allowed_billing {list(r.allowed_billing)}, max_consecutive_failures "
+                    f"{r.max_consecutive_failures}, missing_target {r.missing_target:g}; stability sample "
+                    f"{r.repeat_fraction:g} x {r.repeats}; heartbeat every {r.heartbeat_s:g}s")
+    except Exception:  # noqa: BLE001 - the start lines must never stop a run
+        logger.debug("could not log the run's start", exc_info=True)
+
+
+def _log_end(track: runlog.RunLog, totals: dict[str, Any], out_dir: Path, elapsed: float) -> None:
+    try:
+        m = totals["missing"]
+        h, rest = divmod(int(elapsed), 3600)
+        status = ", ".join(f"{k} {v}" for k, v in sorted(totals["status"].items()))
+        logger.info(f"run {track.run_id} done in {h}:{rest // 60:02d}:{rest % 60:02d}: {totals['rows']} rows "
+                    f"({status}); missing {m['missing']} of {m['rows']} due ({100 * m['share']:.2f}%, target "
+                    f"{100 * m['target']:.2f}%); {totals['calls']} calls, {totals['cache_hits']} cache hits, "
+                    f"{totals['failed_calls']} failed, {totals['timed_out_calls']} timed out; allowance "
+                    f"${totals['allowance_spent']:.4f}, balance ${totals['balance_spent']:.4f} this run -> "
+                    f"{out_dir / 'results.csv'}")
+    except Exception:  # noqa: BLE001
+        logger.debug("could not log the run's end", exc_info=True)
 
 
 def _sum(by_model: dict[str, float]) -> float:
@@ -203,13 +295,15 @@ def _progress_line(i: int, n: int, label: str, rows: list[ResultRow], repeats: l
             f"billing {sources}; elapsed {h}:{rest // 60:02d}:{rest % 60:02d}")
 
 
-def _record_stop(path: Path, error: ProviderExhausted, meter: MeteredClient, cache_dir: str | Path) -> None:
+def _record_stop(path: Path, error: ProviderExhausted, meter: MeteredClient, cache_dir: str | Path,
+                 snapshot: dict[str, Any] | None = None) -> None:
     """Write `progress.json` for a run the provider stopped: what it did before stopping and how to resume.
 
     No results table is written for a stopped run; every call it completed is in the cache, so rerunning the
     same command replays them for free and carries on from the first call not yet made. `stop` says what
     stopped it: "limit" (a rate or usage limit, no credits, a refused key), "billing" (a call billed outside
     `[run] allowed_billing`) or "failures" (`[run] max_consecutive_failures` provider errors in a row).
+    `snapshot` adds the run log's last progress numbers (rows done, cache hits, block, ...).
     """
     extra: dict[str, Any] = {}
     if isinstance(error, BillingStop):
@@ -217,14 +311,18 @@ def _record_stop(path: Path, error: ProviderExhausted, meter: MeteredClient, cac
     elif isinstance(error, TooManyFailures):
         extra = dict(model=error.model, failures_in_a_row=error.failures)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(
+    stop = dict(
         status="stopped", stop=error.kind, **extra, reason=str(error),
         stopped_at=datetime.now(UTC).isoformat(timespec="seconds"),
         calls_this_run=dict(meter.calls), billing_sources_this_run=_sources(meter),
         allowance_spent=_sum(meter.allowance), balance_spent=_sum(meter.balance),
         failed_calls=dict(meter.failed), timed_out_calls=dict(meter.timed_out), cache_dir=str(cache_dir),
         resume="rerun the same command: completed calls are replayed from the cache, none is repeated",
-    ), indent=2) + "\n")
+    )
+    data = {**{k: v for k, v in (snapshot or {}).items() if k not in stop}, **stop}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n")
+    tmp.replace(path)
 
 
 def _write_table(records: list[dict[str, Any]], path: Path) -> None:
@@ -458,7 +556,7 @@ def run_experiment(design: Design, client: LLMClient, cache_dir: str | Path) -> 
 
 def _run(design: Design, client: LLMClient, cache_dir: str | Path,
          on_block: Callable[[int, int, str, list[ResultRow], list[ResultRow]], None] | None = None,
-         ) -> tuple[list[ResultRow], list[ResultRow]]:
+         track: runlog.RunLog | None = None) -> tuple[list[ResultRow], list[ResultRow]]:
     """Run the crew on every variant of the design: Screener and Evaluator per CV, then the Ranker per pool,
     plus the stability sample's repeats.
 
@@ -468,8 +566,10 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path,
     Below the cache, `FailureGuard` stops the run after `[run] max_consecutive_failures` provider errors in a
     row on one model; above it, `BillingGuard` stops it on the first fresh answer billed outside
     `[run] allowed_billing` (that answer cached first). `on_block(i, n, label, rows, repeats)` is called after
-    each role x language x condition x model block.
+    each role x language x condition x model block. `track` (the run log) is told the plan, each block, the CV
+    or pool each call is for, and the rows as they are added.
     """
+    track = track if track is not None else runlog.RunLog(None)
     variants = build_variants(design)
     job_ads = {  # read up front, so a missing job ad also fails before any LLM call
         (role, language): (design.corpus_dir / role / f"job_ad.{language}.md").read_text()
@@ -494,16 +594,25 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path,
     rows: list[ResultRow] = []
     repeats: list[ResultRow] = []
     blocks = len(design.roles) * len(design.languages) * len(design.conditions) * len(design.models)
+    groups = {(role, language): [v for v in variants if v.role == role and v.language == language]
+              for role in design.roles for language in design.languages}
+    all_pools = {key: build_pools(design, key[0], key[1], group) for key, group in groups.items()}
+    track.plan(sum(len(groups[key]) * _planned_per_cv(condition, criteria.get(key))
+                   + sum(len(p.members) for p in all_pools[key])
+                   for key in groups for condition in design.conditions for _ in design.models),
+               blocks=blocks, variants=len(variants), pools=sum(len(p) for p in all_pools.values()))
     done = 0
     for role in design.roles:
         for language in design.languages:
             job_ad = job_ads[(role, language)]
-            group = [v for v in variants if v.role == role and v.language == language]
-            pools = build_pools(design, role, language, group)
+            group = groups[(role, language)]
+            pools = all_pools[(role, language)]
             for condition in design.conditions:
                 for model in design.models:
+                    track.block(done + 1, blocks, role=role, language=language, condition=condition, model=model)
                     rubric = criteria.get((role, language)) if uses_rubric(condition) else None
-                    ctx = _Context(cached, design, job_ad, language, condition, model, rubric)
+                    ctx = _Context(cached, design, job_ad, language, condition, model, rubric, track)
+                    per_cv = _planned_per_cv(condition, rubric) - (condition in BLINDING_CONDITIONS)
                     crew_group, crew_pools, unblinded = group, pools, {}
                     if condition in BLINDING_CONDITIONS:  # C1, C3: the crew sees the Blinder's text only
                         blinder_rows, crew_group, unblinded = _blind_group(ctx, group)
@@ -513,28 +622,48 @@ def _run(design: Design, client: LLMClient, cache_dir: str | Path,
                     passed: dict[str, bool | None] = {}
                     block: list[ResultRow] = []
                     for v in crew_group:  # under C1/C3, `v.text` is the blinded text the crew and the judge see
-                        if v.id in unblinded:
-                            block += _not_run(ctx, v, unblinded[v.id])
-                            passed[v.id] = None
-                            continue
-                        screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
-                        block += [screener_row, evaluator_row]
-                        if rubric and evaluator_row.status == "ok":
-                            block.append(_judge(ctx, v, evaluator_row))
-                        passed[v.id] = screener_row.screen_pass
-                        if ctx.sampled(v.id):
-                            for k, again in enumerate(repeat_clients, start=1):
-                                repeats += [replace(r, repeat=k) for r in _screen_and_evaluate(ctx.using(again), v)]
+                        with track.item(**_cv_fields(v)):
+                            if v.id in unblinded:
+                                cv_rows = _not_run(ctx, v, unblinded[v.id])
+                                passed[v.id] = None
+                            else:
+                                screener_row, evaluator_row = _screen_and_evaluate(ctx, v)
+                                cv_rows = [screener_row, evaluator_row]
+                                if rubric and evaluator_row.status == "ok":
+                                    cv_rows.append(_judge(ctx, v, evaluator_row))
+                                passed[v.id] = screener_row.screen_pass
+                                if ctx.sampled(v.id):
+                                    for k, again in enumerate(repeat_clients, start=1):
+                                        with track.item(repeat=k):
+                                            repeats += [replace(r, repeat=k)
+                                                        for r in _screen_and_evaluate(ctx.using(again), v)]
+                            block += cv_rows
+                            track.done(cv_rows, per_cv)
                     rows += _escalate(block, design) if rubric else block
                     for pool in crew_pools:
-                        rows += _rank_pool(ctx, pool, passed)
-                        if ctx.sampled(pool.id):
-                            for k, again in enumerate(repeat_clients, start=1):
-                                repeats += [replace(r, repeat=k) for r in _rank_pool(ctx.using(again), pool, passed)]
+                        with track.item(pool=pool.id, pool_kind=pool.kind):
+                            pool_rows = _rank_pool(ctx, pool, passed)
+                            rows += pool_rows
+                            track.done(pool_rows, len(pool.members))
+                            if ctx.sampled(pool.id):
+                                for k, again in enumerate(repeat_clients, start=1):
+                                    with track.item(repeat=k):
+                                        repeats += [replace(r, repeat=k)
+                                                    for r in _rank_pool(ctx.using(again), pool, passed)]
                     done += 1
                     if on_block is not None:
                         on_block(done, blocks, f"{role}/{language}/{condition}/{model}", rows, repeats)
     return rows, repeats
+
+
+def _planned_per_cv(condition: str, rubric: list[str] | None) -> int:
+    """Result rows per CV variant under `condition`: Screener and Evaluator, plus the Blinder (C1, C3) and the judge
+    (C2, C3; an upper bound, as a judge row only follows a valid Evaluator score)."""
+    return 2 + (condition in BLINDING_CONDITIONS) + (bool(rubric) and uses_rubric(condition))
+
+
+def _cv_fields(v: Variant) -> dict[str, Any]:
+    return dict(variant=v.id, base_cv=v.base_cv, identity=v.identity)
 
 
 @dataclass(frozen=True)
@@ -546,6 +675,7 @@ class _Context:
     condition: str
     model: str
     criteria: list[str] | None = None  # rubric conditions: the job criteria the Evaluator scores
+    track: runlog.RunLog = field(default_factory=lambda: runlog.RunLog(None))  # the run log
 
     def using(self, client: LLMClient) -> _Context:
         return replace(self, client=client)
@@ -653,11 +783,13 @@ def _blind_group(ctx: _Context, group: list[Variant]) -> tuple[list[ResultRow], 
     blinded: list[Variant] = []
     failed: dict[str, str] = {}
     for v in group:
-        out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
-        rows.append(ResultRow(
-            **ctx.key(v, "blinder"), score=None, rationale=out.parsed["blinded_cv"] if out.parsed else "", **_usage(out),
-            status="ok" if text is not None else "missing", error=out.error,
-        ))
+        with ctx.track.item(**_cv_fields(v)):
+            out, text = blind_variant(ctx.client, ctx.design, v, model=ctx.model, retry=ctx.retry)
+            rows.append(ResultRow(
+                **ctx.key(v, "blinder"), score=None, rationale=out.parsed["blinded_cv"] if out.parsed else "",
+                **_usage(out), status="ok" if text is not None else "missing", error=out.error,
+            ))
+            ctx.track.done(rows[-1:], 1)
         if text is None:
             failed[v.id] = f"blinding failed: {out.error}"
             blinded.append(v)

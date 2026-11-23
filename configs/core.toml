@@ -83,6 +83,9 @@ max_consecutive_failures = 10
 transient_backoff = [30, 120, 480]
 # Warn when more than this share of the results rows is missing (#12 target: under 2%).
 missing_target = 0.02
+# Seconds between heartbeat lines in results/run.log (rows done, rate, ETA, current block); each also rewrites
+# progress.json. Per-call records go to results/calls.jsonl (ADR 0005, logs amendment).
+heartbeat_s = 300
 
 # Pilot slice (`hcai run <config> --pilot`): keep the first N levels of each factor; leave a key out to keep all.
 [pilot]

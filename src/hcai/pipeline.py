@@ -30,6 +30,7 @@ from crewai.tasks.conditional_task import ConditionalTask  # noqa: E402
 from crewai.tasks.task_output import TaskOutput  # noqa: E402
 from pydantic import PrivateAttr  # noqa: E402
 
+from hcai import runlog  # noqa: E402
 from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage, add_usage  # noqa: E402
 
 SCREENER_SCHEMA = {
@@ -143,9 +144,10 @@ class ClientLLM(BaseLLM):
     _responses: list[LLMResponse] = PrivateAttr(default_factory=list)
     _attempts: int = PrivateAttr(default=0)
     _last_error: str = PrivateAttr(default="")
+    _agent: str = PrivateAttr(default="")
 
     def __init__(self, client: LLMClient, *, model: str, temperature: float, seed: int | None,
-                 schema: dict[str, Any], validate: Validator, retry: Retry):
+                 schema: dict[str, Any], validate: Validator, retry: Retry, agent: str = ""):
         super().__init__(model=model, temperature=temperature, seed=seed)
         self._client = client
         self._schema = schema
@@ -155,6 +157,7 @@ class ClientLLM(BaseLLM):
         self._responses = []
         self._attempts = 0
         self._last_error = ""
+        self._agent = agent  # its name in the run logs (`hcai.runlog`); not part of any request
 
     def call(self, messages: Any, tools: Any = None, callbacks: Any = None, available_functions: Any = None,
              from_task: Any = None, from_agent: Any = None, response_model: Any = None, **kwargs: Any) -> str:
@@ -170,28 +173,40 @@ class ClientLLM(BaseLLM):
             attempt += 1
             request = self._request(base, note)
             self._attempts += 1
+            logged = runlog.Attempt(self._agent or "agent", attempt, request)
             try:
                 response = self._client.complete(request)
             except Exception as e:  # noqa: BLE001 - provider/network failure: retried, then the crew fails
                 self._last_error = f"call failed: {type(e).__name__}: {e}"
                 if schedule and _is_transient(e):
                     if attempt > max(self._retry.retries, len(schedule)):
+                        logged.failed(e)
                         raise
-                    self._retry.sleep(schedule[min(transient, len(schedule) - 1)])
+                    wait = schedule[min(transient, len(schedule) - 1)]
+                    logged.failed(e, retry=True, wait=wait)
+                    self._retry.sleep(wait)
                     transient += 1
                 else:
                     if attempt > self._retry.retries:
+                        logged.failed(e)
                         raise
+                    wait = self._retry.backoff * 2 ** failures if self._retry.backoff else 0.0
+                    logged.failed(e, retry=True, wait=wait)
                     if self._retry.backoff:
-                        self._retry.sleep(self._retry.backoff * 2 ** failures)
+                        self._retry.sleep(wait)
                 failures += 1
                 continue
+            except BaseException as e:  # a clean stop (ProviderExhausted) or an interrupt: logged, then raised
+                logged.failed(e)
+                raise
             self._responses.append(response)
             try:
                 self._last_error = self._validate(response.parsed)
             except Exception as e:  # noqa: BLE001 - an answer the validator chokes on is malformed
                 self._last_error = f"invalid output: {type(e).__name__}: {e}"
-            if not self._last_error or attempt > self._retry.retries:
+            final = not self._last_error or attempt > self._retry.retries
+            logged.answered(response, error=self._last_error, retry=not final)
+            if final:
                 break
             note = (f"\n\n(Attempt {attempt + 1}. The previous answer was rejected: {self._last_error}. "
                     "Respond only with JSON matching the required schema.)")
@@ -302,14 +317,14 @@ def screen_and_evaluate(client: LLMClient, *, model: str, job_ad: str, cv: str, 
     (`score` is the 0-100 total, `criteria` the per-criterion scores and quotes).
     """
     screener_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=SCREENER_SCHEMA,
-                             validate=_check_screening, retry=retry)
+                             validate=_check_screening, retry=retry, agent="screener")
     if criteria:
         evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed,
                                   schema=rubric_schema(len(criteria)), validate=_rubric_checker(len(criteria)),
-                                  retry=retry)
+                                  retry=retry, agent="evaluator")
     else:
         evaluator_llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=EVALUATOR_SCHEMA,
-                                  validate=_check_evaluation, retry=retry)
+                                  validate=_check_evaluation, retry=retry, agent="evaluator")
     screener = _agent(
         "Screener", "Decide whether each candidate meets every mandatory requirement of the job ad.",
         "You screen CVs for a recruitment team. You check only the mandatory requirements.", screener_llm,
@@ -378,7 +393,7 @@ def rank(client: LLMClient, *, model: str, job_ad: str, cvs: list[str], temperat
         return ""
 
     llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=ranker_schema(n),
-                    validate=check_ranking, retry=retry)
+                    validate=check_ranking, retry=retry, agent="ranker")
     ranker = _agent(
         "Ranker", "Order a pool of screened-in candidates from best to worst fit and shortlist the top 3.",
         "You build shortlists for a recruitment team.", llm,

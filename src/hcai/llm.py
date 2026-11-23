@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
-import sys
 import time
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -25,6 +26,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
+
+from hcai import runlog
+
+logger = logging.getLogger("hcai.llm")
 
 
 def _package_version() -> str:
@@ -401,7 +406,7 @@ class OpenAICompatibleClient:
         self._timeout = http_timeout(timeout)  # sent with every request (`_send`), whichever client carries it
         self._http = http or httpx.Client()
         self._key = api_key
-        self._log = log or _stderr
+        self._log = log or _warn
         self._warned_session = False  # the MissingSessionID warning is printed once per client (one per run)
         extra = {k: v for k, v in (headers or {}).items() if k.lower() not in ("authorization", "user-agent")}
         # masked in error text after the key, longest first; values too short to be secrets are left alone
@@ -420,6 +425,7 @@ class OpenAICompatibleClient:
 
     def _send(self, method: str, url: str, **kw: Any) -> httpx.Response:
         """One HTTP request; a transport failure is re-raised as `ProviderError` with its message redacted."""
+        started = time.monotonic()
         try:
             return self._http.request(method, url, headers=self._headers, timeout=self._timeout, **kw)
         except Exception as e:  # noqa: BLE001 - httpx/h11 messages can quote the Authorization header
@@ -428,9 +434,12 @@ class OpenAICompatibleClient:
             raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}{hint}",
                                 transient=isinstance(e, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)),
                                 timeout=isinstance(e, httpx.TimeoutException)) from None
+        finally:
+            runlog.note(http_s=time.monotonic() - started)
 
     def _check(self, resp: httpx.Response) -> Any:
         """The JSON body of a successful answer; raises `RateLimited`, `ProviderExhausted` or `ProviderError`."""
+        runlog.note(http_status=resp.status_code)
         text = self._redact(resp.text)
         lowered = text.lower()
         if resp.status_code == 401:
@@ -442,7 +451,7 @@ class OpenAICompatibleClient:
         if resp.status_code == 400 and "missingsessionid" in lowered:
             if not self._warned_session:
                 self._warned_session = True
-                self._log(f"WARNING: {self.name}: the session header is missing or rejected (HTTP 400 "
+                self._log(f"{self.name}: the session header is missing or rejected (HTTP 400 "
                           f"MissingSessionID); these calls fail and their rows are recorded as missing. "
                           f"This warning is shown once per run.")
             raise MissingSession(f"{self.name}: HTTP {resp.status_code}: {text}")
@@ -486,6 +495,7 @@ class OpenAICompatibleClient:
         except (KeyError, IndexError, TypeError) as e:
             raise ProviderError(f"{self.name}: no message in the answer: {self._redact(str(data), 300)}") from e
         finish = choice.get("finish_reason") if isinstance(choice, dict) else None
+        runlog.note(finish_reason=finish if isinstance(finish, str) else None)
         if not text.strip() and finish != "stop":
             # cut off (e.g. "length") or no reason given: not an answer, so not cached and asked again on a rerun;
             # an empty answer the model finished ("stop") is an answer, cached and validated like any (ADR 0002)
@@ -513,8 +523,8 @@ class OpenRouterClient(OpenAICompatibleClient):
         super().__init__(self.BASE_URL, key, name="openrouter", usage_include=True, http=http, timeout=timeout)
 
 
-def _stderr(message: str) -> None:
-    print(message, file=sys.stderr, flush=True)
+def _warn(message: str) -> None:
+    logger.warning(message)
 
 
 def _json_or_none(resp: httpx.Response) -> Any:
@@ -535,7 +545,7 @@ class RateLimitGuard:
 
     def __init__(self, inner: LLMClient, *, backoff: float = 30.0, max_backoff: float = 900.0,
                  max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
-                 log: Callable[[str], None] = _stderr, name: str = "", min_wait: float = 5.0):
+                 log: Callable[[str], None] = _warn, name: str = "", min_wait: float = 5.0):
         self.inner = inner
         self.min_wait = min_wait
         self.backoff = backoff
@@ -559,8 +569,11 @@ class RateLimitGuard:
                         f"{self.name or 'provider'}: still limited after waiting {waited:.0f}s "
                         f"(next wait {delay:.0f}s exceeds [run] rate_limit_max_wait = {self.max_wait:.0f}s): {e}"
                     ) from e
-                self.log(f"{self.name or 'provider'} rate/usage limit on {request.model}: "
-                         f"waiting {delay:.0f}s before trying again")
+                resume = datetime.now().astimezone() + timedelta(seconds=delay)
+                self.log(f"{self.name or 'provider'} rate/usage limit on {request.model}: waiting {delay:.0f}s, "
+                         f"resuming at {resume.isoformat(timespec='seconds')} (waited {waited:.0f}s of at most "
+                         f"[run] rate_limit_max_wait = {self.max_wait:.0f}s for this call): {str(e)[:200]}")
+                runlog.rate_limited(request.model, wait=delay, resume_at=resume, waited=waited, error=e)
                 self.sleep(delay)
                 waited += delay
                 failures += 1
@@ -629,7 +642,7 @@ class CachedClient:
     """
 
     def __init__(self, inner: LLMClient, cache_dir: str | Path, *, cache_unparseable: bool = True,
-                 log: Callable[[str], None] = _stderr):
+                 log: Callable[[str], None] = _warn):
         self.inner = inner
         self.log = log
         self.cache_unparseable = cache_unparseable
@@ -637,7 +650,8 @@ class CachedClient:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def complete(self, request: LLMRequest) -> LLMResponse:
-        path = self.cache_dir / f"{request.cache_key()}.json"
+        key = request.cache_key()
+        path = self.cache_dir / f"{key}.json"
         if path.exists():
             try:
                 cached = json.loads(path.read_text())
@@ -645,10 +659,12 @@ class CachedClient:
                                        usage=Usage.from_dict(cached["usage"]), cached=True)
             except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, AttributeError) as e:
                 # a file cut short (zero bytes, a crash mid-write) or not an entry: a miss, dropped and asked again
-                self.log(f"WARNING: cache file {path} does not parse ({type(e).__name__}); deleted, asking again")
+                self.log(f"cache file {path} does not parse ({type(e).__name__}); deleted, asking again")
                 path.unlink(missing_ok=True)
             else:
+                runlog.note(cache="hit", key=key[:16])
                 return response
+        runlog.note(cache="miss", key=key[:16])
         response = self.inner.complete(request)
         if not self.cache_unparseable and request.response_schema is not None and response.parsed is None:
             return response
@@ -685,6 +701,8 @@ class BillingGuard:
 
     def _check(self, request: LLMRequest, source: str | None, *, cached: bool) -> None:
         if self.allowed and not cached and source is not None and source not in self.allowed:
+            logger.warning(f"billing guard: a call to {request.model} was billed to {source!r}, outside [run] "
+                           f"allowed_billing = {list(self.allowed)}; stopping the run")
             raise BillingStop(
                 f"{request.model}: a call was billed to {source!r}, not to [run] allowed_billing = "
                 f"{list(self.allowed)}; its answer is cached. Stopped so nothing more is paid for that way; add "
@@ -708,6 +726,13 @@ class FailureGuard:
         self.limit = limit
         self.in_a_row: dict[str, int] = {}
         self._last_failed: dict[str, str] = {}  # per model, the cache key of the last failed request
+        self._warned_at: dict[str, int] = {}  # per model, the count last warned about (one warning per count)
+
+    def _warned(self, model: str, n: int) -> bool:
+        if self._warned_at.get(model) == n:
+            return True
+        self._warned_at[model] = n
+        return False
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         try:
@@ -718,6 +743,10 @@ class FailureGuard:
                 self.in_a_row[request.model] = self.in_a_row.get(request.model, 0) + 1
                 self._last_failed[request.model] = key
             n = self.in_a_row[request.model]
+            if n >= 5 and not self._warned(request.model, n):
+                logger.warning(f"{request.model}: {n} failed calls in a row"
+                               + (f" (the run stops at [run] max_consecutive_failures = {self.limit})"
+                                  if self.limit else "") + f"; last: {str(e)[:200]}")
             if self.limit and n >= self.limit:
                 raise TooManyFailures(
                     f"{request.model}: {n} failed calls in a row ([run] max_consecutive_failures = "
@@ -725,4 +754,5 @@ class FailureGuard:
             raise
         self.in_a_row[request.model] = 0
         self._last_failed.pop(request.model, None)
+        self._warned_at.pop(request.model, None)
         return response

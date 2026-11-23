@@ -80,7 +80,7 @@ def judge(client: LLMClient, *, model: str, cv: str, evidence: list[dict[str, An
     """
     n = len(evidence)
     llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=judge_schema(n),
-                    validate=_judge_checker(n), retry=retry)
+                    validate=_judge_checker(n), retry=retry, agent="judge")
     listed = "\n\n".join(
         f"{i}. Criterion: {e['criterion']}\n   Score: {e['score']} of {RUBRIC_POINTS}\n   Quote: <<<{e['quote']}>>>"
         for i, e in enumerate(evidence, start=1)

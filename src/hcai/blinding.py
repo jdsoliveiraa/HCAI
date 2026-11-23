@@ -53,7 +53,7 @@ def blind(client: LLMClient, *, model: str, cv: str, temperature: float, seed: i
           retry: Retry = Retry()) -> AgentOutput:
     """Ask the Blinder for an identity-free version of the CV. `parsed["blinded_cv"]` is its text, unchecked."""
     llm = ClientLLM(client, model=model, temperature=temperature, seed=seed, schema=BLINDER_SCHEMA,
-                    validate=_check_blinding, retry=retry)
+                    validate=_check_blinding, retry=retry, agent="blinder")
     blinder = Agent(
         role="Blinder",
         goal="Remove every cue to a candidate's identity from a CV while keeping all job-relevant content.",

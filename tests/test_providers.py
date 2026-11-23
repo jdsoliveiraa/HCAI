@@ -614,7 +614,7 @@ def test_header_values_stay_out_of_the_provider_repr():
     assert SECRET not in repr(provider)
 
 
-def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_refusals(tmp_path, capsys):
+def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_refusals(tmp_path, caplog):
     body = {"error": {"type": "MissingSessionID", "message": "Request is missing x-opencode-session header"}}
     state = {"n": 0}
 
@@ -626,9 +626,9 @@ def test_a_missing_session_run_warns_once_records_missing_rows_and_counts_the_re
     out = tmp_path / "out"
     run = execute(design, routed_client(handler, design=design), out_dir=out, cache_dir=tmp_path / "cache")
 
-    err = capsys.readouterr().err
-    assert err.count("MissingSessionID") == 1  # one warning per run, however many calls fail
-    assert "opencode-go" in err and "session header is missing or rejected" in err
+    warned = [r.getMessage() for r in caplog.records if r.name == "hcai.llm" and r.levelname == "WARNING"]
+    assert len(warned) == 1  # one warning per run, however many calls fail (each call has its own log line too)
+    assert "opencode-go" in warned[0] and "session header is missing or rejected" in warned[0]
     assert state["n"] > 1 and all(r.status == "missing" for r in run.rows)  # retried, then missing: no stop
     summary = json.loads((out / "run_summary.json").read_text())
     assert summary["missing_session_errors"] == state["n"] == summary["calls"]
