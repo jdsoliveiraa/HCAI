@@ -1,0 +1,228 @@
+<title>Ponto de situação HCAI</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one narrow reading column; status strip, then short sections in talking order. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#1b2230; --muted:#5b6474; --line:#dde1e8;
+  --accent:#2d5bd7; --ok:#1f8a4c; --warn:#b26a00; --risk:#b3261e;
+  --display:"Fraunces",Georgia,serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161d; --surface:#1a2029; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c3440;
+  --accent:#7d9cf5; --ok:#5cc98a; --warn:#e3a54a; --risk:#f07b72; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161d; --surface:#1a2029; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c3440;
+  --accent:#7d9cf5; --ok:#5cc98a; --warn:#e3a54a; --risk:#f07b72; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--body)}
+.wrap{max-width:760px;margin:0 auto;padding-block:2rem 3rem;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:1.75rem}
+h1{font:600 2rem/1.15 var(--display);margin:0;text-wrap:balance}
+h2{font:600 .78rem/1 var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 .6rem}
+p{margin:0}
+.sub{color:var(--muted);margin-top:.4rem}
+.meta{font:12px var(--mono);color:var(--muted);margin-top:.6rem}
+.meta a{color:var(--accent)}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.strip div{background:var(--surface);padding:.8rem .9rem}
+.strip b{display:block;font:600 1.35rem/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.strip span{font-size:12px;color:var(--muted)}
+.bar{height:6px;background:var(--line);border-radius:3px;margin-top:.5rem;overflow:hidden}
+.bar i{display:block;height:100%;width:42%;background:var(--accent)}
+ul{margin:0;padding-left:1.1rem;display:grid;gap:.3rem}
+li::marker{color:var(--muted)}
+.tag{display:inline-block;font:600 11px/1 var(--mono);padding:.25rem .4rem;border-radius:4px;margin-right:.35rem;vertical-align:1px}
+.t-ok{color:var(--ok);border:1px solid var(--ok)}
+.t-run{color:var(--accent);border:1px solid var(--accent)}
+.t-next{color:var(--muted);border:1px solid var(--line)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:.45rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600}
+td:first-child{font-weight:600;white-space:nowrap}
+.risk li{list-style:none;margin-left:-1.1rem;padding-left:1rem;border-left:3px solid var(--warn)}
+.risk li.hi{border-color:var(--risk)}
+code{font:13px var(--mono)}
+ol{margin:0;padding-left:1.2rem;display:grid;gap:.3rem}
+.date{font:600 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.lead{font-size:1.05rem;margin-bottom:1rem}
+.steps{display:grid;gap:.7rem;margin-bottom:1.2rem}
+.step{display:grid;grid-template-columns:2rem 1fr;gap:.6rem;align-items:start}
+.step p{color:var(--muted);margin-top:.15rem}
+.n{display:grid;place-items:center;width:1.8rem;height:1.8rem;border-radius:50%;background:var(--accent);color:var(--bg);font:600 13px var(--mono)}
+.tbl{margin-block:.4rem .8rem}
+.t-todo{color:var(--warn);border:1px solid var(--warn)}
+.t-def{color:var(--muted);border:1px dashed var(--muted)}
+.proc td:first-child{white-space:normal;min-width:10rem}
+.proc td:nth-child(2){white-space:nowrap}
+.proc tr.grp td{font:600 12px var(--body);color:var(--accent);letter-spacing:.04em;padding-top:1rem;border-bottom:1px solid var(--accent)}
+@media (max-width:560px){.strip{grid-template-columns:repeat(2,1fr)}h1{font-size:1.6rem}}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Who Gets Shortlisted? — ponto de situação</h1>
+  <p class="sub">Auditoria e mitigação de enviesamento demográfico (género × origem) num pipeline de recrutamento com vários agentes LLM.</p>
+  <p class="meta">23 nov 2026 · ~15:50 UTC · <a href="https://jdsoliveiraa.github.io/HCAI/">site</a> · <a href="https://github.com/jdsoliveiraa/HCAI">repo</a> · entrega final 27 nov</p>
+</header>
+
+<section>
+  <h2>Em resumo</h2>
+  <ul>
+    <li>Pipeline, corpus, verificações e piloto: <b>feitos</b>.</li>
+    <li>Corrida completa (#12): <b>a decorrer</b>, sem erros. Termina esta noite.</li>
+    <li>Análise, figuras e relatório (#13): <b>a seguir</b>, a partir de amanhã.</li>
+    <li>Cerca de 4 dias de atraso face ao plano da proposta. A entrega de 27 nov mantém-se.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Como funciona</h2>
+  <p class="lead"><b>A ideia:</b> damos aos agentes LLM <b>o mesmo CV</b> com <b>8 nomes diferentes</b>. Só o nome muda. Se a decisão muda, é enviesamento.</p>
+
+  <div class="steps">
+    <div class="step"><span class="n">1</span><div><b>Criar os CVs</b>
+      <p>Um LLM separado (gemini) escreve 27 CVs fictícios: 3 papéis (engenheiro de software, enfermeiro, contabilista) × 3 níveis (forte, médio, fraco) × 3. Revistos à mão e congelados.</p></div></div>
+    <div class="step"><span class="n">2</span><div><b>Trocar só o nome</b>
+      <p>Cada CV recebe 8 identidades: homem/mulher × portuguesa, brasileira, angolana, ucraniana. Em EN e em PT-PT. Total: 432 CVs.</p></div></div>
+    <div class="step"><span class="n">3</span><div><b>Passar pelo pipeline de recrutamento</b>
+      <p>Três agentes LLM, como numa empresa: o <b>Screener</b> decide se o CV passa; o <b>Evaluator</b> dá uma nota 0–100 aos que passam; o <b>Ranker</b> recebe grupos de CVs e escolhe os 3 melhores. Testamos 2 modelos: gpt-5.6-luna e qwen3.8-flash.</p></div></div>
+    <div class="step"><span class="n">4</span><div><b>Repetir com mitigações</b>
+      <p>Tudo corre 3 vezes, uma por condição (tabela abaixo).</p></div></div>
+    <div class="step"><span class="n">5</span><div><b>Comparar</b>
+      <p>Para cada CV, comparamos as 8 versões: quem passa, a nota, a posição no ranking. Depois: a mitigação reduz a diferença? E custa qualidade (o CV forte ainda fica acima do fraco)?</p></div></div>
+  </div>
+
+  <div class="tbl"><pre class="mermaid">
+flowchart LR
+  CV["1 CV base<br/>(ex.: enfermeiro, nível médio)"] --> V["8 cópias<br/>só muda o nome"]
+  V --> C0["C0 normal"]
+  V --> C1["C1 Blinder apaga<br/>nome e pistas"]
+  V --> C2["C2 normal"]
+  V -.-> C3["C3 = C1 + C2<br/>NÃO CORRIDA"]
+  C3 -.-> S
+  C0 --> S["Screener<br/>passa?"]
+  C1 --> S
+  C2 --> S
+  S -->|sim| E["Evaluator<br/>nota 0-100"]
+  S -->|sim| R["Ranker<br/>top 3 do grupo"]
+  E -->|só C2| J["Juiz LLM:<br/>citações verdadeiras?"]
+  J -->|dúvida| H["Humano revê"]
+  E --> X["Comparar as 8 versões"]
+  R --> X
+  H --> X
+  style C3 stroke-dasharray: 5 5,color:#888,stroke:#888
+</pre></div>
+
+  <div class="tbl"><table>
+    <thead><tr><th>Condição</th><th>O que muda</th><th>Pergunta</th></tr></thead>
+    <tbody>
+      <tr><td>C0 base</td><td>Nada. O pipeline como está.</td><td>Há enviesamento? Em que agente? (RQ1, RQ2)</td></tr>
+      <tr><td>C1 anonimização</td><td>Um agente Blinder apaga nome, género e origem antes do Screener.</td><td>Esconder a identidade reduz o enviesamento? (RQ3)</td></tr>
+      <tr><td>C2 rubrica</td><td>O Evaluator dá nota por critério e cita o CV. Um juiz LLM verifica as citações. Casos duvidosos ou perto do corte vão a um humano.</td><td>Justificar com provas reduz o enviesamento? O juiz deteta justificações falsas? (RQ3, RQ4)</td></tr>
+      <tr><td>C3 ambas <span class="tag t-next">não corrida</span></td><td>C1 + C2: o Blinder corre primeiro e depois a rubrica, o juiz e o humano.</td><td>Objetivo extra da proposta. Está no código, mas não corre (orçamento).</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">Notas: o Ranker vê só o texto dos CVs que passaram, não as notas do Evaluator, para medir cada agente em separado. A ordem dos CVs no grupo é baralhada e registada.</p>
+</section>
+
+<section>
+  <h2>Corrida completa agora (#12)</h2>
+  <div class="strip">
+    <div><b>~42%</b><span>4 260 de 10 080 linhas</span><div class="bar"><i></i></div></div>
+    <div><b>0</b><span>linhas em falta</span></div>
+    <div><b>16/36</b><span>blocos (enfermeiro / EN / C1 / qwen)</span></div>
+    <div><b>~$9.7</b><span>de ~$24 estimados (teto semanal ~$28)</span></div>
+  </div>
+  <p class="sub" style="margin-top:.6rem">3 papéis × 2 línguas × 3 condições (C0, C1, C2) × 2 modelos. 3 chamadas em paralelo. Cada resposta fica em cache, logo uma paragem retoma sem repetir chamadas.</p>
+</section>
+
+<section>
+  <h2>Processo completo e estado</h2>
+  <p class="sub" style="margin-bottom:.6rem">Todos os passos da proposta, por ordem.
+    <span class="tag t-ok">feito</span><span class="tag t-run">a decorrer</span><span class="tag t-todo">por fazer</span><span class="tag t-def">adiado</span></p>
+  <div class="tbl"><table class="proc">
+    <thead><tr><th>Passo</th><th>Estado</th><th>Detalhe</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">A. Preparar os dados</td></tr>
+      <tr><td>CVs e anúncios sintéticos</td><td><span class="tag t-ok">feito</span></td><td>3 papéis × 3 níveis; 27 CVs base (proposta: ~30). Congelado como <code>corpus-v1</code>.</td></tr>
+      <tr><td>Variantes contrafactuais</td><td><span class="tag t-ok">feito</span></td><td>8 identidades × EN/PT-PT = 432 CVs; 4 nomes por identidade; diferença só demográfica, verificada.</td></tr>
+      <tr><td>Revisão de realismo à mão</td><td><span class="tag t-ok">feito</span></td><td>6 anúncios + 6 CVs; 74 correções registadas.</td></tr>
+      <tr><td>Verificação dos nomes</td><td><span class="tag t-ok">feito</span></td><td>Os 32 nomes sinalizam o género e a origem pretendidos.</td></tr>
+      <tr><td>Piloto e escolha dos modelos</td><td><span class="tag t-ok">feito</span></td><td>1 092 linhas, 0 em falta. Modelos fixados.</td></tr>
+
+      <tr class="grp"><td colspan="3">B. Pipeline e mitigações</td></tr>
+      <tr><td>Screener → Evaluator → Ranker</td><td><span class="tag t-ok">feito</span></td><td>CrewAI; ordem dos CVs no grupo baralhada e registada.</td></tr>
+      <tr><td>C0 base, C1 anonimização, C2 rubrica</td><td><span class="tag t-ok">feito</span></td><td>Implementadas e testadas. Medida de pistas que o Blinder deixa (C1).</td></tr>
+      <tr><td>Juiz LLM + escalonamento (human-in-the-loop)</td><td><span class="tag t-ok">feito</span></td><td>Fila de revisão humana gerada automaticamente em C2.</td></tr>
+      <tr><td>C3 = C1 + C2</td><td><span class="tag t-def">adiado</span></td><td>Objetivo extra. Existe no código, não corre (orçamento).</td></tr>
+      <tr><td>Human-on-the-loop</td><td><span class="tag t-def">adiado</span></td><td>Humano audita amostra aleatória e monitoriza métricas: sem passo próprio; coberto em parte pela auditoria e pelo site.</td></tr>
+
+      <tr class="grp"><td colspan="3">C. Experiência</td></tr>
+      <tr><td>Corrida completa (#12)</td><td><span class="tag t-run">a decorrer</span></td><td>10 080 linhas, ~42%, 0 em falta. Termina esta noite.</td></tr>
+      <tr><td>Amostra de estabilidade</td><td><span class="tag t-run">a decorrer</span></td><td>5% repetido dentro da corrida (substitui o determinismo, que os modelos não dão).</td></tr>
+
+      <tr class="grp"><td colspan="3">D. Análise (código feito e testado com efeitos plantados; falta correr com os dados reais)</td></tr>
+      <tr><td>Diferenças de pontuação (RQ1)</td><td><span class="tag t-todo">por fazer</span></td><td>Modelo misto + logístico, IC bootstrap, Holm. Modelo da RQ3 a rever.</td></tr>
+      <tr><td>Taxas de seleção, impact ratio ≥ 0.8</td><td><span class="tag t-todo">por fazer</span></td><td>Screener e top 3, por identidade.</td></tr>
+      <tr><td>Ranking e posição</td><td><span class="tag t-todo">por fazer</span></td><td>Teste de permutação; efeito da posição em separado.</td></tr>
+      <tr><td>Por agente (RQ2)</td><td><span class="tag t-todo">por fazer</span></td><td>Todas as métricas após cada agente.</td></tr>
+      <tr><td>Qualidade do ranking (RQ3)</td><td><span class="tag t-todo">por fazer</span></td><td>Spearman nota vs. nível; acerto par a par nos grupos mistos.</td></tr>
+      <tr><td>Supervisão (RQ4)</td><td><span class="tag t-todo">por fazer</span></td><td>Taxa de flags do juiz; nº de escalonamentos (custo).</td></tr>
+      <tr><td>Auditoria humana</td><td><span class="tag t-todo">por fazer</span></td><td>50 justificações, 2 avaliadores, κ. Exportação e importação feitas; falta anotar.</td></tr>
+
+      <tr class="grp"><td colspan="3">E. Entrega</td></tr>
+      <tr><td>Figuras, script mestre, README (#13)</td><td><span class="tag t-todo">por fazer</span></td><td>Forest plots, heatmaps de impact ratio, equidade vs. qualidade.</td></tr>
+      <tr><td>Artigo final + código</td><td><span class="tag t-todo">por fazer</span></td><td>27 nov.</td></tr>
+      <tr><td>Idade, interrupção de carreira, mais papéis</td><td><span class="tag t-def">adiado</span></td><td>Objetivos extra da proposta. Fora do âmbito.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Diferenças face à proposta</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Tema</th><th>Proposta</th><th>Feito (porquê)</th></tr></thead>
+    <tbody>
+      <tr><td>Acesso LLM</td><td>OpenRouter</td><td>OpenCode Go (custo); OpenRouter fica como reserva</td></tr>
+      <tr><td>Modelos</td><td>1 comercial + 1 aberto</td><td><code>gpt-5.6-luna</code> + <code>qwen3.8-flash</code>; gerador e juiz <code>gemini-4-argon</code></td></tr>
+      <tr><td>Determinismo</td><td>temp. 0 + seed</td><td>Nenhum modelo é determinístico. Amostra de 5% repetida mede a estabilidade</td></tr>
+      <tr><td>CVs base</td><td>~10 por papel</td><td>9 por papel, 432 variantes (orçamento)</td></tr>
+      <tr><td>PT-PT</td><td>gerados por template</td><td>Gerados em EN e traduzidos, com marcas de género</td></tr>
+      <tr><td>PALOP</td><td>PALOP</td><td>Angola (nomes cabo-verdianos liam-se como PT/BR); Europa de Leste = Ucrânia</td></tr>
+      <tr><td>Verif. nomes</td><td>escolha simples</td><td>Probabilidades por opção, 5 repetições, regra estrita</td></tr>
+      <tr><td>C3 (C1+C2)</td><td>objetivo extra</td><td>Não corrido (orçamento)</td></tr>
+      <tr><td>Calendário</td><td>piloto 15 nov</td><td>Piloto a 23 nov (verificação de nomes e correções do corpus)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Riscos</h2>
+  <ul class="risk">
+    <li class="hi"><b>Prazo.</b> 4 dias para análise, auditoria humana e artigo. A análise já tem código e testes; falta só correr sobre os dados reais.</li>
+    <li><b>Orçamento.</b> ~$24 estimados contra um teto semanal de ~$28. A corrida para sozinha se a faturação mudar de fonte.</li>
+    <li><b>RQ3.</b> O modelo de efeitos mistos, como escrito na proposta, não responde bem à RQ3. A análise final vai indicar o modelo usado.</li>
+    <li><b>Auditoria humana (RQ4).</b> 50 justificações com 2 avaliadores e κ: precisa de um segundo avaliador a tempo.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Próximos passos</h2>
+  <ol>
+    <li><span class="date">23 nov</span> Fim da corrida completa; registar custo real, chamadas e linhas em falta.</li>
+    <li><span class="date">24 nov</span> Análise (#13): diferenças de pontuação, impact ratios, qualidade do ranking, figuras.</li>
+    <li><span class="date">25 nov</span> Auditoria humana de 50 justificações; κ juiz vs. humanos.</li>
+    <li><span class="date">26 nov</span> Rascunho do artigo, com a tabela "proposta vs. feito".</li>
+    <li><span class="date">27 nov</span> Artigo final e código reproduzível.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Perguntas para o professor</h2>
+  <ul>
+    <li>Aceita C3 como não corrido, justificado pelo orçamento?</li>
+    <li>Para a RQ3, prefere manter o modelo misto da proposta ou um modelo mais simples por condição?</li>
+    <li>Quem pode ser o segundo avaliador da auditoria humana?</li>
+  </ul>
+</section>
+</div>
