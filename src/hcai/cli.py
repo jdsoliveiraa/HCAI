@@ -165,11 +165,13 @@ def run_models(design: Design) -> list[str]:
 def make_client(design: Design, models: list[str]) -> ProviderRouter:
     """The real client for `models`: each sent to its provider, rate limits waited out per `[run]`.
 
+    Every call waits `[run] request_timeout` seconds for the answer.
     Fails with `MissingKey` before any call if a key those models need is not set.
     """
     r = design.run
     return provider_client(design.provider_for, models, backoff=r.rate_limit_backoff,
-                           max_backoff=r.rate_limit_max_backoff, max_wait=r.rate_limit_max_wait)
+                           max_backoff=r.rate_limit_max_backoff, max_wait=r.rate_limit_max_wait,
+                           request_timeout=r.request_timeout)
 
 
 def models_command(config: str | Path, provider: str | None = None, http=None) -> str:
@@ -181,7 +183,7 @@ def models_command(config: str | Path, provider: str | None = None, http=None) -
     out = []
     for name in names:
         p = design.providers[name]
-        ids = http_client(p, http=http).list_models()
+        ids = http_client(p, http=http, request_timeout=design.run.request_timeout).list_models()
         out.append(f"{name} ({p.base_url}): {len(ids)} models\n" + "\n".join(f"  {i}" for i in ids))
     return "\n".join(out)
 
@@ -369,7 +371,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         listings: dict[str, list[str] | None] = {}
         for name in dict.fromkeys(design.provider_for(m).name for m in targets):
             try:
-                listings[name] = http_client(design.providers[name]).list_models()
+                listings[name] = http_client(design.providers[name],
+                                             request_timeout=design.run.request_timeout).list_models()
             except Exception as e:  # noqa: BLE001 - the probes still run
                 print(f"check: could not list {name}'s models: {type(e).__name__}: {e}", file=sys.stderr)
                 listings[name] = None

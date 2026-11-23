@@ -2,7 +2,8 @@
 
 `OpenAICompatibleClient` talks to any provider's `/chat/completions` and `/models` (OpenCode Go, OpenRouter;
 see `hcai.providers`). A rate-limit or usage-limit answer raises `RateLimited`; `RateLimitGuard` waits it out
-or, when it cannot, raises `ProviderExhausted`, which stops the run cleanly (see ADR 0005).
+or, when it cannot, raises `ProviderExhausted`, which stops the run cleanly (see ADR 0005). Every HTTP call
+waits `[run] request_timeout` seconds for the answer (`http_timeout`).
 """
 
 from __future__ import annotations
@@ -30,6 +31,32 @@ def _package_version() -> str:
 
 
 USER_AGENT = f"hcai/{_package_version()}"
+
+# Seconds a provider call waits for the answer: the default of `[run] request_timeout`. The pilot's Blinder
+# answers (up to about 11,000 completion tokens) took longer than the 120 s this used to be fixed at.
+DEFAULT_REQUEST_TIMEOUT = 600.0
+# The most `[run] request_timeout` may be: a day. A longer wait is a mistake, and a number of seconds too large
+# for the platform's clock makes every call fail with an OverflowError instead.
+MAX_REQUEST_TIMEOUT = 24 * 3600.0
+# Seconds to open the connection (the TCP connection, then again the TLS handshake): short, so an unreachable
+# provider fails fast whatever the request timeout.
+CONNECT_TIMEOUT = 20.0
+
+
+def http_timeout(request_timeout: float) -> httpx.Timeout:
+    """The HTTP timeouts of a provider call that waits `request_timeout` seconds for the answer.
+
+    `request_timeout` is httpx's read timeout: the longest silence while waiting for or reading the answer
+    (a chat completion is sent whole, so in practice the time the model takes to write it). Sending the
+    request and waiting for a free connection get the same limit; connecting gets `CONNECT_TIMEOUT`, or
+    `request_timeout` if that is shorter. Raises `ValueError` unless it is a number above 0 and at most
+    `MAX_REQUEST_TIMEOUT`.
+    """
+    if (isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float))
+            or not 0 < request_timeout <= MAX_REQUEST_TIMEOUT):
+        raise ValueError(f"request_timeout must be a number of seconds > 0 and at most {MAX_REQUEST_TIMEOUT:.0f} "
+                         f"(a day), not {request_timeout!r}")
+    return httpx.Timeout(float(request_timeout), connect=min(CONNECT_TIMEOUT, float(request_timeout)))
 
 
 @dataclass(frozen=True)
@@ -229,10 +256,15 @@ class OpenAICompatibleClient:
     Every call also sends `User-Agent: hcai/<version>` and the `headers` given (e.g. OpenCode Go's
     `x-opencode-session`). They are transport details: never part of the `LLMRequest`, so never in the cache
     key, the cache or the results, and their values are masked in error text like the key.
+
+    `timeout` is the seconds a call waits for the answer (`[run] request_timeout`, see `http_timeout`). It is
+    set on every request, so it also holds on a client passed in as `http`, and like the headers it is no
+    part of the `LLMRequest` or of the request body.
     """
 
     def __init__(self, base_url: str, api_key: str, *, name: str = "", usage_include: bool = False,
-                 subscription: bool = False, http: httpx.Client | None = None, timeout: float = 120.0,
+                 subscription: bool = False, http: httpx.Client | None = None,
+                 timeout: float = DEFAULT_REQUEST_TIMEOUT,
                  headers: dict[str, str] | None = None, log: Callable[[str], None] | None = None):
         api_key = api_key.strip()  # a stray space or newline would make httpx echo the key in its error
         if not api_key:
@@ -241,7 +273,8 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.usage_include = usage_include
         self.subscription = subscription
-        self._http = http or httpx.Client(timeout=timeout)
+        self._timeout = http_timeout(timeout)  # sent with every request (`_send`), whichever client carries it
+        self._http = http or httpx.Client()
         self._key = api_key
         self._log = log or _stderr
         self._warned_session = False  # the MissingSessionID warning is printed once per client (one per run)
@@ -263,9 +296,11 @@ class OpenAICompatibleClient:
     def _send(self, method: str, url: str, **kw: Any) -> httpx.Response:
         """One HTTP request; a transport failure is re-raised as `ProviderError` with its message redacted."""
         try:
-            return self._http.request(method, url, headers=self._headers, **kw)
+            return self._http.request(method, url, headers=self._headers, timeout=self._timeout, **kw)
         except Exception as e:  # noqa: BLE001 - httpx/h11 messages can quote the Authorization header
-            raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}") from None
+            hint = (f" (no answer within [run] request_timeout = {self._timeout.read:.10g}s)"
+                    if isinstance(e, httpx.ReadTimeout) else "")
+            raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}{hint}") from None
 
     def _check(self, resp: httpx.Response) -> Any:
         """The JSON body of a successful answer; raises `RateLimited`, `ProviderExhausted` or `ProviderError`."""
@@ -335,7 +370,8 @@ class OpenRouterClient(OpenAICompatibleClient):
 
     BASE_URL = "https://openrouter.ai/api/v1"
 
-    def __init__(self, api_key: str | None = None, http: httpx.Client | None = None, timeout: float = 120.0):
+    def __init__(self, api_key: str | None = None, http: httpx.Client | None = None,
+                 timeout: float = DEFAULT_REQUEST_TIMEOUT):
         key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise RuntimeError("OPENROUTER_API_KEY is not set")

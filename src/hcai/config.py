@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from hcai.llm import DEFAULT_REQUEST_TIMEOUT, http_timeout
 from hcai.names import GENDERS, NameBank, load_name_bank
 from hcai.providers import BUILTIN_PROVIDERS, DEFAULT_PROVIDER, Provider
 
@@ -78,6 +79,17 @@ class RunSettings:
     rate_limit_backoff: float = 30.0
     rate_limit_max_backoff: float = 900.0
     rate_limit_max_wait: float = 6 * 3600.0
+    # Seconds every provider call waits for the answer (the HTTP read timeout, see `hcai.llm.http_timeout`):
+    # above 0, at most a day. A call that times out fails like any failed call (in a run: retried, then its
+    # rows are missing). Not part of a request: changing it changes no cache key. The default leaves room for
+    # the longest answers of the pilot (the Blinder's).
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+
+    def __post_init__(self) -> None:
+        try:
+            http_timeout(self.request_timeout)
+        except ValueError as e:
+            raise ValueError(f"[run] {e}") from None
 
 
 @dataclass(frozen=True)

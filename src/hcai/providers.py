@@ -8,7 +8,8 @@ fills from a gitignored `.env` file; they are only ever sent in the Authorizatio
 
 A provider may also send extra HTTP headers (`headers`) and a session header (`session_header`) whose value
 is `SESSION_ID`, one random id per process: OpenCode Go refuses calls without `x-opencode-session`. Neither
-is part of a request, so neither reaches the cache key, the cache or the results.
+is part of a request, so neither reaches the cache key, the cache or the results. The same holds for
+`request_timeout`, the seconds every provider's client waits for an answer (`[run] request_timeout`).
 """
 
 from __future__ import annotations
@@ -23,7 +24,10 @@ from pathlib import Path
 
 import httpx
 
-from hcai.llm import LLMClient, LLMRequest, LLMResponse, OpenAICompatibleClient, RateLimitGuard
+from hcai.llm import (
+    DEFAULT_REQUEST_TIMEOUT, LLMClient, LLMRequest, LLMResponse, OpenAICompatibleClient, RateLimitGuard,
+    http_timeout,
+)
 
 BILLING = ("metered", "subscription")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")  # an RFC 9110 token
@@ -146,30 +150,37 @@ def check_keys(providers: Iterable[Provider], environ: Mapping[str, str] | None 
 
 
 def http_client(provider: Provider, environ: Mapping[str, str] | None = None,
-                http: httpx.Client | None = None) -> OpenAICompatibleClient:
-    """The raw HTTP client of `provider`, with its key from the environment."""
+                http: httpx.Client | None = None, *,
+                request_timeout: float = DEFAULT_REQUEST_TIMEOUT) -> OpenAICompatibleClient:
+    """The raw HTTP client of `provider`, with its key from the environment.
+
+    Each of its calls waits `request_timeout` seconds for the answer (`[run] request_timeout`).
+    """
     env = os.environ if environ is None else environ
     check_keys([provider], env)
     return OpenAICompatibleClient(provider.base_url, env[provider.key_env], name=provider.name,
                                   usage_include=provider.usage_include,
                                   subscription=provider.billing == "subscription", http=http,
-                                  headers=provider.http_headers())
+                                  timeout=request_timeout, headers=provider.http_headers())
 
 
 def provider_client(
     provider_of: Callable[[str], Provider], models: Iterable[str], *, environ: Mapping[str, str] | None = None,
     http: httpx.Client | None = None, backoff: float = 30.0, max_backoff: float = 900.0,
     max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> ProviderRouter:
     """A client for `models`, each routed to its provider behind a `RateLimitGuard`.
 
     The keys of every provider `models` need are checked up front, so a missing key fails before any call.
+    Every provider's calls wait `request_timeout` seconds for the answer (`[run] request_timeout`).
     """
     env = os.environ if environ is None else environ
     check_keys({provider_of(m) for m in models}, env)
+    http_timeout(request_timeout)  # an invalid one fails here, not at the first call (clients are made lazily)
 
     def make(provider: Provider) -> LLMClient:
-        return RateLimitGuard(http_client(provider, env, http), backoff=backoff, max_backoff=max_backoff,
-                              max_wait=max_wait, sleep=sleep, name=provider.name)
+        return RateLimitGuard(http_client(provider, env, http, request_timeout=request_timeout), backoff=backoff,
+                              max_backoff=max_backoff, max_wait=max_wait, sleep=sleep, name=provider.name)
 
     return ProviderRouter(provider_of, make)
