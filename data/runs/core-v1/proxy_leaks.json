@@ -1,0 +1,54 @@
+[
+  {
+    "model": "gpt-5.6-luna",
+    "condition": "C1",
+    "language": "en",
+    "cvs": 216,
+    "with_redactions": 42,
+    "redacted": 128,
+    "with_own_gender_words": 0,
+    "mean_own_gender_words": 0,
+    "universities_kept": 1.0,
+    "languages_kept": 1.0,
+    "location_kept": 0.9907
+  },
+  {
+    "model": "qwen3.8-flash",
+    "condition": "C1",
+    "language": "en",
+    "cvs": 216,
+    "with_redactions": 50,
+    "redacted": 118,
+    "with_own_gender_words": 0,
+    "mean_own_gender_words": 0,
+    "universities_kept": 1.0,
+    "languages_kept": 0.9954,
+    "location_kept": 0.4954
+  },
+  {
+    "model": "gpt-5.6-luna",
+    "condition": "C1",
+    "language": "pt",
+    "cvs": 216,
+    "with_redactions": 215,
+    "redacted": 5313,
+    "with_own_gender_words": 1,
+    "mean_own_gender_words": 0.0093,
+    "universities_kept": 1.0,
+    "languages_kept": 1.0,
+    "location_kept": 0.9491
+  },
+  {
+    "model": "qwen3.8-flash",
+    "condition": "C1",
+    "language": "pt",
+    "cvs": 216,
+    "with_redactions": 212,
+    "redacted": 4658,
+    "with_own_gender_words": 7,
+    "mean_own_gender_words": 0.0463,
+    "universities_kept": 1.0,
+    "languages_kept": 1.0,
+    "location_kept": 0.5278
+  }
+]

@@ -1,0 +1,255 @@
+{
+  "rows": 10076,
+  "status": {
+    "ok": 10056,
+    "rejected": 20
+  },
+  "attempts": 7607,
+  "prompt_tokens": 10829074,
+  "completion_tokens": 9167120,
+  "cost_total": 30.705463,
+  "unpriced_attempts": 0,
+  "allowance_total": 30.705463,
+  "not_go_attempts": 0,
+  "calls": 3701,
+  "cache_hits": 3906,
+  "cost_spent": 18.194266,
+  "unpriced_calls": 0,
+  "allowance_spent": 18.194266,
+  "balance_spent": 0.0,
+  "billing_sources": {
+    "go": 3701
+  },
+  "not_go_calls": 0,
+  "not_allowed_billing_calls": 0,
+  "missing_session_errors": 0,
+  "failed_calls": 0,
+  "timed_out_calls": 0,
+  "by_model": {
+    "gpt-5.6-luna": {
+      "attempts": 3371,
+      "prompt_tokens": 4584490,
+      "completion_tokens": 1094157,
+      "cost_total": 9.438106,
+      "unpriced_attempts": 0,
+      "allowance_total": 9.438106,
+      "not_go_attempts": 0,
+      "calls": 1478,
+      "cache_hits": 1893,
+      "cost_spent": 4.938767,
+      "unpriced_calls": 0,
+      "allowance_spent": 4.938767,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 1478
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "qwen3.8-flash": {
+      "attempts": 3376,
+      "prompt_tokens": 4838448,
+      "completion_tokens": 7724621,
+      "cost_total": 8.675973,
+      "unpriced_attempts": 0,
+      "allowance_total": 8.675973,
+      "not_go_attempts": 0,
+      "calls": 1668,
+      "cache_hits": 1708,
+      "cost_spent": 5.145171,
+      "unpriced_calls": 0,
+      "allowance_spent": 5.145171,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 1668
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "gemini-4-argon": {
+      "attempts": 860,
+      "prompt_tokens": 1406136,
+      "completion_tokens": 348342,
+      "cost_total": 12.591384,
+      "unpriced_attempts": 0,
+      "allowance_total": 12.591384,
+      "not_go_attempts": 0,
+      "calls": 555,
+      "cache_hits": 305,
+      "cost_spent": 8.110328,
+      "unpriced_calls": 0,
+      "allowance_spent": 8.110328,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 555
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    }
+  },
+  "by_agent": {
+    "screener": {
+      "attempts": 2740,
+      "prompt_tokens": 2997313,
+      "completion_tokens": 834761,
+      "cost_total": 3.084926,
+      "unpriced_attempts": 0,
+      "allowance_total": 3.084926,
+      "not_go_attempts": 0
+    },
+    "evaluator": {
+      "attempts": 2730,
+      "prompt_tokens": 3220472,
+      "completion_tokens": 2696503,
+      "cost_total": 6.113387,
+      "unpriced_attempts": 0,
+      "allowance_total": 6.113387,
+      "not_go_attempts": 0
+    },
+    "ranker": {
+      "attempts": 413,
+      "prompt_tokens": 2405851,
+      "completion_tokens": 668017,
+      "cost_total": 2.385364,
+      "unpriced_attempts": 0,
+      "allowance_total": 2.385364,
+      "not_go_attempts": 0
+    },
+    "blinder": {
+      "attempts": 864,
+      "prompt_tokens": 799302,
+      "completion_tokens": 4619497,
+      "cost_total": 6.530401,
+      "unpriced_attempts": 0,
+      "allowance_total": 6.530401,
+      "not_go_attempts": 0
+    },
+    "judge": {
+      "attempts": 860,
+      "prompt_tokens": 1406136,
+      "completion_tokens": 348342,
+      "cost_total": 12.591384,
+      "unpriced_attempts": 0,
+      "allowance_total": 12.591384,
+      "not_go_attempts": 0
+    }
+  },
+  "repeat_sample": {
+    "attempts": 313,
+    "prompt_tokens": 439097,
+    "completion_tokens": 243872,
+    "cost_total": 0.466891,
+    "unpriced_attempts": 0,
+    "allowance_total": 0.466891,
+    "not_go_attempts": 0
+  },
+  "allowed_billing": [
+    "go"
+  ],
+  "missing": {
+    "rows": 10056,
+    "missing": 0,
+    "share": 0.0,
+    "target": 0.02,
+    "above_target": false,
+    "by_cell": {
+      "gpt-5.6-luna/C0/en": {
+        "rows": 696,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C0/en": {
+        "rows": 692,
+        "missing": 0,
+        "share": 0.0
+      },
+      "gpt-5.6-luna/C1/en": {
+        "rows": 912,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C1/en": {
+        "rows": 910,
+        "missing": 0,
+        "share": 0.0
+      },
+      "gpt-5.6-luna/C2/en": {
+        "rows": 912,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C2/en": {
+        "rows": 906,
+        "missing": 0,
+        "share": 0.0
+      },
+      "gpt-5.6-luna/C0/pt": {
+        "rows": 694,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C0/pt": {
+        "rows": 694,
+        "missing": 0,
+        "share": 0.0
+      },
+      "gpt-5.6-luna/C1/pt": {
+        "rows": 910,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C1/pt": {
+        "rows": 912,
+        "missing": 0,
+        "share": 0.0
+      },
+      "gpt-5.6-luna/C2/pt": {
+        "rows": 909,
+        "missing": 0,
+        "share": 0.0
+      },
+      "qwen3.8-flash/C2/pt": {
+        "rows": 909,
+        "missing": 0,
+        "share": 0.0
+      }
+    }
+  },
+  "oversight": {
+    "C2": {
+      "gpt-5.6-luna": {
+        "decisions": 431,
+        "judged": 431,
+        "flagged": 14,
+        "near_cutoff": 142,
+        "judge_missing": 0,
+        "evaluator_missing": 0,
+        "escalated": 151
+      },
+      "qwen3.8-flash": {
+        "decisions": 429,
+        "judged": 429,
+        "flagged": 14,
+        "near_cutoff": 143,
+        "judge_missing": 0,
+        "evaluator_missing": 0,
+        "escalated": 155
+      }
+    }
+  }
+}

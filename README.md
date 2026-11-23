@@ -109,7 +109,7 @@ Options: `--out DIR` (default `results/`, or `results/pilot/` with `--pilot`), `
 
 ## Identity and language variants
 
-Each base CV is rendered into 8 identity variants (2 genders × 4 origins: Portuguese, Brazilian, PALOP represented by Cape Verde, Eastern European represented by Ukraine) in every language of the design (EN, PT-PT). Only demographic cues change: the name, the nationality, pronouns and PT-PT grammatical gender. Every variant also states the right to work in Portugal and native-level (C2) Portuguese.
+Each base CV is rendered into 8 identity variants (2 genders × 4 origins: Portuguese, Brazilian, PALOP represented by Angola, Eastern European represented by Ukraine) in every language of the design (EN, PT-PT). Only demographic cues change: the name, the nationality, pronouns and PT-PT grammatical gender. Every variant also states the right to work in Portugal and native-level (C2) Portuguese.
 
 ```sh
 uv run hcai variants configs/variants.toml               # render + check, write data/variants/

@@ -27,11 +27,14 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 
 - Pilot (1 role × 1 base CV per level): 1,092 rows, 0 missing (after `[run] request_timeout = 600`; qwen's Blinder
   writes up to 11k tokens on PT CVs).
-- Full-run cost estimate: $29.70 of Go allowance (judge $12.8). Actual cost: fill in after #12.
+- Full-run cost estimate: $29.70 of Go allowance (judge $12.8). Actual: about $28.3 of allowance, $0 balance
+  (`data/runs/core-v1/README.md`).
+- Full run (#12, 23 Nov): 10,076 rows, 0 missing (target under 2%); 0 failed calls, 0 timeouts, 0 rate-limit
+  waits; about 19.5 h, the last 7 h with 3 calls in flight (`[run] concurrency`, same requests and cache keys).
+- Go caps measured during the run: monthly about $54, weekly about $28 (50%), 5 h about $11 (20%).
 - Name check: lowest cell, female Brazilian, mean p(origin) 0.648; all others ≥ 0.68.
 
 ## Fill in later
 
-- #12: actual calls, cost, missing rows, run time, rate-limit waits.
 - #13: the analysis actually used (proposal: mixed-effects model with the formula in §Evaluation; the validation
   report notes it cannot answer RQ3 as written), the human audit (proposal: 50 justifications, two raters, κ).
