@@ -1,4 +1,4 @@
-# Software Engineer (Lisbon, Portugal (Hybrid))
+# Software Engineer (Lisbon, Portugal, hybrid)
 
 TejoTech Solutions, a fast-growing technology company based in Lisbon, is seeking a skilled Software Engineer to join our core platform team. You will be responsible for designing, building, and maintaining scalable cloud-native microservices for our European enterprise clients.
 
@@ -11,5 +11,5 @@ TejoTech Solutions, a fast-growing technology company based in Lisbon, is seekin
 ## Desirable requirements
 - Mestrado (master's degree) in Software Engineering or Distributed Systems
 - Experience deploying and managing applications on AWS or Azure using Docker and Kubernetes
-- Familiarity with frontend development frameworks such as React or TypeScript
+- Familiarity with frontend development using React and TypeScript
 - Prior experience working in Agile/Scrum environments and setting up CI/CD pipelines

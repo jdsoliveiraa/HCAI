@@ -1,6 +1,6 @@
 # Enfermeiro/a - Internamento (Lisboa, Portugal)
 
-O Hospital Lusíadas Alvalade (unidade fictícia) procura um/a Enfermeiro/a dedicado/a para integrar o nosso Serviço de Internamento Médico-Cirúrgico. O/A candidato/a selecionado/a irá prestar cuidados de enfermagem de elevada qualidade e centrados no utente, administrar terapêutica, monitorizar sinais vitais e colaborar estreitamente com uma equipa multidisciplinar de saúde num ambiente hospitalar dinâmico.
+O Hospital Central de Alvalade procura um/a Enfermeiro/a dedicado/a para integrar o nosso Serviço de Internamento Médico-Cirúrgico. O/A candidato/a selecionado/a irá prestar cuidados de enfermagem de elevada qualidade e centrados no utente, administrar terapêutica, monitorizar sinais vitais e colaborar estreitamente com uma equipa multidisciplinar de saúde num ambiente hospitalar dinâmico.
 
 ## Requisitos obrigatórios
 - Licenciatura em Enfermagem reconhecida em Portugal.

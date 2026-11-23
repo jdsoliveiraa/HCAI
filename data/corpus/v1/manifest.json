@@ -19,7 +19,7 @@
     "software_engineer": {
       "role": "software_engineer",
       "title": "Software Engineer",
-      "location": "Lisbon, Portugal (Hybrid)",
+      "location": "Lisbon, Portugal, hybrid",
       "summary": "TejoTech Solutions, a fast-growing technology company based in Lisbon, is seeking a skilled Software Engineer to join our core platform team. You will be responsible for designing, building, and maintaining scalable cloud-native microservices for our European enterprise clients.",
       "mandatory": [
         "Licenciatura (bachelor's degree) in Computer Science, Software Engineering (Engenharia Informática), or a closely related field",
@@ -30,7 +30,7 @@
       "desirable": [
         "Mestrado (master's degree) in Software Engineering or Distributed Systems",
         "Experience deploying and managing applications on AWS or Azure using Docker and Kubernetes",
-        "Familiarity with frontend development frameworks such as React or TypeScript",
+        "Familiarity with frontend development using React and TypeScript",
         "Prior experience working in Agile/Scrum environments and setting up CI/CD pipelines"
       ],
       "language": "en"
@@ -39,7 +39,7 @@
       "role": "nurse",
       "title": "Registered Nurse (Enfermeiro/a) - Inpatient Care",
       "location": "Lisbon, Portugal",
-      "summary": "Hospital Lusíadas Alvalade (fictitious unit) is seeking a dedicated Registered Nurse to join our Medical-Surgical Inpatient Department. The successful candidate will provide high-quality, patient-centred nursing care, administer medication, monitor vital signs, and collaborate closely with a multidisciplinary healthcare team in a fast-paced hospital environment.",
+      "summary": "Hospital Central de Alvalade is seeking a dedicated Registered Nurse to join our Medical-Surgical Inpatient Department. The successful candidate will provide high-quality, patient-centred nursing care, administer medication, monitor vital signs, and collaborate closely with a multidisciplinary healthcare team in a fast-paced hospital environment.",
       "mandatory": [
         "Bachelor's degree in Nursing (Licenciatura em Enfermagem) recognized in Portugal.",
         "Valid and active professional license issued by the Portuguese Order of Nurses (Cédula Profissional da Ordem dos Enfermeiros).",
@@ -388,11 +388,11 @@
     "pt": {
       "software_engineer": {
         "role": "software_engineer",
-        "title": "Engenheiro de Software (Software Engineer)",
-        "location": "Lisboa, Portugal (Híbrido)",
+        "title": "Engenheiro de Software",
+        "location": "Lisboa, Portugal, regime híbrido",
         "summary": "A TejoTech Solutions, uma empresa de tecnologia em rápido crescimento sediada em Lisboa, procura um Engenheiro de Software qualificado para integrar a nossa equipa da plataforma principal. Será responsável por desenhar, construir e manter microsserviços nativos na cloud escaláveis para os nossos clientes empresariais europeus.",
         "mandatory": [
-          "Licenciatura em Ciência de Computadores, Engenharia de Software (Engenharia Informática) ou numa área estritamente relacionada",
+          "Licenciatura em Ciência de Computadores, Engenharia de Software (Engenharia Informática) ou numa área estreitamente relacionada",
           "Pelo menos 3 anos de experiência profissional como Engenheiro de Software backend ou full-stack",
           "Mínimo de 2 anos de experiência prática em ambiente de produção com Python ou Java e bases de dados relacionais (PostgreSQL ou MySQL)",
           "Fluência profissional completa em Português e Inglês (nível mínimo C1)"
@@ -400,7 +400,7 @@
         "desirable": [
           "Mestrado em Engenharia de Software ou Sistemas Distribuídos",
           "Experiência na implementação e gestão de aplicações em AWS ou Azure utilizando Docker e Kubernetes",
-          "Familiaridade com frameworks de desenvolvimento frontend como React ou TypeScript",
+          "Familiaridade com desenvolvimento frontend em React e TypeScript",
           "Experiência prévia a trabalhar em ambientes Agile/Scrum e na configuração de pipelines de CI/CD"
         ],
         "language": "pt"
@@ -409,7 +409,7 @@
         "role": "nurse",
         "title": "Enfermeiro/a - Internamento",
         "location": "Lisboa, Portugal",
-        "summary": "O Hospital Lusíadas Alvalade (unidade fictícia) procura um/a Enfermeiro/a dedicado/a para integrar o nosso Serviço de Internamento Médico-Cirúrgico. O/A candidato/a selecionado/a irá prestar cuidados de enfermagem de elevada qualidade e centrados no utente, administrar terapêutica, monitorizar sinais vitais e colaborar estreitamente com uma equipa multidisciplinar de saúde num ambiente hospitalar dinâmico.",
+        "summary": "O Hospital Central de Alvalade procura um/a Enfermeiro/a dedicado/a para integrar o nosso Serviço de Internamento Médico-Cirúrgico. O/A candidato/a selecionado/a irá prestar cuidados de enfermagem de elevada qualidade e centrados no utente, administrar terapêutica, monitorizar sinais vitais e colaborar estreitamente com uma equipa multidisciplinar de saúde num ambiente hospitalar dinâmico.",
         "mandatory": [
           "Licenciatura em Enfermagem reconhecida em Portugal.",
           "Cédula Profissional válida e ativa emitida pela Ordem dos Enfermeiros de Portugal.",

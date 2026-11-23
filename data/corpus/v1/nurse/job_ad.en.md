@@ -1,6 +1,6 @@
 # Registered Nurse (Enfermeiro/a) - Inpatient Care (Lisbon, Portugal)
 
-Hospital Lusíadas Alvalade (fictitious unit) is seeking a dedicated Registered Nurse to join our Medical-Surgical Inpatient Department. The successful candidate will provide high-quality, patient-centred nursing care, administer medication, monitor vital signs, and collaborate closely with a multidisciplinary healthcare team in a fast-paced hospital environment.
+Hospital Central de Alvalade is seeking a dedicated Registered Nurse to join our Medical-Surgical Inpatient Department. The successful candidate will provide high-quality, patient-centred nursing care, administer medication, monitor vital signs, and collaborate closely with a multidisciplinary healthcare team in a fast-paced hospital environment.
 
 ## Mandatory requirements
 - Bachelor's degree in Nursing (Licenciatura em Enfermagem) recognized in Portugal.
