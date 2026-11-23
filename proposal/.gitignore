@@ -13,3 +13,5 @@
 preview/
 # keep the PDF out of history; build it locally
 *.pdf
+# overleaf-mcp link to the private Overleaf project; keep local
+.overleaf-project.json
