@@ -99,6 +99,11 @@ class RunSettings:
     missing_target: float = 0.02
     # Seconds between heartbeat lines in the run log (rows done, rate, ETA), each also rewriting progress.json.
     heartbeat_s: float = 300.0
+    # Agent calls in flight at once (ADR 0005, concurrency amendment): within each role x language x condition x
+    # model block, the CV variants (Blinder -> Screener -> Evaluator -> judge) and the Ranker pools (once their CVs
+    # are screened) run on up to this many workers. 1 runs everything one after the other. Requests, cache keys and
+    # results.csv are the same whatever the value.
+    concurrency: int = 1
 
     def __post_init__(self) -> None:
         try:
@@ -119,6 +124,9 @@ class RunSettings:
         t = self.missing_target
         if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 <= t <= 1:
             raise ValueError(f"[run] missing_target must be a share between 0 and 1, not {t!r}")
+        c = self.concurrency
+        if isinstance(c, bool) or not isinstance(c, int) or not 1 <= c <= 64:
+            raise ValueError(f"[run] concurrency must be a whole number from 1 to 64, not {c!r}")
         h = self.heartbeat_s
         if isinstance(h, bool) or not isinstance(h, (int, float)) or not 0 < h <= 86400:
             raise ValueError(f"[run] heartbeat_s must be a number of seconds > 0 and at most 86400, not {h!r}")

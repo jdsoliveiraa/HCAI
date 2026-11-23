@@ -20,7 +20,6 @@ for _key, _value in {
     os.environ.setdefault(_key, _value)
 
 import json  # noqa: E402
-import time  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from dataclasses import dataclass, replace  # noqa: E402
 from typing import Any  # noqa: E402
@@ -31,7 +30,7 @@ from crewai.tasks.task_output import TaskOutput  # noqa: E402
 from pydantic import PrivateAttr  # noqa: E402
 
 from hcai import runlog  # noqa: E402
-from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage, add_usage  # noqa: E402
+from hcai.llm import LLMClient, LLMRequest, LLMResponse, Usage, add_usage, interruptible_sleep  # noqa: E402
 
 SCREENER_SCHEMA = {
     "type": "object",
@@ -100,6 +99,9 @@ class AgentOutput:
     cached: bool
     error: str = ""
     attempts: int = 0  # LLM calls made for this agent, retries included
+    # (cache key, served from the cache) of each answer, in order: lets a concurrent run give the `cached` flag of
+    # a request two CVs share to the one that comes first sequentially (`hcai.runner`); not part of any request
+    calls: tuple[tuple[str, bool], ...] = ()
 
 
 Validator = Callable[[Any], str]  # parsed output -> error message, or "" when valid
@@ -121,7 +123,7 @@ class Retry:
 
     retries: int = 2
     backoff: float = 0.0
-    sleep: Callable[[float], None] = time.sleep
+    sleep: Callable[[float], None] = interruptible_sleep  # ends early when the run stops
     transient_backoff: tuple[float, ...] = ()
 
 
@@ -142,6 +144,7 @@ class ClientLLM(BaseLLM):
     _validate: Validator = PrivateAttr()
     _retry: Retry = PrivateAttr()
     _responses: list[LLMResponse] = PrivateAttr(default_factory=list)
+    _keys: list[str] = PrivateAttr(default_factory=list)
     _attempts: int = PrivateAttr(default=0)
     _last_error: str = PrivateAttr(default="")
     _agent: str = PrivateAttr(default="")
@@ -155,6 +158,7 @@ class ClientLLM(BaseLLM):
         self._validate = validate
         self._retry = retry
         self._responses = []
+        self._keys = []
         self._attempts = 0
         self._last_error = ""
         self._agent = agent  # its name in the run logs (`hcai.runlog`); not part of any request
@@ -200,6 +204,7 @@ class ClientLLM(BaseLLM):
                 logged.failed(e)
                 raise
             self._responses.append(response)
+            self._keys.append(request.cache_key())
             try:
                 self._last_error = self._validate(response.parsed)
             except Exception as e:  # noqa: BLE001 - an answer the validator chokes on is malformed
@@ -237,13 +242,15 @@ class ClientLLM(BaseLLM):
         usage = add_usage([r.usage for r in self._responses])
         cached = bool(self._responses) and all(r.cached for r in self._responses)
         last = self._responses[-1] if self._responses else None
+        calls = tuple(zip(self._keys, (r.cached for r in self._responses), strict=True))
         if not error:
             error = "no response" if not self._attempts else self._last_error
         if error:
             snippet = f": {last.text[:200]!r}" if last is not None else ""
-            return AgentOutput(parsed=None, usage=usage, cached=cached, error=error + snippet, attempts=self._attempts)
+            return AgentOutput(parsed=None, usage=usage, cached=cached, error=error + snippet, attempts=self._attempts,
+                               calls=calls)
         assert last is not None
-        return AgentOutput(parsed=last.parsed, usage=usage, cached=cached, attempts=self._attempts)
+        return AgentOutput(parsed=last.parsed, usage=usage, cached=cached, attempts=self._attempts, calls=calls)
 
 
 def _agent(role: str, goal: str, backstory: str, llm: ClientLLM) -> Agent:

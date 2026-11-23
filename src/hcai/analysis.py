@@ -61,7 +61,7 @@ from scipy import stats
 
 from hcai.audit import oversight_table
 from hcai.quality import QUALITY_ORDER, ranking_quality
-from hcai.runner import ResultRow, read_results
+from hcai.runner import COLUMNS, ResultRow, read_results
 
 IMPACT_THRESHOLD = 0.8
 EQUIVALENCE_MARGIN = 2.0
@@ -104,8 +104,7 @@ def load_results(path: str | Path) -> pd.DataFrame:
 
 
 def results_frame(rows: Sequence[ResultRow]) -> pd.DataFrame:
-    columns = [f.name for f in fields(ResultRow)]
-    return pd.DataFrame([asdict(r) for r in rows], columns=columns)
+    return pd.DataFrame([asdict(r) for r in rows], columns=COLUMNS)
 
 
 def analyse(
