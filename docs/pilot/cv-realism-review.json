@@ -1,0 +1,141 @@
+{
+  "format": "hcai-realism-review",
+  "format_version": 1,
+  "corpus_version": "v1",
+  "generator": "gemini-4-argon",
+  "seed": 42,
+  "reviewer": "",
+  "date": "",
+  "verdict": {
+    "freeze": false,
+    "notes": "Almost ready to freeze: software engineer and accountant items are realistic, well-localized for Portugal, match their quality labels, and have clean EN/PT-PT with no demographic stray cues. However, do not freeze yet due to a recurring prompt-leakage artifact in the nurse subset—literal \"(fictitious unit)\" / \"(Unidade Fictícia)\" labels appear in both nurse job ads and nurse CVs (sometimes untranslated in EN), and the Lusíadas nurse ads mention SClínico (public SNS) for a private hospital. Strip the fictitious-unit tags and fix SClínico, and the corpus is good to go.   "
+  },
+  "items": [
+    {
+      "id": "job_ad/software_engineer/en",
+      "title": "Job ad: software_engineer (en)",
+      "checks": {
+        "realistic": true,
+        "language": true
+      },
+      "notes": "Technical slip: Under Desirable requirements, it says \"frontend development frameworks such as React or TypeScript.\" TypeScript is a language, not a frontend framework.\n\nFormatting/punctuation: The title uses awkward nested parentheses: Software Engineer (Lisbon, Portugal (Hybrid)).\n\nLocalization quirk: Mixing Portuguese degree names with English translations—Licenciatura (bachelor's degree), Mestrado (master's degree)—is accurate for Portugal, though slightly robotic/LLM-sounding in an English-language ad."
+    },
+    {
+      "id": "job_ad/software_engineer/pt",
+      "title": "Job ad: software_engineer (pt)",
+      "checks": {
+        "realistic": true,
+        "language": true
+      },
+      "notes": "Language & Formatting Issues to FlagWrong word (\"false friend\"): \"área estritamente relacionada\" is a mistranslation of \"closely related\"—it should be estreitamente relacionada (or more naturally, área afim / semelhante).Messy title: Engenheiro de Software (Software Engineer) (Lisboa, Portugal (Híbrido)) stacks three sets of parentheses, including nested ones.Literal translationese: \"equipa da plataforma principal\" (\"core platform team\") and \"microsserviços nativos na cloud escaláveis\" sound noticeably machine-translated, even if grammatically passable.Carried-over technical slip: Still calls TypeScript a frontend framework (\"frameworks de desenvolvimento frontend como React ou TypeScript\").   "
+    },
+    {
+      "id": "job_ad/nurse/en",
+      "title": "Job ad: nurse (en)",
+      "checks": {
+        "realistic": false,
+        "language": true
+      },
+      "notes": "Not realistic as it mentions fictitious unit in the job ad If you want to make the review note even sharper, there is one more subtle domain slip in the desirable requirements: SClínico is the public SNS (Serviço Nacional de Saúde) electronic health record system, whereas Lusíadas is a private hospital group (mentioning Glintt is accurate, though). Everything else—Cédula Profissional, Licenciatura, SIV/SAV—is spot-on for Portugal."
+    },
+    {
+      "id": "job_ad/nurse/pt",
+      "title": "Job ad: nurse (pt)",
+      "checks": {
+        "realistic": false,
+        "language": true
+      },
+      "notes": "    Not realistic: includes \"(unidade fictícia)\" in the ad copy and mentions SClínico (public SNS system) for a private hospital (Lusíadas). Language is natural PT-PT. "
+    },
+    {
+      "id": "job_ad/accountant/en",
+      "title": "Job ad: accountant (en)",
+      "checks": {
+        "realistic": true,
+        "language": true
+      },
+      "notes": "Realistic and well-localized for Portugal (SNC, OCC, IRC/IRS, Primavera/PHC). Clean, natural English with no issues.   "
+    },
+    {
+      "id": "job_ad/accountant/pt",
+      "title": "Job ad: accountant (pt)",
+      "checks": {
+        "realistic": true,
+        "language": true
+      },
+      "notes": "Realistic and well-localized for Portugal (SNC, OCC, IVA/IRC/IRS, Primavera/PHC). Natural, professional PT-PT with no issues.   "
+    },
+    {
+      "id": "software_engineer/strong/cv01/palop_f/en",
+      "title": "CV: software_engineer/strong/cv01 (strong) as Marcelina Vunge (female, palop), en",
+      "checks": {
+        "realistic": true,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
+      },
+      "notes": "Realistic, strong CV with a consistent timeline, concrete metrics, and solid PT localization (IST degrees, Lisbon/Oeiras roles). Clean English, matches the \"strong\" label, and no stray cues. "
+    },
+    {
+      "id": "software_engineer/average/cv03/br_m/pt",
+      "title": "CV: software_engineer/average/cv03 (average, borderline) as Davi Araujo (male, brazilian), pt",
+      "checks": {
+        "realistic": false,
+        "quality": false,
+        "mandatory": false,
+        "language": false,
+        "no_stray_cues": false
+      },
+      "notes": "Realistic CV with solid PT localization (FCTUC, Coimbra) and a consistent timeline. Fits the \"average, borderline\" label well (~4 years of standard full-stack experience, adjacent EE&C degree, minimal metrics). Natural PT-PT overall, aside from one minor phrasing slip (\"projetos de repositório\"). No stray cues.   "
+    },
+    {
+      "id": "nurse/average/cv01/ee_m/en",
+      "title": "CV: nurse/average/cv01 (average) as Serhii Kovalenko (male, eastern_european), en",
+      "checks": {
+        "realistic": false,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
+      },
+      "notes": "Not realistic: includes \"(Unidade Fictícia)\" on both employers (also untranslated PT in an EN CV). Otherwise meets mandatory requirements, fits the \"average\" label well (standard duties, SBV/DAE only, no specialization), and has clean English with no demographic stray cues.   "
+    },
+    {
+      "id": "nurse/average/cv03/pt_f/pt",
+      "title": "CV: nurse/average/cv03 (average, borderline) as Joana Cunha (female, portuguese), pt",
+      "checks": {
+        "realistic": true,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
+      },
+      "notes": "Mostly realistic, meets mandatory requirements, and fits the \"average, borderline\" label well (2 years of past inpatient care, currently outpatient, no SIV/SAV or specialization). Minor realism slip: \"durante exatamente 24 meses\" reads as unnatural/synthetic phrasing trying to hit the 2-year cutoff. Clean PT-PT and no stray cues.   "
+    },
+    {
+      "id": "accountant/weak/cv01/palop_f/en",
+      "title": "CV: accountant/weak/cv01 (weak) as Edna Cassoma (female, palop), en",
+      "checks": {
+        "realistic": true,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
+      },
+      "notes": "Realistic CV with strong PT localization (ISCAP, Famalicão, OCC, Sage Next). Meets mandatory requirements and fits the \"weak\" label well (single-company routine bookkeeping, no Primavera/PHC, no consultancy experience, no postgrad). Clean English and no stray cues.   "
+    },
+    {
+      "id": "accountant/weak/cv03/br_m/pt",
+      "title": "CV: accountant/weak/cv03 (weak, borderline) as Matheus Siqueira (male, brazilian), pt",
+      "checks": {
+        "realistic": true,
+        "quality": true,
+        "mandatory": true,
+        "language": true,
+        "no_stray_cues": true
+      },
+      "notes": "Realistic CV with strong PT localization (IPCA, Famalicão/Barcelos, OCC, DMR, Modelo 22, IES, Sage). Meets mandatory requirements and fits the \"weak, borderline\" label well (adjacent degree in Public Administration & Management, routine in-house accounting, no Primavera/PHC or consultancy experience). Clean PT-PT and no stray cues; only minor quirk is the ISO date format (2022-09).   "
+    }
+  ]
+}
