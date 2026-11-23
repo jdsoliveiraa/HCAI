@@ -428,7 +428,8 @@ def test_the_key_never_reaches_results_cache_or_output(tmp_path, capsys):
         return crew_answer(request)
 
     path = config(tmp_path)
-    path.write_text(path.read_text().replace("retry_backoff = 2.0", "retry_backoff = 0"))
+    # HTTP 500 is transient: no waits here, and as many repeats as `retries`
+    path.write_text(path.read_text().replace("retry_backoff = 2.0", "retry_backoff = 0\ntransient_backoff = [0, 0]"))
     design = load_design(path)
     run_command(path, out_dir=tmp_path / "out", cache_dir=tmp_path / "cache", client=routed_client(handler, design=design))
 

@@ -164,6 +164,12 @@ def test_results_keep_the_allowance_and_billing_source_and_older_tables_still_lo
 # --- run totals and the printed summary --------------------------------------------------------------------
 
 
+def no_billing_guard(path: Path) -> Path:
+    """The config with `[run] allowed_billing = []`: a call billed outside "go" is counted, not a stop (#12)."""
+    path.write_text(path.read_text().replace("retry_backoff = 2.0", "retry_backoff = 2.0\nallowed_billing = []"))
+    return path
+
+
 def test_a_go_run_reports_the_allowance_it_took_per_model_and_overall(tmp_path):
     report = run_command(config(tmp_path), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
                          client=routed_client(billed(lambda n: "go")))
@@ -186,7 +192,7 @@ def test_a_go_run_reports_the_allowance_it_took_per_model_and_overall(tmp_path):
 
 
 def test_calls_not_billed_to_go_are_flagged_with_what_they_took_from_the_balance(tmp_path):
-    report = run_command(config(tmp_path), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
+    report = run_command(no_billing_guard(config(tmp_path)), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
                          client=routed_client(billed(lambda n: "go" if n < 3 else "balance")))
 
     summary = json.loads((tmp_path / "out" / "run_summary.json").read_text())
@@ -199,7 +205,7 @@ def test_calls_not_billed_to_go_are_flagged_with_what_they_took_from_the_balance
 
 
 def test_calls_naming_no_billing_source_are_flagged_and_not_counted_as_balance(tmp_path):
-    report = run_command(config(tmp_path), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
+    report = run_command(no_billing_guard(config(tmp_path)), out_dir=tmp_path / "out", cache_dir=tmp_path / "cache",
                          client=routed_client(billed(lambda n: "" if n == 0 else "go")))
 
     summary = json.loads((tmp_path / "out" / "run_summary.json").read_text())

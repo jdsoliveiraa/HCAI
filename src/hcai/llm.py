@@ -4,6 +4,10 @@
 see `hcai.providers`). A rate-limit or usage-limit answer raises `RateLimited`; `RateLimitGuard` waits it out
 or, when it cannot, raises `ProviderExhausted`, which stops the run cleanly (see ADR 0005). Every HTTP call
 waits `[run] request_timeout` seconds for the answer (`http_timeout`).
+
+Run guards (ADR 0005, 2026-11-23 amendment): `BillingGuard` stops a run on the first fresh answer billed outside
+`[run] allowed_billing` (after caching it), `FailureGuard` stops it after `[run] max_consecutive_failures`
+provider errors in a row on one model, and `CachedClient` drops a cache file that does not parse.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from email.utils import parsedate_to_datetime
@@ -217,9 +222,42 @@ class ProviderExhausted(BaseException):
     Every call completed before it is in the cache, so rerunning the same command resumes with no repeats.
     """
 
+    kind = "limit"  # what stopped the run, as recorded in progress.json
+
+
+class BillingStop(ProviderExhausted):
+    """A call was billed outside `[run] allowed_billing` (e.g. OpenCode Go's pay-as-you-go `balance`)."""
+
+    kind = "billing"
+
+    def __init__(self, message: str, *, model: str, billing_source: str):
+        super().__init__(message)
+        self.model = model
+        self.billing_source = billing_source
+
+
+class TooManyFailures(ProviderExhausted):
+    """`[run] max_consecutive_failures` provider errors in a row on one model: an outage, a wrong id or key."""
+
+    kind = "failures"
+
+    def __init__(self, message: str, *, model: str, failures: int):
+        super().__init__(message)
+        self.model = model
+        self.failures = failures
+
 
 class ProviderError(Exception):
-    """The provider answered with an error that is not a rate or usage limit."""
+    """The provider answered with an error that is not a rate or usage limit.
+
+    `transient`: a server error (HTTP 5xx) or a transport failure (timeout, connection reset), which the pipeline
+    retries after `[run] transient_backoff` rather than `retry_backoff`; `timeout`: the call timed out.
+    """
+
+    def __init__(self, message: str, *, transient: bool = False, timeout: bool = False):
+        super().__init__(message)
+        self.transient = transient or timeout
+        self.timeout = timeout
 
 
 class MissingSession(ProviderError):
@@ -228,7 +266,72 @@ class MissingSession(ProviderError):
     per run and `MeteredClient` counts it, so the cause is not lost among the missing rows."""
 
 
-_LIMIT_WORDS = ("rate limit", "rate-limit", "usage limit", "too many requests", "quota")
+# Words that make an HTTP error (status >= 400, or an `error` in a 200 answer) a rate or usage limit
+# (`RateLimited`, waited out) rather than a failed call. Matched case-insensitively at the start of a word
+# ("limit" also matches "limits", "limited"; "credit" also "credits"), in the error's message field (the body
+# text only when it has none) and its code/type fields, CamelCase codes split into words
+# (`SubscriptionUsageLimitError` -> "subscription usage limit error"). See `is_limit_error` for what is left
+# out to keep validation errors that merely echo one of these words from being taken for a limit.
+_LIMIT_WORDS = ("rate limit", "rate-limit", "usage limit", "too many requests", "quota", "limit", "exceeded",
+                "allowance", "insufficient", "credit", "subscription")
+_LIMIT_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in _LIMIT_WORDS) + ")", re.IGNORECASE)
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|`[^`]*`|<<<.*?>>>")
+_CONTEXT = re.compile(r"\bcontext\b", re.IGNORECASE)
+_CODE_FIELDS = ("code", "type", "name", "status")
+
+
+def _words(code: str) -> str:
+    """An error code as words: `SubscriptionUsageLimitError` / `insufficient_quota` -> "...Usage Limit Error"."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", code).replace("_", " ").replace("-", " ")
+
+
+def _strings(value: Any) -> list[str]:
+    """Every string in a JSON value, keys left out."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _error_fields(body: Any, text: str) -> tuple[str, list[str]]:
+    """The message of an error answer and its code-like fields.
+
+    The message is `error.message` (or `error` itself when it is a string, or a top-level `message`); without
+    one, every string of the JSON body, or the body text when it is not JSON.
+    """
+    if body is None:
+        return text, []
+    error = body.get("error") if isinstance(body, dict) else None
+    sources = [d for d in (error, body) if isinstance(d, dict)]
+    codes = [v for d in sources for k in _CODE_FIELDS for v in [d.get(k)] if isinstance(v, str)]
+    message: Any = error if isinstance(error, str) else None
+    for d in sources:
+        if message is None and isinstance(d.get("message"), str):
+            message = d["message"]
+    if message is None:
+        message = " ".join(_strings(error if error is not None else body))
+    return message, codes
+
+
+def is_limit_error(body: Any, text: str) -> bool:
+    """Whether an error answer names a rate or usage limit (see `_LIMIT_WORDS`).
+
+    The message is matched after dropping quoted text ('...', "...", `...`) and snake_case identifiers, which is
+    where a validation error echoes the request back ("Invalid value for 'quota'", "unknown field credit_limit").
+    A message about the model's context ("exceeds the context window") is never a limit: it fails the same way on
+    every retry, so waiting it out would only hold the run up. Code-like fields are matched whole, CamelCase and
+    snake_case split into words. A limit worded only inside quotes or as an identifier in the message, with no
+    code naming it, is missed and handled as an ordinary failed call (retried, then missing); see ADR 0005.
+    """
+    message, codes = _error_fields(body, text)
+    if _CONTEXT.search(message):
+        return False
+    message = _QUOTED.sub(" ", message)
+    message = " ".join(w for w in message.split() if "_" not in w)
+    return bool(_LIMIT_RE.search(_words(message)) or any(_LIMIT_RE.search(_words(c)) for c in codes))
 
 
 def _retry_after(headers: httpx.Headers) -> float | None:
@@ -300,7 +403,9 @@ class OpenAICompatibleClient:
         except Exception as e:  # noqa: BLE001 - httpx/h11 messages can quote the Authorization header
             hint = (f" (no answer within [run] request_timeout = {self._timeout.read:.10g}s)"
                     if isinstance(e, httpx.ReadTimeout) else "")
-            raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}{hint}") from None
+            raise ProviderError(f"{self.name}: {type(e).__name__}: {self._redact(str(e))}{hint}",
+                                transient=isinstance(e, httpx.TransportError),
+                                timeout=isinstance(e, httpx.TimeoutException)) from None
 
     def _check(self, resp: httpx.Response) -> Any:
         """The JSON body of a successful answer; raises `RateLimited`, `ProviderExhausted` or `ProviderError`."""
@@ -310,7 +415,7 @@ class OpenAICompatibleClient:
             raise ProviderExhausted(f"{self.name}: HTTP 401 (the API key was refused): {text}")
         if resp.status_code == 402:
             raise ProviderExhausted(f"{self.name}: HTTP 402 (no credits or usage left): {text}")
-        if resp.status_code == 429 or (resp.status_code >= 400 and any(w in lowered for w in _LIMIT_WORDS)):
+        if resp.status_code == 429 or (resp.status_code >= 400 and is_limit_error(_json_or_none(resp), text)):
             raise RateLimited(f"{self.name}: HTTP {resp.status_code}: {text}", _retry_after(resp.headers))
         if resp.status_code == 400 and "missingsessionid" in lowered:
             if not self._warned_session:
@@ -320,7 +425,7 @@ class OpenAICompatibleClient:
                           f"This warning is shown once per run.")
             raise MissingSession(f"{self.name}: HTTP {resp.status_code}: {text}")
         if resp.status_code >= 400:
-            raise ProviderError(f"{self.name}: HTTP {resp.status_code}: {text}")
+            raise ProviderError(f"{self.name}: HTTP {resp.status_code}: {text}", transient=resp.status_code >= 500)
         try:
             data = resp.json()
         except json.JSONDecodeError as e:
@@ -331,9 +436,10 @@ class OpenAICompatibleClient:
             code = error.get("code") if isinstance(error, dict) else None
             if code == 402:
                 raise ProviderExhausted(f"{self.name}: {message}")
-            if code == 429 or any(w in message.lower() for w in _LIMIT_WORDS):
+            if code == 429 or is_limit_error(data, message):
                 raise RateLimited(f"{self.name}: {message}", _retry_after(resp.headers))
-            raise ProviderError(f"{self.name}: {message}")
+            raise ProviderError(f"{self.name}: {message}",
+                                transient=isinstance(code, int) and not isinstance(code, bool) and code >= 500)
         return data
 
     def complete(self, request: LLMRequest) -> LLMResponse:
@@ -353,9 +459,15 @@ class OpenAICompatibleClient:
             }
         data = self._check(self._send("POST", f"{self.base_url}/chat/completions", json=body))
         try:
-            text = data["choices"][0]["message"]["content"] or ""
+            choice = data["choices"][0]
+            text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
             raise ProviderError(f"{self.name}: no message in the answer: {self._redact(str(data), 300)}") from e
+        finish = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if not text.strip() and finish != "stop":
+            # cut off (e.g. "length") or no reason given: not an answer, so not cached and asked again on a rerun;
+            # an empty answer the model finished ("stop") is an answer, cached and validated like any (ADR 0002)
+            raise ProviderError(f"{self.name}: empty answer (finish_reason {finish!r}) from {request.model}")
         usage = parse_usage(data.get("usage"), subscription=self.subscription)
         return LLMResponse(text=text, parsed=_parse_if_schema(request, text), usage=usage)
 
@@ -380,6 +492,13 @@ class OpenRouterClient(OpenAICompatibleClient):
 
 def _stderr(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+def _json_or_none(resp: httpx.Response) -> Any:
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
 
 
 class RateLimitGuard:
@@ -441,13 +560,19 @@ class MeteredClient:
         self.allowance: dict[str, float] = {}  # dollars taken from the Go allowance
         self.balance: dict[str, float] = {}  # dollars billed outside the Go allowance (known prices only)
         self.billing: dict[str, dict[str, int]] = {}  # calls per billing source (OpenCode Go only)
+        self.timed_out: dict[str, int] = {}  # calls that got no answer within `[run] request_timeout`
+        self.failed: dict[str, int] = {}  # calls that raised a provider error (timeouts and missing sessions too)
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
         try:
             response = self.inner.complete(request)
-        except MissingSession:
-            self.missing_session[request.model] = self.missing_session.get(request.model, 0) + 1
+        except ProviderError as e:
+            self.failed[request.model] = self.failed.get(request.model, 0) + 1
+            if isinstance(e, MissingSession):
+                self.missing_session[request.model] = self.missing_session.get(request.model, 0) + 1
+            if e.timeout:
+                self.timed_out[request.model] = self.timed_out.get(request.model, 0) + 1
             raise
         if response.usage.cost is None:
             self.unpriced[request.model] = self.unpriced.get(request.model, 0) + 1
@@ -472,11 +597,14 @@ class CachedClient:
     first run saw (and costs nothing); the pipeline asks a malformed answer again with a different request
     (see `hcai.pipeline.Retry` and ADR 0002). With `cache_unparseable=False` a structured answer that
     failed to parse is not cached, so a rerun draws a fresh one (the corpus generator, at temperature > 0).
-    Calls that raise are never cached.
+    Calls that raise are never cached. A cache file that does not parse (zero bytes, cut short) is deleted with
+    a warning and counts as a miss.
     """
 
-    def __init__(self, inner: LLMClient, cache_dir: str | Path, *, cache_unparseable: bool = True):
+    def __init__(self, inner: LLMClient, cache_dir: str | Path, *, cache_unparseable: bool = True,
+                 log: Callable[[str], None] = _stderr):
         self.inner = inner
+        self.log = log
         self.cache_unparseable = cache_unparseable
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -484,12 +612,73 @@ class CachedClient:
     def complete(self, request: LLMRequest) -> LLMResponse:
         path = self.cache_dir / f"{request.cache_key()}.json"
         if path.exists():
-            cached = json.loads(path.read_text())
-            return LLMResponse(text=cached["text"], parsed=cached["parsed"], usage=Usage.from_dict(cached["usage"]), cached=True)
+            try:
+                cached = json.loads(path.read_text())
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                # a file cut short (zero bytes, a crash mid-write) is a miss: dropped, and the call is asked again
+                self.log(f"WARNING: cache file {path} does not parse ({type(e).__name__}); deleted, asking again")
+                path.unlink(missing_ok=True)
+            else:
+                return LLMResponse(text=cached["text"], parsed=cached["parsed"],
+                                   usage=Usage.from_dict(cached["usage"]), cached=True)
         response = self.inner.complete(request)
         if not self.cache_unparseable and request.response_schema is not None and response.parsed is None:
             return response
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"request": asdict(request), **asdict(response)}, ensure_ascii=False))
         tmp.replace(path)
+        return response
+
+
+class BillingGuard:
+    """Wraps a `CachedClient`: stops the run on the first fresh answer billed outside `allowed`.
+
+    OpenCode Go names what paid for each call (`Usage.billing_source`): "go" while the subscription allowance
+    lasts, e.g. "balance" once Extra Usage bills the pay-as-you-go balance. The paid answer is already in the
+    cache (the guard sits above it), so nothing paid for is lost; then `BillingStop` stops the run cleanly and
+    a rerun resumes from the cache. Answers served from the cache were paid by an earlier run and pass, and so
+    does any answer that names no billing source (e.g. OpenRouter). An empty `allowed` checks nothing.
+    """
+
+    def __init__(self, inner: LLMClient, allowed: tuple[str, ...] | list[str]):
+        self.inner = inner
+        self.allowed = tuple(allowed)
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        response = self.inner.complete(request)
+        source = response.usage.billing_source
+        if self.allowed and not response.cached and source is not None and source not in self.allowed:
+            raise BillingStop(
+                f"{request.model}: a call was billed to {source!r}, not to [run] allowed_billing = "
+                f"{list(self.allowed)}; its answer is cached. Stopped so nothing more is paid for that way; add "
+                f"{source!r} to allowed_billing to go on paying for it",
+                model=request.model, billing_source=source)
+        return response
+
+
+class FailureGuard:
+    """Wraps a provider client (below the cache): stops the run after `limit` provider errors in a row on one model.
+
+    Every `ProviderError` counts (each retry too); any answer from that model resets its count. At `limit`,
+    `TooManyFailures` stops the run cleanly with the last error, instead of recording row after row as missing
+    through an outage, a withdrawn model id or a refused session. Failed calls are not cached, so a rerun asks
+    them again. `limit = 0` never stops.
+    """
+
+    def __init__(self, inner: LLMClient, limit: int):
+        self.inner = inner
+        self.limit = limit
+        self.in_a_row: dict[str, int] = {}
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        try:
+            response = self.inner.complete(request)
+        except ProviderError as e:
+            n = self.in_a_row[request.model] = self.in_a_row.get(request.model, 0) + 1
+            if self.limit and n >= self.limit:
+                raise TooManyFailures(
+                    f"{request.model}: {n} provider errors in a row ([run] max_consecutive_failures = "
+                    f"{self.limit}); last: {e}", model=request.model, failures=n) from e
+            raise
+        self.in_a_row[request.model] = 0
         return response
