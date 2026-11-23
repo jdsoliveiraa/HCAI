@@ -39,6 +39,10 @@ One job ad in one language, or one CV variant, in the review sample.
 **Checklist**:
 The five checks of a review item: realistic, quality matches label, meets mandatory requirements, language OK, no stray identity cues (job ads use only the first and fourth).
 
+**Reviewed**:
+Said of a review item whose checks are all ticked, or that has a note saying what does not hold. The review page derives it to show progress; the review record does not store it.
+_Avoid_: Done, complete
+
 **Verdict**:
 The reviewer's overall decision on whether the corpus is realistic enough to freeze.
 

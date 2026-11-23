@@ -68,3 +68,56 @@ from the committed repository, so the deployed page said "not generated yet" for
 - **Considered:** committing a rendered image (it would go stale, and has no text or theme); a JS chart library
   (a dependency and a CDN for eight small charts, and nothing without scripts); making CI run `hcai names` (it
   needs API keys and calls, which the site build must never make).
+
+### Amendment (2026-11-22): the review page follows the reviewer, and every page reads without scripts (site UX pass)
+
+The first review page listed its 12 items in one scroll of about 17,000 px, each checklist above its text, with no
+sign of progress, and on a phone every table collapsed to one letter per line. Agreed with the researcher: one even
+pass over the whole site, no deep rework.
+
+- **"Reviewed" is derived, never recorded.** A review item counts as reviewed when every check is ticked, or when it
+  has a note. The page reads this off the answers to show progress ("5 of 12 reviewed", one jump link per item).
+  Nothing is stored for it: the record stays format version 1, field for field, and a saved draft loads as it is
+  (same localStorage key, same shape). An unticked check with no note keeps its item "to do", so the reviewer has
+  to say what does not hold.
+- **The page follows the reviewer's order; the record keeps its own.** Reviewer and date, then the items, then the
+  verdict and the export. Each item shows its text first, with the checklist and notes beside it on a wide screen
+  (they stay in view while the text scrolls) and after it on a narrow one. The exported Markdown is unchanged, with
+  the verdict first.
+- **"All hold" is per item only.** One button (key `a`) ticks every check of one item. There is no page-wide one:
+  the review is the evidence for freezing the corpus, so each item stays its own act.
+- **Keyboard shortcuts are single keys that can be turned off.** `j` / `k` move between items, `1`–`5` tick or
+  untick a check of the current item, `a` is "All hold", `n` goes to the notes, `Esc` leaves a field. They act only
+  while the focus is not in a field, and a box on the page turns them off (remembered).
+- **The current item is the one in view, and a key never changes anything out of sight.** The current item follows
+  the scroll position; an item the reviewer is sent to (a jump link, a key, the focus) stays current until the next
+  scroll, but only while it is on screen. So a page that comes back at another position (a reload, the Back button,
+  an old `#item-N` in the address) cannot leave the keys acting on an item the reviewer does not see. The strip
+  names the current item and how many of its checks are ticked, which is what shows a key's effect when the
+  checklist itself is below the text; the same is said to a screen reader.
+- **What the browser keeps** (localStorage, each optional): the draft under `hcai-review:<corpus version>:<seed>`,
+  as before; `hcai-review-exported:<corpus version>:<seed>`, the answers each of the two files was last exported
+  with, only to say whether they have changed since or are in one file only (it is not a record, and it is dropped
+  with its draft); `hcai-review-keys` (`off`); `hcai-lang`; `hcai-theme`.
+- **Theme switch.** Auto (the system's theme: the default, and what a page does without scripts), light or dark,
+  remembered. One inline script in each page's `<head>` applies the choice before the first paint and marks that
+  scripts run; it is the only inline script. The dark colours are written once in `style.css`, for the system
+  preference, and the generator copies them under `data-theme="dark"` (`hcai.site.themed_css`).
+- **Every page reads without scripts.** Scripts are deferred, so none delays the first paint. Controls that need
+  them are hidden unless scripts run (`.js-only`): the two switches, the review's progress, export, import and
+  shortcuts. Links, tables, the variant list and the slot highlighting of the review work without. The review form
+  still needs scripts to save and export, and says so.
+- **Phones.** A wide table scrolls sideways in its own box instead of squeezing its columns. The navigation is one
+  row beside the site name that scrolls sideways (a menu button would need a script), with the two switches on a
+  row below it, so that what is seen is in the order the keyboard reaches it. A script keeps the current and the
+  focused link clear of the row's fading edge; without scripts the row still scrolls, so on a screen about 320 to
+  390 px wide the last links are reached by scrolling it. The review's strip does not stick on a screen under 30rem
+  high (a phone on its side, a zoomed page), where it would cover too much of the text.
+- **Finding your way.** The home page is a hub: a card per part of the project, with where it stands. Deep pages
+  show the pages above them and link to the previous and next base CV or decision; long pages list their sections.
+  The variant viewer can put a second identity beside the first.
+- **Considered:** a stepper with one item per screen (find-in-page and links to an item stop working, and it needs
+  more state: a deeper rework than agreed); an explicit "reviewed" flag in the record (format version 2, with a
+  migration) or in the draft only (one more click per item, and an imported review would fall back to the derived
+  rule anyway); a page-wide "tick everything"; filters on the corpus index and hiding the reviewed items (9 base
+  CVs per role, and the jump links already lead to what is left).
