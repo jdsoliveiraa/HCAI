@@ -75,7 +75,8 @@ request_timeout = 1200
 # The first fresh answer billed outside these sources (OpenCode Go's usage.opencode.billing_source, e.g. "balance"
 # once Extra Usage kicks in) is cached, then the run stops (progress.json, exit 3). [] checks nothing.
 allowed_billing = ["go"]
-# Provider errors in a row on one model (each retry counts, any answer resets) that stop the run (exit 3).
+# Failed calls in a row on one model (a call counts once however often it is retried; any answer resets) that stop
+# the run (exit 3).
 max_consecutive_failures = 10
 # Waits before repeating a call that failed with HTTP 5xx, a timeout or a dropped connection (instead of
 # retry_backoff); such a call is repeated up to max(retries, 3) times, so an outage of about 10 min is ridden out.

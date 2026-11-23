@@ -89,8 +89,8 @@ class RunSettings:
     # then the run stops cleanly (exit 3). Answers that name no billing source (e.g. OpenRouter) are never
     # checked; an empty list checks nothing.
     allowed_billing: tuple[str, ...] = ("go",)
-    # Provider errors in a row on one model (each retry counts; any answer resets it) that stop the run cleanly
-    # (exit 3, rerun to resume) instead of recording row after row as missing. 0: never stop.
+    # Failed calls in a row on one model (a call counts once however often it is retried; any provider answer resets
+    # it) that stop the run cleanly (exit 3, rerun to resume) instead of recording row after row as missing. 0: never.
     max_consecutive_failures: int = 10
     # Seconds before each repeat of a call that failed transiently (HTTP 5xx, timeout, dropped connection), in
     # place of `retry_backoff`; such a call is repeated up to max(retries, len(transient_backoff)) times.

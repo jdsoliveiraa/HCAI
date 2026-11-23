@@ -6,6 +6,7 @@ answers, progress lines, early CSVs, timeouts, missing share, corrupt cache file
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -15,7 +16,7 @@ from hcai.cli import _fake_response, main, run_command
 from hcai.config import RunSettings, load_design
 from hcai.llm import (
     BillingGuard, BillingStop, CachedClient, FailureGuard, FakeLLMClient, LLMRequest, LLMResponse,
-    OpenAICompatibleClient, ProviderError, ProviderExhausted, RateLimited, TooManyFailures, Usage,
+    MeteredClient, OpenAICompatibleClient, ProviderError, ProviderExhausted, RateLimited, TooManyFailures, Usage,
     is_limit_error,
 )
 from hcai.pipeline import ClientLLM, Retry, screen_and_evaluate
@@ -175,7 +176,11 @@ def test_a_billing_stop_reaches_a_clean_stop_through_every_agent(agent, tmp_path
 # --- S1: consecutive failures and transient backoff ---------------------------------------------------------
 
 
-def test_consecutive_provider_errors_on_one_model_stop_after_the_limit_and_an_answer_resets_them():
+def req(i: int, model: str = "m") -> LLMRequest:
+    return LLMRequest(model=model, messages=[{"role": "user", "content": f"call {i}"}])
+
+
+def test_consecutive_failed_calls_on_one_model_stop_after_the_limit_and_an_answer_resets_them():
     results = iter([*([ProviderError("down")] * 9), "ok", *([ProviderError("down 2")] * 3)])
 
     def respond(request):
@@ -185,50 +190,76 @@ def test_consecutive_provider_errors_on_one_model_stop_after_the_limit_and_an_an
         return r
 
     guard = FailureGuard(FakeLLMClient(respond), limit=10)
-    for _ in range(9):
+    for i in range(9):
         with pytest.raises(ProviderError):
-            guard.complete(REQ)
-    assert guard.complete(REQ).text == "ok" and guard.in_a_row["m"] == 0
+            guard.complete(req(i))
+    assert guard.complete(req(9)).text == "ok" and guard.in_a_row["m"] == 0
 
     guard.limit = 3
-    for _ in range(2):
+    for i in range(2):
+        with pytest.raises(ProviderError):
+            guard.complete(req(10 + i))
+    with pytest.raises(TooManyFailures, match=r"3 failed calls in a row.*down 2"):
+        guard.complete(req(12))
+
+
+def test_a_call_repeated_as_is_counts_once():
+    guard = FailureGuard(FakeLLMClient(lambda r: (_ for _ in ()).throw(ProviderError("timeout", timeout=True))), limit=2)
+    for _ in range(5):  # one call that keeps failing (its retries are the identical request)
         with pytest.raises(ProviderError):
             guard.complete(REQ)
-    with pytest.raises(TooManyFailures, match=r"3 provider errors in a row.*down 2"):
-        guard.complete(REQ)
+    assert guard.in_a_row["m"] == 1
+    with pytest.raises(TooManyFailures):
+        guard.complete(req(1))
 
 
 def test_failures_are_counted_per_model():
     guard = FailureGuard(FakeLLMClient(lambda r: (_ for _ in ()).throw(ProviderError("x"))), limit=2)
-    other = replace(REQ, model="other")
-    for req in (REQ, other):
+    for r in (req(0), req(0, "other")):
         with pytest.raises(ProviderError):
-            guard.complete(req)
+            guard.complete(r)
     with pytest.raises(TooManyFailures):
-        guard.complete(REQ)
+        guard.complete(req(1))
+
+
+def test_in_a_run_failures_carry_across_calls_and_another_agents_answer_resets_them(tmp_path):
+    c0 = load_design(config(tmp_path))
+    c0 = replace(c0, run=replace(c0.run, retry_backoff=0.0, max_consecutive_failures=2))
+
+    # the Evaluator fails on every CV, but the Screener answers in between: never 2 in a row, no stop (only answers
+    # from the provider reset the count; a cache hit makes no call)
+    run = execute(c0, Failing("evaluator"), out_dir=tmp_path / "o", cache_dir=tmp_path / "c", log=lambda m: None)
+    assert run.totals["missing"]["missing"] > 0
+
+    design = load_design(all_conditions(tmp_path))
+    design = replace(design, run=replace(design.run, retry_backoff=0.0, max_consecutive_failures=2))
+
+    # the Blinder runs on every CV of a group back to back: its 2nd failed call stops the run
+    with pytest.raises(TooManyFailures, match="2 failed calls in a row"):
+        execute(design, Failing("blinder"), out_dir=tmp_path / "o2", cache_dir=tmp_path / "c2", log=lambda m: None)
 
 
 @pytest.mark.parametrize("agent", list(AGENT_KEYS))
 def test_too_many_failures_reach_a_clean_stop_through_every_agent(agent, tmp_path):
     design = load_design(all_conditions(tmp_path))
-    design = replace(design, run=replace(design.run, retry_backoff=0.0, max_consecutive_failures=3))
+    design = replace(design, run=replace(design.run, retry_backoff=0.0, max_consecutive_failures=1))
 
     with pytest.raises(TooManyFailures):
         execute(design, Failing(agent), out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
 
     progress = json.loads((tmp_path / "o" / "progress.json").read_text())
-    assert progress["stop"] == "failures" and progress["failures_in_a_row"] == 3
+    assert progress["stop"] == "failures" and progress["failures_in_a_row"] == 1
     assert "bad request" in progress["reason"]
 
 
 def test_a_run_stopped_by_failures_exits_3_and_a_rerun_resumes(tmp_path, monkeypatch, capsys):
-    path = with_run(config(tmp_path), "max_consecutive_failures = 2")
+    path = with_run(config(tmp_path), "max_consecutive_failures = 1")
     path.write_text(path.read_text().replace("retry_backoff = 2.0", "retry_backoff = 0.0"))
     monkeypatch.setattr("hcai.cli.make_client", lambda design, models: Failing("evaluator"))
     args = ["run", str(path), "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache")]
 
     assert main(args) == 3
-    assert "provider errors in a row" in capsys.readouterr().err
+    assert "failed calls in a row" in capsys.readouterr().err
 
     monkeypatch.setattr("hcai.cli.make_client", lambda design, models: FakeLLMClient(_fake_response))
     assert main(args) == 0
@@ -292,6 +323,10 @@ def test_other_failures_and_malformed_answers_keep_their_backoff():
     (lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("timed out")), True, True),
     (lambda r: (_ for _ in ()).throw(httpx.ConnectError("connection reset")), True, False),
     (lambda r: (_ for _ in ()).throw(httpx.RemoteProtocolError("peer closed")), True, False),
+    (lambda r: (_ for _ in ()).throw(httpx.LocalProtocolError("bad header")), False, False),
+    (lambda r: (_ for _ in ()).throw(httpx.UnsupportedProtocol("ftp://")), False, False),
+    (lambda r: httpx.Response(502, text="<html>502 Bad Gateway: upstream connect error, connection limit</html>"),
+     True, False),
 ])
 def test_server_and_transport_errors_are_transient(make, transient, timeout):
     with pytest.raises(ProviderError) as e:
@@ -338,6 +373,12 @@ def test_the_defaults():
     (400, {"error": {"code": "insufficient_quota", "message": "see your plan"}}),
     (500, {"detail": "Rate limit exceeded"}),
     (403, "Quota exceeded for this key"),
+    (403, {"error": {"message": "You've reached your usage limit. It'll reset in 2 hours."}}),
+    (403, {"message": "Forbidden", "detail": "Weekly usage limit reached"}),
+    (400, {"error": {"code": 429, "message": "Provider returned error", "metadata": {"raw": "upstream busy"}}}),
+    (400, {"error": {"code": 400, "message": "Provider returned error", "metadata": {"raw": "Rate limit exceeded"}}}),
+    (400, {"error": {"code": "rate_limit_exceeded", "message": "Rate limit for context caching"}}),
+    (400, {"error": {"message": "Monthly limit exceeded, resets on the 1st"}}),
 ])
 def test_limit_answers_are_waited_out(status, body):
     make = (lambda r: httpx.Response(status, json=body)) if not isinstance(body, str) else (
@@ -352,6 +393,14 @@ def test_limit_answers_are_waited_out(status, body):
     {"error": {"message": "Unrecognized field credit_limit in response_format"}},
     {"error": {"message": "This request exceeds the model's context limit of 128000 tokens"}},
     {"error": {"message": "MissingSessionID"}},
+    {"error": {"message": "max_tokens exceeded the model maximum of 32768"}},
+    {"error": {"message": "The request exceeded the maximum allowed size"}},
+    {"error": {"message": "Input length 40000 exceeds the maximum limit of 32768 tokens"}},
+    {"error": {"message": "Your request exceeded model token limit: 262144"}},
+    {"error": {"message": "Model qwen3.8-flash is not available on your subscription plan"}},
+    {"error": {"message": "Insufficient permissions for this model"}},
+    {"error": {"message": "Your credit card was declined"}},
+    {"error": {"code": "limit_out_of_range", "message": "bad value"}},
 ])
 def test_validation_errors_that_echo_a_limit_word_are_not_limits(body):
     with pytest.raises(ProviderError) as e:
@@ -359,9 +408,10 @@ def test_validation_errors_that_echo_a_limit_word_are_not_limits(body):
     assert not isinstance(e.value, RateLimited)
 
 
-def test_only_the_message_field_is_matched_when_there_is_one():
-    body = {"error": {"message": "bad request", "param": "rate limit"}}
-    assert not is_limit_error(body, json.dumps(body))
+def test_a_weak_word_counts_only_in_the_message_and_a_strong_phrase_anywhere():
+    weak = {"error": {"message": "bad request", "param": "limit exceeded"}}
+    strong = {"error": {"message": "bad request", "metadata": {"raw": "usage limit reached"}}}
+    assert not is_limit_error(weak, json.dumps(weak)) and is_limit_error(strong, json.dumps(strong))
     assert is_limit_error(None, "usage limit reached")
 
 
@@ -382,6 +432,18 @@ def test_an_empty_answer_not_finished_is_an_error_and_not_cached(tmp_path, finis
     with pytest.raises(ProviderError, match="empty answer"):
         CachedClient(client, tmp_path).complete(REQ)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_an_empty_answer_billed_outside_go_still_stops_the_run_and_is_counted(tmp_path):
+    from test_go_allowance import go_usage
+    body = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": go_usage(allowance=0.0, source="balance", list_cost=0.002)}
+    meter = MeteredClient(http(lambda r: httpx.Response(200, json=body), subscription=True))
+
+    with pytest.raises(BillingStop, match="'balance'"):
+        BillingGuard(CachedClient(meter, tmp_path), ["go"]).complete(REQ)
+    assert meter.billing == {"m": {"balance": 1}} and meter.balance["m"] == pytest.approx(0.002)
+    assert list(tmp_path.iterdir()) == []  # still not cached: a rerun asks again
 
 
 def test_an_empty_answer_the_model_finished_is_an_answer_and_cached(tmp_path):
@@ -489,7 +551,7 @@ def test_the_cli_prints_the_missing_share_and_exits_0(tmp_path, monkeypatch, cap
 # --- N1: corrupt cache files --------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("content", [b"", b'{"text": "ok", "par', b"\xff\xfe"])
+@pytest.mark.parametrize("content", [b"", b'{"text": "ok", "par', b"\xff\xfe", b"null", b"{}", b'{"text": "x"}'])
 def test_a_cache_file_that_does_not_parse_is_deleted_and_asked_again(tmp_path, content):
     path = tmp_path / f"{REQ.cache_key()}.json"
     path.write_bytes(content)
@@ -543,3 +605,15 @@ def test_the_requests_and_cache_keys_of_every_agent_are_unchanged():
         "33f5d5ff4c3cd25f193a73bc1d6efeda88b5d9703511cc878e1f02b7fdacd386",  # blinder
         "b680e85f3de92efaa7e3d27ca461367699011fab0f609f8159dd6ea182596542",  # judge
     ]
+
+
+def test_screened_out_rows_are_not_counted_in_the_missing_share():
+    from hcai.runner import ResultRow, missing_counts
+    base: dict[str, Any] = dict(base_cv="b", identity="i", gender="g", origin="o", name="n", language="en", condition="C0",
+                model="m", score=None, rationale="", prompt_tokens=0, completion_tokens=0, cost=None, cached=False,
+                error="")
+    rows = ([ResultRow(agent="screener", status="ok", **base)] * 2 + [ResultRow(agent="evaluator", status="rejected", **base)] * 6
+            + [ResultRow(agent="evaluator", status="missing", **base)] * 2)
+
+    m = missing_counts(rows, 0.02)
+    assert (m["rows"], m["missing"], m["share"]) == (4, 2, 0.5) and m["by_cell"]["m/C0/en"]["rows"] == 4

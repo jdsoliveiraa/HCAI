@@ -160,7 +160,7 @@ def execute(design: Design, client: LLMClient, out_dir: str | Path, cache_dir: s
         totals["pilot"] = _pilot_estimate(design, design.pilot_of, rows)
     (out_dir / "run_summary.json").write_text(json.dumps(totals, indent=2) + "\n")
     if totals["missing"]["above_target"]:
-        log(f"WARNING: {totals['missing']['missing']} of {totals['rows']} rows are missing "
+        log(f"WARNING: {totals['missing']['missing']} of {totals['missing']['rows']} rows are missing "
             f"({100 * totals['missing']['share']:.2f}%), above [run] missing_target = "
             f"{100 * totals['missing']['target']:.2f}%; failed calls are not cached, so a rerun asks them again")
     report = stability_report(rows, repeats)
@@ -344,7 +344,7 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
       got no answer within `[run] request_timeout`.
     - `allowed_billing` (with the design): the billing sources calls may be paid from; `not_allowed_billing_calls`
       counts this run's calls billed elsewhere (the one that stopped a run is in its `progress.json` instead).
-    - `missing`: the share of missing rows overall and per model x condition x language (`by_cell`), the
+    - `missing`: the share of missing rows (of those not `rejected`) overall and per model x condition x language (`by_cell`), the
       `target` (`[run] missing_target`) and whether the overall share is `above_target`.
     - `rows` and `status` count the results table; `repeat_sample` tallies the stability sample on its own.
     - Judge rows are billed to their `judge_model`, not the pipeline model they judged.
@@ -411,10 +411,15 @@ def run_totals(rows: list[ResultRow], repeats: list[ResultRow], meter: MeteredCl
 
 
 def missing_counts(rows: list[ResultRow], target: float) -> dict[str, Any]:
-    """The missing rows of the results table: overall and per model x condition x language ("model/C0/en")."""
+    """The missing rows of the results table: overall and per model x condition x language ("model/C0/en").
+
+    `rows` counts the rows due an answer (all but `rejected`, the CVs screened out upstream), and `share` is
+    `missing / rows`.
+    """
     def share(subset: list[ResultRow]) -> dict[str, Any]:
         missing = sum(r.status == "missing" for r in subset)
-        return dict(rows=len(subset), missing=missing, share=round(missing / len(subset), 6) if subset else 0.0)
+        due = sum(r.status != "rejected" for r in subset)  # screened-out rows were never due an answer
+        return dict(rows=due, missing=missing, share=round(missing / due, 6) if due else 0.0)
 
     cells: dict[str, list[ResultRow]] = {}
     for r in rows:
