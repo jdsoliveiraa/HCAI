@@ -46,7 +46,7 @@ def run_tasks(tasks: Sequence[Task], n: int, event: threading.Event) -> list[Any
     results: list[Any] = [None] * len(tasks)
     done: set[int] = set()
     pending = list(range(len(tasks)))
-    running: set[int] = set()
+    running: dict[int, threading.Thread] = {}
     finished: queue.Queue[tuple[int, bool, Any]] = queue.Queue()
     errors: list[BaseException] = []
 
@@ -61,8 +61,9 @@ def run_tasks(tasks: Sequence[Task], n: int, event: threading.Event) -> list[Any
             else:
                 finished.put((i, True, out))
 
-        running.add(i)
-        threading.Thread(target=body, name=f"hcai-worker-{i}", daemon=True).start()
+        thread = threading.Thread(target=body, name=f"hcai-worker-{i}", daemon=True)
+        running[i] = thread
+        thread.start()
 
     def collect() -> None:
         while True:
@@ -70,7 +71,7 @@ def run_tasks(tasks: Sequence[Task], n: int, event: threading.Event) -> list[Any
                 i, ok, value = finished.get(timeout=0.2)  # a timeout, so Ctrl-C reaches this thread
             except queue.Empty:
                 continue
-            running.discard(i)
+            running.pop(i, None)
             if ok:
                 results[i] = value
                 done.add(i)
@@ -95,8 +96,14 @@ def run_tasks(tasks: Sequence[Task], n: int, event: threading.Event) -> list[Any
         if running:
             logger.warning(f"interrupted: waiting for the {len(running)} task(s) in flight to finish their call under "
                            f"way (their answers are cached); press Ctrl-C again to abandon them")
-        while running:
-            collect()  # a second KeyboardInterrupt propagates from here: the daemon workers are abandoned
+        # A second KeyboardInterrupt propagates from here: the daemon workers are abandoned. Live threads, not the
+        # bookkeeping, say when to stop waiting, so an interrupt that landed mid-bookkeeping cannot hang this.
+        while any(t.is_alive() for t in running.values()):
+            try:
+                i, _, _ = finished.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            running.pop(i, None)
         raise
     if errors:
         real = [e for e in errors if not isinstance(e, Stopping)]

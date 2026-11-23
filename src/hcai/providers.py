@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import re
-import time
+import threading
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -129,12 +129,14 @@ class ProviderRouter:
         self._provider_of = provider_of
         self._make = make
         self._clients: dict[str, LLMClient] = {}
+        self._lock = threading.Lock()  # workers asking at once still share one client (and rate-limit pause)
 
     def client_for(self, model: str) -> LLMClient:
         provider = self._provider_of(model)
-        if provider.name not in self._clients:
-            self._clients[provider.name] = self._make(provider)
-        return self._clients[provider.name]
+        with self._lock:
+            if provider.name not in self._clients:
+                self._clients[provider.name] = self._make(provider)
+            return self._clients[provider.name]
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         return self.client_for(request.model).complete(request)
@@ -167,7 +169,7 @@ def http_client(provider: Provider, environ: Mapping[str, str] | None = None,
 def provider_client(
     provider_of: Callable[[str], Provider], models: Iterable[str], *, environ: Mapping[str, str] | None = None,
     http: httpx.Client | None = None, backoff: float = 30.0, max_backoff: float = 900.0,
-    max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] = time.sleep,
+    max_wait: float = 6 * 3600.0, sleep: Callable[[float], None] | None = None,
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> ProviderRouter:
     """A client for `models`, each routed to its provider behind a `RateLimitGuard`.

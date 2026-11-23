@@ -58,7 +58,7 @@ uv run hcai check configs/core.toml --out results/check.json   # probe every con
 
 - every request and cache key is the one the sequential run makes, and `results.csv`, `repeats.csv` and `review_queue.csv` list the same rows in the same order. Two CVs that send the same request (two identities' blinded CVs can be the same text) make one call between them, and `cached` is set as the sequential run would set it.
 - a rate- or usage-limit answer pauses every call to that provider until one moment: one backoff, not one per worker. A call that was already under way joins that pause and does not double it.
-- *failures in a row* counts the distinct requests that failed on the model since its last answer, whichever worker sent them.
+- *failures in a row* counts every failed call on the model since its last answer, except a worker's retry of the request it failed last. Interleaved retries by different workers still count once each. With 1 worker the count is the same as before.
 - a stop (billing, failures in a row, a limit that outlasts `rate_limit_max_wait`, Ctrl-C) lets the calls under way finish and caches their answers. No new call starts, and backoff waits end early. A second Ctrl-C abandons the calls still under way. Rerun the same command to resume. The restart can use a different `concurrency` with the same cache and `--out` directory.
 - `calls.jsonl` lines are written whole under a lock, and each record names its own CV or pool. The heartbeat, `progress.json` and the missing-row counts add up all workers.
 

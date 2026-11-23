@@ -734,8 +734,12 @@ def _run_block(ctx: _Context, group: list[Variant], pools: list[Pool], repeat_cl
         repeats += results[i][1]
     if ctx.design.run.concurrency > 1:
         rows = _sequential_cache_flags(rows)
-        repeats = [r for k in dict.fromkeys(r.repeat for r in repeats)
-                   for r in _sequential_cache_flags([r for r in repeats if r.repeat == k])]
+        fixed = list(repeats)  # each repeat namespace on its own, rows kept in their sequential places
+        for k in dict.fromkeys(r.repeat for r in repeats):
+            at = [i for i, r in enumerate(repeats) if r.repeat == k]
+            for i, r in zip(at, _sequential_cache_flags([repeats[i] for i in at]), strict=True):
+                fixed[i] = r
+        repeats = fixed
     return rows, repeats
 
 

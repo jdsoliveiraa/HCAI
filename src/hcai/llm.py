@@ -610,8 +610,8 @@ class RateLimitGuard:
 
     The wait is shared by every worker using this guard (one provider): a limit answer pauses them all until
     the same moment, and a worker whose call was already under way when the pause began joins it instead of
-    starting a backoff of its own. The doubling counts limit answers since the provider last answered, so
-    sequentially (`[run] concurrency = 1`) each call backs off exactly as before. A wait ends early when the run
+    starting a backoff of its own. The doubling counts limit answers since a call sent after the last pause began had any other
+    outcome (an answer or an error), so sequentially (`[run] concurrency = 1`) each call backs off exactly as before. A wait ends early when the run
     stops (`interruptible_sleep`), and the call then raises `Stopping` instead of being repeated.
     """
 
@@ -683,11 +683,19 @@ class RateLimitGuard:
                 waited += delay
                 slept = True
                 continue
-            with self._lock:
-                if sent >= self._paused_at:  # sent after the last pause began: the provider serves again
-                    self._streak = 0
-                    self._paused_until = min(self._paused_until, self._clock())
+            except BaseException:  # any other outcome ends this call's run of limit answers, as before
+                self._past_limit(sent)
+                raise
+            self._past_limit(sent)
             return response
+
+    def _past_limit(self, sent: float) -> None:
+        """A call sent after the last pause began got something other than a limit answer (an answer or another
+        error): the limit is over, so the pause lifts and the doubling starts over, as it did per call before."""
+        with self._lock:
+            if sent >= self._paused_at:
+                self._streak = 0
+                self._paused_until = min(self._paused_until, self._clock())
 
 
 class MeteredClient:
@@ -716,6 +724,10 @@ class MeteredClient:
             self.calls[request.model] = self.calls.get(request.model, 0) + 1  # a call that raises counts too
         try:
             response = self.inner.complete(request)
+        except Stopping:  # refused below the meter (a rate-limit pause the stop ended): no call was made
+            with self._lock:
+                self.calls[request.model] -= 1
+            raise
         except ProviderError as e:
             with self._lock:
                 self.failed[request.model] = self.failed.get(request.model, 0) + 1
@@ -862,8 +874,8 @@ class FailureGuard:
     Each failed call counts once: repeating the identical request (a retry of a raised call) adds nothing, so
     the count is of distinct calls, and one call that keeps failing (an answer that always times out, a
     content filter) adds 1, not 3 or 4. Any answer from that model resets its count. Under `[run] concurrency`
-    the count is of the distinct requests that failed on the model since its last answer, whichever worker
-    sent them (interleaved retries of one request still count once; sequentially this is the same count). At `limit`,
+    a failed request counts unless it is the one the same worker failed last on that model (its retry), so
+    interleaved retries of different workers still count once each, and sequentially the count is the old one. At `limit`,
     `TooManyFailures` stops the run cleanly with the last error, instead of recording row after row as missing
     through an outage, a withdrawn model id or a refused session. Failed calls are not cached, so a rerun asks
     them again. `limit = 0` never stops.
@@ -873,7 +885,7 @@ class FailureGuard:
         self.inner = inner
         self.limit = limit
         self.in_a_row: dict[str, int] = {}
-        self._failed: dict[str, set[str]] = {}  # per model, the cache keys that failed since its last answer
+        self._last_failed: dict[tuple[str, int], str] = {}  # per model and worker thread, its last failed request
         self._warned_at: dict[str, int] = {}  # per model, the count last warned about (one warning per count)
         self._lock = threading.Lock()
 
@@ -889,9 +901,11 @@ class FailureGuard:
         except ProviderError as e:
             key = request.cache_key()
             with self._lock:
-                failed = self._failed.setdefault(request.model, set())
-                failed.add(key)
-                n = self.in_a_row[request.model] = len(failed)
+                worker = (request.model, threading.get_ident())
+                if self._last_failed.get(worker) != key:
+                    self.in_a_row[request.model] = self.in_a_row.get(request.model, 0) + 1
+                    self._last_failed[worker] = key
+                n = self.in_a_row[request.model]
                 warn = n >= 5 and not self._warned(request.model, n)
             if warn:
                 logger.warning(f"{request.model}: {n} failed calls in a row"
@@ -904,6 +918,7 @@ class FailureGuard:
             raise
         with self._lock:
             self.in_a_row[request.model] = 0
-            self._failed.pop(request.model, None)
+            for worker in [w for w in self._last_failed if w[0] == request.model]:
+                del self._last_failed[worker]
             self._warned_at.pop(request.model, None)
         return response

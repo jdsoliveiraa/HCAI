@@ -36,8 +36,11 @@ def wide(tmp_path: Path, concurrency: int, *extra: str) -> Path:
         text = text.replace("[pools]", f'[[identities]]\nid = "{ident}"\ngender = "{gender}"\norigin = "{origin}"\n'
                                        f'names = ["{name}"]\nnationality = "X"\n\n[pools]', 1)
     text = text.replace("mixed_quality = 0", "mixed_quality = 2").replace("mixed_size = 8", "mixed_size = 1")
+    for line in [x for x in extra if x.startswith("repeats =")]:  # the skeleton sets repeats already
+        text = text.replace("repeats = 1\n", line + "\n", 1)
     path.write_text(text)
-    return with_run(path, f"concurrency = {concurrency}", "transient_backoff = [0, 0, 0]", *extra)
+    return with_run(path, f"concurrency = {concurrency}", "transient_backoff = [0, 0, 0]",
+                    *[x for x in extra if not x.startswith("repeats =")])
 
 
 class Slow(FakeLLMClient):
@@ -252,16 +255,29 @@ def test_a_stop_ends_a_rate_limit_wait_and_the_call_is_not_repeated():
     assert time.monotonic() - started < 5 and len(calls) == 1
 
 
-def test_failures_count_distinct_requests_since_the_last_answer_whatever_the_interleaving():
+def test_interleaved_retries_of_two_workers_count_once_each():
     class Down:
         def complete(self, request):
             raise ProviderError("HTTP 503", transient=True)
 
-    guard = FailureGuard(Down(), limit=3)
+    guard = FailureGuard(Down(), limit=0)
     a, b = (LLMRequest(model="m", messages=[{"role": "user", "content": x}]) for x in "ab")
-    for r in (a, b, a, b, a):  # two workers retrying their own calls, interleaved
-        with pytest.raises(ProviderError):
-            guard.complete(r)
+    turn = [threading.Event() for _ in range(6)]
+
+    def worker(request, mine):  # two workers retrying their own calls, interleaved: a, b, a, b, a, b
+        for i in mine:
+            assert turn[i].wait(timeout=5)
+            with pytest.raises(ProviderError):
+                guard.complete(request)
+            if i + 1 < len(turn):
+                turn[i + 1].set()
+
+    threads = [threading.Thread(target=worker, args=(a, (0, 2, 4))), threading.Thread(target=worker, args=(b, (1, 3, 5)))]
+    for t in threads:
+        t.start()
+    turn[0].set()
+    for t in threads:
+        t.join(timeout=5)
     assert guard.in_a_row["m"] == 2
 
 
@@ -394,3 +410,95 @@ def test_no_key_reaches_the_logs_under_concurrency(tmp_path):
     design = load_design(wide(tmp_path, 1))
     _, d = run_at(tmp_path, "c3", 3, routed_client(flaky_provider(3), design=design))
     assert SECRET not in (d / "out" / "calls.jsonl").read_text()
+
+
+# --- review fixes ------------------------------------------------------------------------------------------
+
+
+def test_the_production_provider_client_ends_a_rate_limit_wait_when_the_run_stops():
+    from hcai.providers import provider_client
+
+    design = load_design(Path(__file__).parent.parent / "configs" / "skeleton.toml")
+    client = provider_client(design.provider_for, design.models, environ={"OPENROUTER_API_KEY": SECRET},
+                             http=httpx.Client(transport=httpx.MockTransport(
+                                 lambda r: httpx.Response(429, headers={"retry-after": "30"}, json={}))))
+    event = threading.Event()
+    with stop_scope(event):
+        threading.Timer(0.2, event.set).start()
+        started = time.monotonic()
+        with pytest.raises(Stopping):
+            client.complete(LLMRequest(model=design.models[0], messages=[{"role": "user", "content": "x"}]))
+    assert time.monotonic() - started < 5
+
+
+def test_repeats_keep_their_sequential_order_with_several_repeats(tmp_path):
+    _, d1 = run_at(tmp_path, "c1", 1, Slow(1), "repeats = 2")
+    _, d3 = run_at(tmp_path, "c3", 3, Slow(2), "repeats = 2")
+    assert {r.repeat for r in read_results(d3 / "out" / "repeats.csv")} == {1, 2}
+    assert table(d1 / "out" / "repeats.csv") == table(d3 / "out" / "repeats.csv")
+    assert table(d1 / "out" / "results.csv") == table(d3 / "out" / "results.csv")
+
+
+def test_a_limit_then_an_error_does_not_double_the_next_calls_first_wait():
+    answers = iter([RateLimited("429"), ProviderError("HTTP 503", transient=True), RateLimited("429"), "ok"])
+
+    class Inner:
+        def complete(self, request):
+            a = next(answers)
+            if isinstance(a, BaseException):
+                raise a
+            return LLMResponse(text=a)
+
+    sleeps: list[float] = []
+    guard = RateLimitGuard(Inner(), backoff=30, sleep=sleeps.append, log=lambda m: None)
+    with pytest.raises(ProviderError):
+        guard.complete(REQ)
+    guard.complete(REQ)
+    assert sleeps == [30, 30]  # as before concurrency: the doubling is per call
+
+
+def test_a_request_failing_again_after_another_failure_counts_again_sequentially():
+    class Down:
+        def complete(self, request):
+            raise ProviderError("HTTP 400")
+
+    guard = FailureGuard(Down(), limit=0)
+    k, l = (LLMRequest(model="m", messages=[{"role": "user", "content": x}]) for x in "kl")
+    for r in (k, k, l, k):
+        with pytest.raises(ProviderError):
+            guard.complete(r)
+    assert guard.in_a_row["m"] == 3  # k (its retry adds nothing), l, k again
+
+
+def test_workers_asking_at_once_share_one_client_per_provider():
+    from hcai.providers import ProviderRouter
+
+    design = load_design(Path(__file__).parent.parent / "configs" / "skeleton.toml")
+    made: list[FakeLLMClient] = []
+
+    def make(provider):
+        time.sleep(0.05)
+        made.append(FakeLLMClient(_fake_response))
+        return made[-1]
+
+    router = ProviderRouter(design.provider_for, make)
+    got: list[object] = []
+    threads = [threading.Thread(target=lambda: got.append(router.client_for(design.models[0]))) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert len(made) == 1 and all(g is made[0] for g in got)
+
+
+def test_a_call_refused_below_the_meter_is_not_counted():
+    from hcai.llm import MeteredClient
+
+    class Refuse:
+        def complete(self, request):
+            raise Stopping("not made")
+
+    meter = MeteredClient(Refuse())
+    with pytest.raises(Stopping):
+        meter.complete(REQ)
+    assert meter.calls == {"m": 0}
