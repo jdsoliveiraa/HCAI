@@ -1,0 +1,5 @@
+model,condition,language,cvs,with_redactions,redacted,with_own_gender_words,mean_own_gender_words,universities_kept,languages_kept,location_kept
+gpt-5.6-luna,C1,en,216,42,128,0,0.0,1.0,1.0,0.9907
+qwen3.8-flash,C1,en,216,50,118,0,0.0,1.0,0.9954,0.4954
+gpt-5.6-luna,C1,pt,216,215,5313,1,0.0093,1.0,1.0,0.9491
+qwen3.8-flash,C1,pt,216,212,4658,7,0.0463,1.0,1.0,0.5278
