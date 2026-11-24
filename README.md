@@ -78,6 +78,44 @@ jq -s 'map(select(.cache == "miss")) | group_by(.model) | map({model: .[0].model
 jq . results/progress.json                                     # the last heartbeat
 ```
 
+## Reproducing the paper
+
+**Without credits (no key, no network).** The full core run is frozen in `data/runs/core-v1/` (tag `results-v1`). One command makes every table, figure and the human-audit export from it:
+
+```sh
+uv sync
+uv run hcai reproduce data/runs/core-v1     # about 40 min (200 bootstrap refits of the mixed model)
+uv run hcai reproduce data/runs/core-v1 --n-model-boot 0   # about 1 min: Wald CIs for the mixed model
+```
+
+It reads only the frozen run folder, the frozen corpus (`data/corpus/v1`) and name bank, and the raters' label sheets (`docs/audit/labels/`). It does not read `results/`, `.env` or the LLM cache. While it runs, every socket connection and name lookup is refused, so no step can reach a provider. It writes to `data/runs/core-v1/analysis/`:
+
+| Path | What |
+|---|---|
+| `FINDINGS.md` | the headline numbers per research question and what could not run or looks wrong (written by hand; the command never changes it) |
+| `tables/` | the analysis tables (see *Analysis* below), `data_accounting`, `screener_pass`, `stability`, `proxy_leaks`, `exclusions`, and `sensitivity_as_run/` |
+| `figures/` | the paper figures, PDF + PNG, IJCAI sizes (3.3 in column, 7 in full width): `forest_models`, `forest_roles`, `forest_languages`, `impact_heatmap`, `tradeoff`, `rank_position`, `rank_identity` |
+| `audit/` | the human-audit export (50 justifications) and, once both raters' sheets are committed, Cohen's κ |
+| `headline.json` | the numbers FINDINGS.md cites |
+| `MANIFEST.txt` | sha256 of every output; a rerun writes the same bytes |
+
+**Run order (with credits).** Each step is cached per request, so a rerun of a finished step costs nothing.
+
+1. `uv run hcai check configs/core.toml`: probe the models (JSON schema, temperature, seed).
+2. `uv run hcai corpus configs/core.toml`: generate and freeze the corpus (frozen as `data/corpus/v1`, tag `corpus-v1`).
+3. `uv run hcai names configs/core.toml`: the name manipulation check (record in `docs/pilot/names/`).
+4. `uv run hcai run configs/core.toml --pilot`: the pilot slice and the full-run cost estimate.
+5. `uv run hcai run configs/core.toml`: the full run into `results/`; copy it to `data/runs/<name>/` to freeze it.
+6. `uv run hcai reproduce data/runs/<name>`: the analysis, figures and audit export.
+
+**Key.** Only steps 1–5 call a provider: put `OPENCODE_API_KEY` (or `OPENROUTER_API_KEY`) in `.env` (see *Setup*). Step 6 needs no key.
+
+**Cost.** The full core run took about **USD 28.3 of the OpenCode Go allowance** (USD 27.88 logged per call, plus about 0.4 in the first start before per-call logs), with USD 0 of paid balance: 5,854 logged calls over about 19.5 h on 23 Nov 2026. The pilot estimate was USD 29.70. The judge (`gemini-4-argon`) is the largest single item (about USD 12.8 estimated). See `data/runs/core-v1/README.md` and `REPORT_NOTES.md`.
+
+**Human audit (RQ4).** The 50 justifications (25 flagged by the judge, 25 not) are on the project site's audit page (`audit.html`, from `uv run hcai site configs/core.toml`). Each rater types a name, labels every quote faithful or unfaithful (the item is unfaithful when any quote is), and clicks *Export labels*. That downloads `labels_<name>.csv`; commit it to `docs/audit/labels/`. The page shows no judge verdict. The key (`audit/audit_key.csv`) is in the repository, so raters must not open it. With two sheets, `hcai reproduce` writes `audit/agreement.csv` (κ per justification: judge vs. each rater, rater vs. rater) and `audit/agreement_criteria.csv` (κ per quote).
+
+**Data and licence.** All CVs, names, job ads and results are synthetic: there is no personal data. The first names and surnames come from public name-frequency sources; any match with a real person is chance. Code: MIT (`LICENSE`). Data (`data/`, `docs/audit/labels/`, the analysis outputs): CC BY 4.0 (`LICENSE-DATA`).
+
 ## Running the skeleton
 
 `configs/skeleton.toml` is a tiny design config: 1 role, 1 hand-written base CV, 2 identities, EN, condition C0. It renders each identity variant of the base CV and runs it through the hiring crew, writes the tidy results table and prints the paired score gap between the identities.
@@ -181,7 +219,11 @@ Add `"C2"` to `conditions` to swap in the **rubric Evaluator**, and `"C3"` for C
 uv run python -m hcai.analysis results/results.csv --reference pt_m --out results/analysis
 ```
 
-Writes one CSV per table to `results/analysis/` and prints a summary. Fairness (RQ1–RQ3): `gaps`, `equivalence`, `impact_ratios`, `model_terms`, `identity_contrasts`, `rank_identity`, `rank_position` (see the module docstring of `src/hcai/analysis.py`). Also:
+Writes one CSV per table to `results/analysis/` and prints a summary (`hcai reproduce` runs the same analysis on a frozen run). Fairness (RQ1–RQ3): `gaps`, `gaps_by` (within each model, role and language), `equivalence`, `impact_ratios`, `model_terms`, `identity_contrasts`, `model_notes`, `exclusions`, `rank_identity`, `rank_position` (see the module docstring of `src/hcai/analysis.py`). Also:
+
+- **Score model:** the proposal's fixed effects (gender × origin × condition + (gender + origin) × (role + language) + model) under two random-effect structures (`spec`). The primary one adds a random intercept for the pairing unit, base CV × language × condition × model: `(1|CV) + (1|CV:language:condition:model) + (1|name)`. The proposal's literal `(1|CV) + (1|name)` is kept as a robustness check. On the core run its identity CIs are about 8 times wider, because the CV × condition × model variance stays in the residual.
+- **Failed answers:** a rubric answer that scores every criterion 0 with every quote empty is a failed call, counted as missing (one row in the core run). `exclusions` lists such rows; the oversight table keeps them.
+- **Screener:** a logit with almost no rejections has no finite SEs; `model_notes` records it, and the Screener is reported by its gaps and impact ratios only.
 
 - **Ranking quality (RQ3), `ranking_quality.csv`:** the Spearman correlation between Evaluator scores and the base CV's true quality level, and the Ranker's pairwise accuracy on mixed-quality pools (the share of pairs of ranked CVs of different quality put in the right order), per condition and model and pooled (`model = all`), with 95% cluster-bootstrap CIs (base CVs resampled within their quality level; pools). `delta` is the change from C0, with a CI from paired resamples; `within_tolerance` checks the pre-registered success criterion (at most 5 pp of pairwise accuracy lost, on the point estimate). Quality levels come from the base CV id, best first by `--quality-order` (default `strong,average,weak`); screened-out CVs are neither scored nor ranked, so both measures cover screened-in CVs only.
 - **Oversight (RQ4), `oversight.csv`:** per rubric condition and model, the Evaluator decisions, how many the judge gave a verdict on and flagged (`flag_rate`), the escalations to the human review queue (`escalation_rate`, the cost of oversight) with their reasons, and the judge's calls and cost.

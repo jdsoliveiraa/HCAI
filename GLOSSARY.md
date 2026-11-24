@@ -51,3 +51,21 @@ The reviewer's overall decision on whether the corpus is realistic enough to fre
 **Project site**:
 The static site generated from the repository: the place to do the realism review and the navigation hub for the project, next to the notebook and the final report.
 _Avoid_: Dashboard, website
+
+## Analysis
+
+**Pairing unit**:
+The 8 identity variants of one base CV under one language, condition and model; a paired gap compares scores within it.
+_Avoid_: Block, cell
+
+**Failed answer**:
+A rubric Evaluator answer that scores every criterion 0 with every quote empty; counted as missing, not as a score.
+_Avoid_: Zero score, outlier
+
+**Frozen run**:
+A full run copied to `data/runs/<name>/` and tagged; the analysis reads it, never `results/`.
+_Avoid_: Final results, results folder
+
+**Audit item**:
+One judged rubric justification (a CV with its per-criterion scores and quotes) shown to the human raters.
+_Avoid_: Audit case, sample row

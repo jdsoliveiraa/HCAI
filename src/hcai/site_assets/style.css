@@ -315,3 +315,16 @@ figcaption { color: var(--muted); font-size: .9rem; }
   .toolbar .toggle { margin-left: 0; }
   .checks label, .variant-controls label { white-space: normal; }
 }
+
+/* human audit (audit.html) */
+.audit-bar { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--border); padding: .4rem 0; }
+.audit-bar p { margin: .25rem 0; }
+.audit-item { border-top: 1px solid var(--border); padding-top: .75rem; margin-top: 1.5rem; }
+.audit-grid { display: grid; gap: 1rem; }
+@media (min-width: 60rem) { .audit-grid { grid-template-columns: 1fr 1fr; } .audit-grid > section:first-child { position: sticky; top: 6rem; align-self: start; } }
+.cv-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 70vh; overflow: auto; background: var(--surface); padding: .6rem; border-radius: 6px; font-size: .85rem; }
+.audit-criteria li { margin-bottom: 1rem; }
+.audit-criteria blockquote { margin: .3rem 0; padding: .3rem .6rem; border-left: 3px solid var(--border); background: var(--surface); }
+.choices { border: 0; padding: 0; margin: .3rem 0; display: flex; gap: 1rem; flex-wrap: wrap; }
+.choice { display: inline-flex; align-items: center; gap: .3rem; min-height: 2rem; }
+.audit-item textarea { width: 100%; max-width: 40rem; }

@@ -6,6 +6,8 @@ Every table is computed per agent (RQ2) and per condition (RQ3):
   (Screener pass rate and Ranker top-3 rate in percentage points, Evaluator score in points), with
   cluster-bootstrap CIs over base CVs, a t-test on per-CV mean gaps, Cohen's d_z, Holm-adjusted p,
   and the equivalence check (Evaluator score: 90% CI within ±`margin` points).
+- `gaps_by`: the same paired gaps within each model, role and language (`scope`, `stratum`), for the
+  per-model, per-role and per-language forest plots; Holm-adjusted per agent × scope.
 - `equivalence`: per agent × condition, whether every identity's score gap passes that check.
 - `impact_ratios`: each identity's selection rate over the highest identity's rate, against 0.8.
   Selection is a Screener pass or a Ranker top-3 place (rule "decision"). The Evaluator's score is
@@ -15,18 +17,35 @@ Every table is computed per agent (RQ2) and per condition (RQ3):
   `cutoff` (default 70). Each ratio has a one-sided permutation p-value (selections shuffled across
   identities within each base CV or pool), Holm-adjusted within each agent × rule family, so the two
   Evaluator rules are corrected apart; `flagged` is a ratio below 0.8 that survives Holm.
-- `model_terms` and `identity_contrasts`: the Evaluator's mixed model
-  score ~ gender × origin × condition + (gender + origin) × (role + language) + model + (1|CV) + (1|name)
-  and logistic models of the same fixed effects for Screener pass and Ranker top 3 (cluster-robust
-  SEs by base CV). Factors with one level in the data are dropped from the formula. Contrasts give
+- `model_terms` and `identity_contrasts`: the Evaluator's mixed models with the proposal's fixed effects
+  score ~ gender × origin × condition + (gender + origin) × (role + language) + model
+  under two random-effect structures (column `spec`):
+  - "pairing" (primary): (1|CV) + (1|CV:language:condition:model) + (1|name). The second intercept is the
+    pairing unit of the paired gaps (the 8 identities of one base CV under one language, condition and
+    model), so the CV's score level under each condition and model is not left in the residual.
+  - "proposal" (robustness, the proposal's literal model): (1|CV) + (1|name). Its identity CIs are much
+    wider, because the CV × language × condition × model variance goes into the residual.
+  Logistic models of the same fixed effects for Screener pass and Ranker top 3 (cluster-robust SEs by
+  base CV; `spec` "logit"). Factors with one level in the data are dropped from the formula. Contrasts give
   each identity's gap to the reference per condition ("identity_gap") and how that gap changes from
   the reference condition ("identity_x_condition"), averaged over the observed role/language/model mix.
+  `n_model_boot` bootstrap refits apply to the primary model only.
+- `model_notes`: per agent and spec, whether the model was fitted, and why not (for example a logit
+  whose outcome has almost no variance, so its SEs are not finite: the Screener when it passes nearly all).
 - `rank_identity` and `rank_position`: permutation tests of mean rank per identity and, separately,
   per input position, in complete equal-quality pools (ranks permuted within each pool).
 - `ranking_quality` (RQ3, `hcai.quality`): Spearman between Evaluator scores and the true quality level,
   and the Ranker's pairwise accuracy on mixed-quality pools, per condition and model, against C0.
 - `oversight` (RQ4, `hcai.audit`): the judge's flag rate and the escalations (the cost of oversight) per
   rubric condition and model. The human audit's κ comes from `python -m hcai.audit` (it needs the labels).
+
+Failed answers (`exclude_failed`, on by default): a rubric Evaluator answer that scores every criterion 0
+with every quote empty is not an evaluation but a failed call (in the core run, qwen3.8-flash answered "No
+CV content was provided" although the full CV was in the request). Such a row counts as missing in the
+fairness and ranking-quality tables, like an answer that failed validation (ADR 0002); the frozen results
+table is not changed, `exclusions` lists the rows, and the oversight table (RQ4) keeps them, because the
+judge's verdict on them is itself a result. `hcai reproduce` also writes the as-run tables as a
+sensitivity check.
 
 Ranker tables use only complete equal-quality pools (every identity screened in and ranked), as
 ADR 0001 asks, so every identity has the same chance of the top 3 under no bias.
@@ -44,6 +63,7 @@ Run: `uv run python -m hcai.analysis results/results.csv --reference pt_m --out 
 from __future__ import annotations
 
 import argparse
+import json
 import warnings
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, fields
@@ -77,10 +97,13 @@ _MODEL_FACTORS = ["gender", "origin", "condition", "role", "language", "model"]
 @dataclass(frozen=True)
 class Analysis:
     gaps: pd.DataFrame
+    gaps_by: pd.DataFrame
     equivalence: pd.DataFrame
     impact_ratios: pd.DataFrame
     model_terms: pd.DataFrame
     identity_contrasts: pd.DataFrame
+    model_notes: pd.DataFrame
+    exclusions: pd.DataFrame
     rank_identity: pd.DataFrame
     rank_position: pd.DataFrame
     ranking_quality: pd.DataFrame
@@ -118,6 +141,7 @@ def analyse(
     margin: float = EQUIVALENCE_MARGIN,
     cutoff: float = SELECTION_CUTOFF,
     quality_order: Sequence[str] = QUALITY_ORDER,
+    exclude_failed: bool = True,
 ) -> Analysis:
     """Compute every fairness table from a results table.
 
@@ -131,22 +155,49 @@ def analyse(
     """
     if n_boot < 1:
         raise ValueError("n_boot must be at least 1: the paired-gap CIs and the equivalence check need it")
+    failed = failed_answers(results) if exclude_failed else pd.Series(False, index=results.index)
+    exclusions = results.loc[failed, EXCLUSION_COLUMNS].assign(rule=FAILED_RULE)
+    oversight = oversight_table(results)
+    results = results.assign(status=results["status"].where(~failed, "missing"),
+                             score=results["score"].where(~failed))
     df = _prepare(results, reference)
     rng = np.random.default_rng(seed)
     gaps = _gaps(df, reference, n_boot, rng, margin)
-    terms, contrasts = _models(df, reference, n_model_boot, rng)
+    terms, contrasts, notes = _models(df, reference, n_model_boot, rng)
     complete = _complete_equal_pools(df)
     return Analysis(
         gaps=gaps,
+        gaps_by=_gaps_by(df, reference, n_boot, np.random.default_rng([seed, 2]), margin),
         equivalence=_equivalence(gaps, margin),
         impact_ratios=_impact_ratios(df, complete, cutoff, n_perm, np.random.default_rng([seed, 1])),
         model_terms=terms,
         identity_contrasts=contrasts,
+        model_notes=notes,
+        exclusions=exclusions.reset_index(drop=True),
         rank_identity=_rank_test(complete, "identity", n_perm, rng),
         rank_position=_rank_test(complete, "input_position", n_perm, rng),
         ranking_quality=ranking_quality(results, quality_order=quality_order, n_boot=n_boot, seed=seed),
-        oversight=oversight_table(results),
+        oversight=oversight,
     )
+
+
+FAILED_RULE = "rubric answer with every criterion 0 and every quote empty"
+EXCLUSION_COLUMNS = ["base_cv", "identity", "name", "language", "condition", "model", "agent", "score", "rationale"]
+
+
+def failed_answers(results: pd.DataFrame) -> pd.Series:
+    """A boolean mask of rubric Evaluator rows whose answer scores every criterion 0 with every quote empty."""
+    def failed(evidence: Any) -> bool:
+        try:
+            criteria = json.loads(evidence)
+        except (TypeError, ValueError):
+            return False
+        return bool(criteria) and all(c.get("score") == 0 and not str(c.get("quote") or "").strip() for c in criteria)
+
+    candidates = (results["agent"] == "evaluator") & (results["status"] == "ok") & results["evidence"].notna()
+    mask = pd.Series(False, index=results.index)
+    mask[candidates] = results.loc[candidates, "evidence"].map(failed).astype(bool)
+    return mask
 
 
 # --- preparation -------------------------------------------------------------------------------
@@ -207,7 +258,26 @@ def _agent_outcomes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 # --- paired gaps and equivalence ----------------------------------------------------------------
 
 
-def _gaps(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Generator, margin: float) -> pd.DataFrame:
+_GAP_SCOPES = ("model", "role", "language")
+
+
+def _gaps_by(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Generator, margin: float) -> pd.DataFrame:
+    """The paired gaps within each level of each of `_GAP_SCOPES` (one Holm family per agent × scope)."""
+    tables = []
+    for scope in _GAP_SCOPES:
+        for stratum in df[scope].cat.categories:
+            t = _gaps(df[df[scope] == stratum], reference, n_boot, rng, margin, holm=False)
+            if not t.empty:
+                tables.append(t.assign(scope=scope, stratum=stratum))
+    if not tables:
+        return pd.DataFrame()
+    table = pd.concat(tables, ignore_index=True)
+    table["p_holm"] = _holm_by(table, ["agent", "scope"])
+    return table
+
+
+def _gaps(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Generator, margin: float,
+          holm: bool = True) -> pd.DataFrame:
     records = []
     for agent, rows in _agent_outcomes(df).items():
         if rows.empty:
@@ -225,7 +295,7 @@ def _gaps(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Generato
                                 "identity": identity, "reference": reference,
                                 **_paired_summary(d, n_boot, rng, margin, equivalence=agent == "evaluator")})
     gaps = pd.DataFrame(records)
-    if gaps.empty:
+    if gaps.empty or not holm:
         return gaps
     gaps["p_holm"] = _holm_by(gaps, ["agent"])
     return gaps
@@ -379,50 +449,87 @@ def _model_frame(rows: pd.DataFrame) -> pd.DataFrame:
     return d.reset_index(drop=True)
 
 
-def _models(df: pd.DataFrame, reference: str, n_boot: int, rng: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFrame]:
-    term_tables, contrast_tables = [], []
+PRIMARY_SPEC = "pairing"  # the Evaluator's primary mixed model; "proposal" is the literal one (robustness)
+_SPEC_ROLE = {"pairing": "primary", "proposal": "robustness", "logit": "primary"}
+NOTE_COLUMNS = ["agent", "outcome", "spec", "fitted", "reason"]
+
+
+def _models(df: pd.DataFrame, reference: str, n_boot: int,
+            rng: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    term_tables, contrast_tables, notes = [], [], []
     for agent, rows in _agent_outcomes(df).items():
         d = _model_frame(rows)
         formula = _formula(d) if len(d) else None
+        specs = ["pairing", "proposal"] if agent == "evaluator" else ["logit"]
+
+        def note(spec: str, fitted: bool, reason: str = "") -> None:
+            notes.append({"agent": agent, "outcome": _OUTCOMES[agent], "spec": spec, "fitted": fitted, "reason": reason})
+
         # No model without variation, without the reference identity (e.g. it was screened out everywhere),
         # or with a single base CV (one cluster / random-effect group: a pilot-sized table).
-        if (formula is None or d["y"].nunique() < 2 or reference not in set(d["identity"])
-                or d["base_cv"].nunique() < 2):
+        skip = ("no rows" if not len(d) else "no identity factor varies" if formula is None
+                else "the outcome does not vary" if d["y"].nunique() < 2
+                else "the reference identity has no rows" if reference not in set(d["identity"])
+                else "a single base CV" if d["base_cv"].nunique() < 2 else "")
+        if skip:
+            for spec in specs:
+                note(spec, False, skip)
             continue
+        assert formula is not None
         design_info: DesignInfo = cast(Any, dmatrix(formula.split("~", 1)[1], d, return_type="dataframe")).design_info
         contrasts = _contrast_matrix(d, design_info, reference)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            if agent == "evaluator":
-                fit, random_effects = _fit_mixed(d, formula)
-                params, cov, scale = fit.fe_params, fit.cov_params().loc[fit.fe_params.index, fit.fe_params.index], fit.scale
-            else:
-                fit = smf.glm(formula, d, family=sm.families.Binomial()).fit(
-                    cov_type="cluster", cov_kwds={"groups": pd.factorize(d["base_cv"])[0]})
-                params, cov, scale = fit.params, fit.cov_params(), None
-                random_effects = "none (cluster-robust SEs by base CV)"
-            boot = _bootstrap_mixed(d, formula, n_boot, rng) if agent == "evaluator" and n_boot > 0 else None
-        assert list(params.index) == list(design_info.column_names)
-        meta = {"agent": agent, "outcome": _OUTCOMES[agent],
-                "model_kind": "mixed_lm" if agent == "evaluator" else "logit_cluster",
-                "random_effects": random_effects, "n_obs": len(d)}
-        term_tables.append(_term_table(params, cov, boot, meta))
-        contrast_tables.append(_contrast_table(contrasts, params, cov, boot, scale, meta))
-    terms = pd.concat(term_tables, ignore_index=True) if term_tables else pd.DataFrame()
-    contrasts_df = pd.concat(contrast_tables, ignore_index=True) if contrast_tables else pd.DataFrame()
-    return terms, contrasts_df
+        for spec in specs:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                if agent == "evaluator":
+                    fit, random_effects = _fit_mixed(d, formula, spec)
+                    params, scale = fit.fe_params, fit.scale
+                    cov = fit.cov_params().loc[fit.fe_params.index, fit.fe_params.index]
+                else:
+                    fit = smf.glm(formula, d, family=sm.families.Binomial()).fit(
+                        cov_type="cluster", cov_kwds={"groups": pd.factorize(d["base_cv"])[0]})
+                    params, cov, scale = fit.params, fit.cov_params(), None
+                    random_effects = "none (cluster-robust SEs by base CV)"
+                    se = np.sqrt(np.diag(cov.to_numpy()))
+                    if not np.isfinite(se).all() or not np.isfinite(params.to_numpy()).all():
+                        minority = int(min(d["y"].sum(), len(d) - d["y"].sum()))
+                        note(spec, False, f"not finite SEs (separation): the outcome's rarer value occurs {minority} "
+                                          f"times in {len(d)} rows; reported descriptively (gaps, impact ratios)")
+                        continue
+                bootstrap = agent == "evaluator" and spec == PRIMARY_SPEC and n_boot > 0
+                boot = _bootstrap_mixed(d, formula, spec, n_boot, rng) if bootstrap else None
+            assert list(params.index) == list(design_info.column_names)
+            meta = {"agent": agent, "outcome": _OUTCOMES[agent], "spec": spec, "spec_role": _SPEC_ROLE[spec],
+                    "model_kind": "mixed_lm" if agent == "evaluator" else "logit_cluster",
+                    "random_effects": random_effects, "n_obs": len(d)}
+            term_tables.append(_term_table(params, cov, boot, meta))
+            contrast_tables.append(_contrast_table(contrasts, params, cov, boot, scale, meta))
+            note(spec, True)
+    empty = pd.DataFrame(columns=["agent", "outcome", "spec", "spec_role"])
+    terms = pd.concat(term_tables, ignore_index=True) if term_tables else empty.assign(term=[])
+    contrasts_df = pd.concat(contrast_tables, ignore_index=True) if contrast_tables else empty.assign(contrast=[])
+    return terms, contrasts_df, pd.DataFrame(notes, columns=NOTE_COLUMNS)
 
 
-def _fit_mixed(d: pd.DataFrame, formula: str) -> tuple[Any, str]:
-    """Crossed random intercepts for base CV and (when identities have several names) name."""
+def _fit_mixed(d: pd.DataFrame, formula: str, spec: str = PRIMARY_SPEC) -> tuple[Any, str]:
+    """Crossed random intercepts for base CV, (spec "pairing") the pairing unit base CV × language ×
+    condition × model, and (when identities have several names) name."""
     vc = {"cv": "0 + C(base_cv)"}
+    labels = {"cv": "CV", "unit": "CV:language:condition:model", "name": "name"}
+    if spec == "pairing":
+        d = d.assign(unit=d["base_cv"].astype(str) + "|" + d["language"].astype(str) + "|"
+                     + d["condition"].astype(str) + "|" + d["model"].astype(str))
+        if d["unit"].nunique() > d["base_cv"].nunique():
+            vc["unit"] = "0 + C(unit)"
+    elif spec != "proposal":
+        raise ValueError(f"unknown mixed-model spec {spec!r}")
     if d["name"].nunique() > d["identity"].nunique():
         vc["name"] = "0 + C(name)"
     model = smf.mixedlm(formula, d, groups=np.ones(len(d)), re_formula="0", vc_formula=vc)
-    return model.fit(reml=True), " + ".join(f"(1|{'CV' if k == 'cv' else k})" for k in vc)
+    return model.fit(reml=True), " + ".join(f"(1|{labels[k]})" for k in vc)
 
 
-def _bootstrap_mixed(d: pd.DataFrame, formula: str, n_boot: int, rng: np.random.Generator) -> np.ndarray:
+def _bootstrap_mixed(d: pd.DataFrame, formula: str, spec: str, n_boot: int, rng: np.random.Generator) -> np.ndarray:
     """Cluster bootstrap over base CVs: refit on resampled CVs, return n_boot × fixed-effect params."""
     cvs = d["base_cv"].unique()
     by_cv = {cv: g for cv, g in d.groupby("base_cv", observed=True)}
@@ -431,7 +538,7 @@ def _bootstrap_mixed(d: pd.DataFrame, formula: str, n_boot: int, rng: np.random.
         sample = rng.choice(cvs, size=len(cvs), replace=True)
         resampled = pd.concat([by_cv[cv].assign(base_cv=f"{cv}#{k}") for k, cv in enumerate(sample)], ignore_index=True)
         try:
-            draws.append(_fit_mixed(resampled, formula)[0].fe_params.to_numpy())
+            draws.append(_fit_mixed(resampled, formula, spec)[0].fe_params.to_numpy())
         except (np.linalg.LinAlgError, ValueError):
             continue
     return np.array(draws)
@@ -534,7 +641,7 @@ def _rank_test(complete: pd.DataFrame, factor: str, n_perm: int, rng: np.random.
         for level, diff, p_value, sd in zip(wide.columns, observed, p, null_sd):
             records.append({"agent": "ranker", "condition": condition, "factor": factor, "level": level,
                             "mean_rank": diff + expected, "expected_rank": expected, "diff": diff,
-                            "z": diff / sd if sd > 0 else float("nan"), "p": p_value,
+                            "z": diff / sd if sd > 0 else float("nan"), "null_sd": sd, "p": p_value,
                             "n_pools": ranks.shape[0], "n_perm": n_perm})
     table = pd.DataFrame(records)
     if not table.empty:

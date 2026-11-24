@@ -803,3 +803,25 @@ def test_bad_inputs_are_reported_not_fatal(tmp_path: Path):
     review = (out / "review.html").read_text()
     assert "Left out of the sample" in review and "unsupported format version" in review
     assert "does not match the current sample" in (out / "index.html").read_text()
+
+
+def test_the_audit_page_shows_each_items_quotes_with_a_choice_per_quote_and_no_judge_verdict(project: Path, tmp_path: Path):
+    audit = project.parent.parent / "data" / "runs" / "core-v1" / "analysis" / "audit"
+    audit.mkdir(parents=True)
+    items = [{"item_id": f"J00{k}", "language": "pt", "cv": f"# Ana\n\nCV text {k} <b>x</b>", "points": 10,
+              "criteria": [{"criterion": "Licenciatura", "score": 10, "quote": "Licenciatura em Gestão"},
+                           {"criterion": "OCC", "score": 0, "quote": ""}]} for k in (1, 2)]
+    (audit / "audit_items.json").write_text(json.dumps({"n": 2, "seed": 0, "items": items}), encoding="utf-8")
+    (audit / "audit_key.csv").write_text("item_id,judge_flag,judge_label\nJ001,True,unfaithful\n")
+    out = tmp_path / "site"
+    pages = build_site(project, out)
+
+    assert "audit.html" in pages
+    page = (out / "audit.html").read_text()
+    assert page.count('<article class="audit-item"') == 2
+    assert page.count('type="radio"') == 2 * 2 * 2  # 2 items x 2 quotes x faithful/unfaithful
+    assert 'name="J001-2" value="unfaithful"' in page and "Licenciatura em Gestão" in page
+    assert "&lt;b&gt;x&lt;/b&gt;" in page  # CV text is escaped, never markup
+    assert "judge_flag" not in page and "judge_label" not in page
+    assert 'src="assets/audit.js"' in page and (out / "assets" / "audit.js").is_file()
+    assert broken_links(out) == []

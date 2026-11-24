@@ -1,0 +1,17 @@
+Data licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+Copyright (c) 2026 João Oliveira
+
+The data in this repository is licensed under CC BY 4.0:
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+This covers:
+- data/ (the synthetic corpus, the name bank, the frozen runs and their analysis outputs)
+- docs/audit/labels/ (the human raters' label sheets)
+- docs/pilot/ (the pilot records)
+
+All of it is synthetic. It contains no personal data: the CVs, job ads and candidates are generated, and the
+names are first names and surnames from public name-frequency sources. Any match with a real person is chance.
+
+You may share and adapt the data for any purpose, also commercially, if you give appropriate credit, link to
+the licence and say if you made changes.
