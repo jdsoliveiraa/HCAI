@@ -406,3 +406,13 @@ def test_a_rubric_answer_with_every_criterion_zero_and_no_quote_is_a_failed_call
     assert kept_gap["estimate"] > excluded_gap["estimate"]  # a 0 for the reference inflates every gap
     # RQ4 keeps the row: the judge flagged it, and that is a result
     assert one(a.oversight, condition="C2", model="all")["flagged"] == 1
+
+
+def test_the_rank_tests_do_not_depend_on_the_number_of_model_bootstrap_refits(tmp_path):
+    rows = synthetic_results(conditions=("C0",), base_per_cell=4, position_effect=4.0, seed=7)
+    without = run(tmp_path, rows, n_model_boot=0)
+    with_boot = run(tmp_path, rows, n_model_boot=3)
+
+    pd.testing.assert_frame_equal(without.rank_position, with_boot.rank_position)
+    pd.testing.assert_frame_equal(without.rank_identity, with_boot.rank_identity)
+    pd.testing.assert_frame_equal(without.impact_ratios, with_boot.impact_ratios)

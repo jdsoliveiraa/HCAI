@@ -163,7 +163,7 @@ def analyse(
     df = _prepare(results, reference)
     rng = np.random.default_rng(seed)
     gaps = _gaps(df, reference, n_boot, rng, margin)
-    terms, contrasts, notes = _models(df, reference, n_model_boot, rng)
+    terms, contrasts, notes = _models(df, reference, n_model_boot, np.random.default_rng([seed, 5]))
     complete = _complete_equal_pools(df)
     return Analysis(
         gaps=gaps,
@@ -174,8 +174,9 @@ def analyse(
         identity_contrasts=contrasts,
         model_notes=notes,
         exclusions=exclusions.reset_index(drop=True),
-        rank_identity=_rank_test(complete, "identity", n_perm, rng),
-        rank_position=_rank_test(complete, "input_position", n_perm, rng),
+        # Own generators: the rank tests do not depend on how many bootstrap draws came before them.
+        rank_identity=_rank_test(complete, "identity", n_perm, np.random.default_rng([seed, 3])),
+        rank_position=_rank_test(complete, "input_position", n_perm, np.random.default_rng([seed, 4])),
         ranking_quality=ranking_quality(results, quality_order=quality_order, n_boot=n_boot, seed=seed),
         oversight=oversight,
     )

@@ -8,15 +8,16 @@ The analysis code (#9, #10) was tested on planted effects only. On the frozen co
 four things did not work as the proposal states them:
 
 - The proposal's mixed model, `score ~ gender × origin × cond + (gender + origin) × (role + lang) + model +
-  (1|CV) + (1|name)`, gave identity CIs of about ±4 points, against about ±0.5 for the paired gaps. The
-  variance of a CV's level under each language, condition and model (C2 SD 17 against C0 SD 6; the two
-  models 5 points apart) stays in the residual. With such CIs no identity effect under 4 points could be found,
-  so the model cannot answer RQ3.
+  (1|CV) + (1|name)`, gave identity-gap SEs of about 2.0 points (95% CI about ±4) on the data as run, against
+  about ±0.5 for the paired gaps. The variance of a CV's level under each language, condition and model (C2 SD 17
+  against C0 SD 6; the two models 5 points apart) stays in the residual, and one failed answer of 0 (below)
+  inflates it further. Without that answer the SE is 0.76 (±1.5); the pairing-unit model below gives 0.31–0.40.
+  Either way the literal model is 2 to 5 times less precise than the design allows.
 - The Screener passed 99.7% of CVs, so its logit has no finite SEs.
 - One rubric Evaluator answer (qwen3.8-flash, C2, PT-PT, accountant/weak/cv03, identity pt_m) said "No CV content
   was provided" and scored all 8 criteria 0 with empty quotes. The cached request holds the full CV, and its
   prompt tokens (1,212) match the other 7 identities (1,211–1,218): a model failure, not a pipeline bug. As pt_m is
-  the reference identity, this one row moved every C2 gap by about 0.55 points and made C2 "not shown equivalent".
+  the reference identity, this one row moved the C2 gaps by 0.51–0.92 points and made C2 "not shown equivalent".
 - The raters work on the project site (GitHub Pages), not in a spreadsheet.
 
 ## Decision
@@ -33,13 +34,17 @@ four things did not work as the proposal states them:
   results.
 - **Screener:** reported by its paired gaps, pass counts and impact ratios; its logit is recorded as not fitted in
   `model_notes`, with the reason.
-- **Human audit:** 50 items (25 flagged, 25 not, seed 0), rated on the site's `audit.html`, which shows no judge
+- **Human audit:** 50 items (25 flagged, 25 not, seed 0; failed answers are not drawn), rated on the site's `audit.html`, which shows no judge
   verdict and does not highlight quotes in the CV. Each rater labels every quote. The item label is derived
   (unfaithful if any quote is), so the pre-registered item-level κ is kept and a per-quote κ is added.
 - **One master command:** `hcai reproduce <run>` reads only the frozen run, the corpus and the label sheets, with
   every socket refused, and writes `<run>/analysis/`.
 
 ## Consequences
+
+The audit key (`audit/audit_key.csv`) and `results.csv` are in the repository, so the raters' blindness to the
+judge depends on them not opening those files. The audit export renders the CVs from `data/corpus/v1` and does not
+check it against the frozen run; the corpus is frozen by tag `corpus-v1` and must not change.
 
 The report must state the changed random effects and the one excluded answer, with both results. The equivalence
 claim for C2 depends on the exclusion rule: the report gives the as-run number beside it. The Ranker's quality

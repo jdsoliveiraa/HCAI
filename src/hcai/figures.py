@@ -162,6 +162,7 @@ def _forest(panels: Sequence[tuple[str, pd.DataFrame]], width: float) -> Figure:
     handles: list[Artist] = [Line2D([], [], color=CONDITION_COLOURS.get(c, INK), marker="o", ms=3.2, lw=1.8,
                           label=CONDITION_NAMES.get(c, c)) for c in conditions]
     handles.append(Rectangle((0, 0), 1, 1, color=BAND, label=f"±{EQUIVALENCE_MARGIN:g} equivalence"))
+    handles.append(Line2D([], [], color=MUTED, marker="o", ms=3.2, lw=0, label="filled: survives Holm"))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), bbox_to_anchor=(0.5, 1.0))
     fig.tight_layout(w_pad=0.6)
     return fig
@@ -233,8 +234,8 @@ def tradeoff(a: Analysis) -> Figure | None:
     models = sorted(by["stratum"].unique())
     fig, ax = plt.subplots(figsize=(COLUMN, 2.3))
     ax.axhline(EQUIVALENCE_MARGIN, color=MUTED, lw=0.6, ls="--")
-    ax.text(0.01, EQUIVALENCE_MARGIN, f"{EQUIVALENCE_MARGIN:g}-point margin", transform=ax.get_yaxis_transform(),
-            ha="left", va="bottom", fontsize=6, color=MUTED)
+    ax.text(0.99, EQUIVALENCE_MARGIN, f"{EQUIVALENCE_MARGIN:g}-point margin", transform=ax.get_yaxis_transform(),
+            ha="right", va="top", fontsize=6, color=MUTED)
     for m, model in enumerate(models):
         for condition, g in by[by["stratum"] == model].groupby("condition"):
             q = spearman[(spearman["model"] == model) & (spearman["condition"] == condition)]
@@ -256,7 +257,7 @@ def tradeoff(a: Analysis) -> Figure | None:
                           label=CONDITION_NAMES.get(c, c)) for c in sorted(by["condition"].unique())]
     handles += [Line2D([], [], color=MUTED, marker=MODEL_MARKERS[m % len(MODEL_MARKERS)], lw=0, ms=4,
                            label=model) for m, model in enumerate(models)]
-    ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.0, 0.97), ncol=2, fontsize=6, handletextpad=0.2,
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3, fontsize=6, handletextpad=0.2,
               columnspacing=0.8)
     fig.tight_layout()
     return fig
@@ -292,10 +293,11 @@ def rank_plot(table: pd.DataFrame, factor: str) -> Figure | None:
         ax.tick_params(axis="x", labelsize=6)
     ax.set_xlabel("Identity" if by_identity else "Input position in the Ranker prompt")
     ax.set_ylabel("Mean rank (1 = best)")
-    n = int(table["n_pools"].max())
+    low, high = int(table["n_pools"].min()), int(table["n_pools"].max())
+    n = f"{low}" if low == high else f"{low}–{high}"
     ax.set_ylim(len(levels) + 0.5, 0.5) if not by_identity else ax.set_ylim(expected + 1.5, expected - 1.5)
     ax.grid(axis="y", color=BAND, lw=0.4)
     ax.legend(loc="lower left" if not by_identity else "upper left", ncol=2, fontsize=6,
-              title=f"{n} complete equal-quality pools per condition; band: 95% null", title_fontsize=5.5)
+              title=f"{n} complete equal-quality pools per condition; band: widest 95% null", title_fontsize=5.5)
     fig.tight_layout()
     return fig

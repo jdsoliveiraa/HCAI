@@ -94,7 +94,7 @@ It reads only the frozen run folder, the frozen corpus (`data/corpus/v1`) and na
 |---|---|
 | `FINDINGS.md` | the headline numbers per research question and what could not run or looks wrong (written by hand; the command never changes it) |
 | `tables/` | the analysis tables (see *Analysis* below), `data_accounting`, `screener_pass`, `stability`, `proxy_leaks`, `exclusions`, and `sensitivity_as_run/` |
-| `figures/` | the paper figures, PDF + PNG, IJCAI sizes (3.3 in column, 7 in full width): `forest_models`, `forest_roles`, `forest_languages`, `impact_heatmap`, `tradeoff`, `rank_position`, `rank_identity` |
+| `figures/` | the paper figures, PDF + PNG, drawn at IJCAI widths (3.3 in column, 7 in full width) and trimmed to their content: `forest_models`, `forest_roles`, `forest_languages`, `impact_heatmap`, `tradeoff`, `rank_position`, `rank_identity` |
 | `audit/` | the human-audit export (50 justifications) and, once both raters' sheets are committed, Cohen's κ |
 | `headline.json` | the numbers FINDINGS.md cites |
 | `MANIFEST.txt` | sha256 of every output; a rerun writes the same bytes |
@@ -221,7 +221,7 @@ uv run python -m hcai.analysis results/results.csv --reference pt_m --out result
 
 Writes one CSV per table to `results/analysis/` and prints a summary (`hcai reproduce` runs the same analysis on a frozen run). Fairness (RQ1–RQ3): `gaps`, `gaps_by` (within each model, role and language), `equivalence`, `impact_ratios`, `model_terms`, `identity_contrasts`, `model_notes`, `exclusions`, `rank_identity`, `rank_position` (see the module docstring of `src/hcai/analysis.py`). Also:
 
-- **Score model:** the proposal's fixed effects (gender × origin × condition + (gender + origin) × (role + language) + model) under two random-effect structures (`spec`). The primary one adds a random intercept for the pairing unit, base CV × language × condition × model: `(1|CV) + (1|CV:language:condition:model) + (1|name)`. The proposal's literal `(1|CV) + (1|name)` is kept as a robustness check. On the core run its identity CIs are about 8 times wider, because the CV × condition × model variance stays in the residual.
+- **Score model:** the proposal's fixed effects (gender × origin × condition + (gender + origin) × (role + language) + model) under two random-effect structures (`spec`). The primary one adds a random intercept for the pairing unit, base CV × language × condition × model: `(1|CV) + (1|CV:language:condition:model) + (1|name)`. The proposal's literal `(1|CV) + (1|name)` is kept as a robustness check. On the core run its identity SEs are about 2 times larger (5 times with the failed answer kept), because the CV × condition × model variance stays in the residual.
 - **Failed answers:** a rubric answer that scores every criterion 0 with every quote empty is a failed call, counted as missing (one row in the core run). `exclusions` lists such rows; the oversight table keeps them.
 - **Screener:** a logit with almost no rejections has no finite SEs; `model_notes` records it, and the Screener is reported by its gaps and impact ratios only.
 

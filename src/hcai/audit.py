@@ -108,10 +108,14 @@ class AuditExport:
 
 
 def audit_sample(results: pd.DataFrame, n: int = AUDIT_SIZE, seed: int = 0) -> pd.DataFrame:
-    """`n` judged Evaluator decisions, `n / 2` flagged by the judge and `n / 2` not, in a shuffled order."""
+    """`n` judged Evaluator decisions, `n / 2` flagged by the judge and `n / 2` not, in a shuffled order. Failed
+    answers (`hcai.analysis.failed_answers`: every criterion 0, every quote empty) are left out."""
     if n < 2 or n % 2:
         raise ValueError(f"the audit sample must be an even number of items (half flagged), not {n}")
-    judged = results[(results["agent"] == "evaluator") & (results["status"] == "ok") & results["judge_flag"].notna()]
+    from hcai.analysis import failed_answers  # a failed call is not a justification to rate
+
+    judged = results[(results["agent"] == "evaluator") & (results["status"] == "ok") & results["judge_flag"].notna()
+                     & ~failed_answers(results)]
     rng = np.random.default_rng(seed)
     strata = []
     for flag in (True, False):

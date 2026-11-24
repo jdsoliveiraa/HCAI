@@ -20,12 +20,14 @@ means a Holm-adjusted p < 0.05 within its family.
   C2 0.53).
 - 1 of 63 paired gaps survives Holm: C1 UA F +1.20 [0.59, 1.86] (see *Looks wrong*). Within models, roles and
   languages (`gaps_by`), 2 of the stratum gaps survive: C1 BR F with gpt-5.6-luna +0.72, and C1 UA F in PT-PT +1.65.
-  All are under 2 points and all are in C1.
+  All are under 2 points and all are in C1. Within a single stratum the check has fewer pairs, and some bounds
+  pass 2 points: C1 in each role, each language and qwen3.8-flash (2.2–2.6), and C0 for software engineer (2.4).
+  These cells are not shown equivalent. The pre-registered check is the pooled one.
 - Impact ratios: no ratio below 0.8 survives Holm in any agent. The Screener ratios are ≥ 0.98, and the Evaluator
   ratios (median rule) are ≥ 0.79, with 1 of 24 below 0.8. The Ranker's top-3 ratios fall below 0.8 for 3, 3 and 7 of
   8 identities (C0, C1, C2; lowest 0.53), but none survives Holm (lowest adjusted p 0.058). With about 100 pools per
   condition they are noise (see RQ2).
-- Ranker mean rank by identity: none differs from 4.5 (lowest Holm p 0.89). Top-3 gaps range from −15 to +13 pp,
+- Ranker mean rank by identity: none differs from 4.5 (lowest Holm p 0.68). Top-3 gaps range from −15 to +13 pp,
   and none survives Holm (lowest 0.31).
 - Primary mixed model (pairing unit): identity gaps C0 +0.05 to +0.49 (none survives Holm), C2 +0.04 to +0.54
   (none), C1 +0.82 to +1.21 (UA F, UA M and AO F survive). The proposal's literal model finds nothing (SE 0.76–1.04
@@ -38,7 +40,8 @@ means a Holm-adjusted p < 0.05 within its family.
 - **Evaluator:** see RQ1. The gaps are under 1.3 points everywhere.
 - **Ranker:** in equal-quality pools, rank follows the input position, not the identity. In C0 the CV shown
   first gets mean rank 1.08 and the one shown last 7.77. In C2 the values are 1.08 and 7.94. In C1 the effect is
-  weaker (2.55 and 5.95). All position tests survive Holm. Because the order is shuffled independently of
+  weaker (2.55 and 5.95). 17 of 24 position tests survive Holm; the middle positions (4–5, and 3 in C1) do not,
+  as expected when rank follows position. Because the order is shuffled independently of
   identity, this adds noise to the identity results but no bias. The Ranker mostly keeps the order it is given.
 
 ## RQ3: do the mitigations help, and at what cost?
@@ -60,13 +63,14 @@ means a Holm-adjusted p < 0.05 within its family.
   decision).
 - Most of the cost of oversight comes from the near-cutoff rule, not the judge. C2 scores cluster (many 75s and
   100s), so many sit within 5 points of the median.
-- Human audit: 50 items are exported (25 of the 28 flagged, 25 unflagged) and on the site's audit page. **κ is
-  pending** until both label sheets are in `docs/audit/labels/`.
+- Human audit: 50 items are exported (25 of the 27 flagged valid answers, 25 unflagged; the failed answer is not
+  drawn) and are on the site's audit page. **κ is pending** until both label sheets are in `docs/audit/labels/`.
+  The key and `results.csv` are in the repository, so the raters must not open them.
 
 ## Stability (5% repeat sample)
 
-- The Evaluator gives the same score again in only 50% of repeats (gpt mean |Δ| 0.83, qwen 1.79 points). The
-  Screener (99–100%) and the Ranker (gpt 100%, qwen 91%) are more stable. The run-to-run noise of one score is
+- The Evaluator gives the same score again in only 52% (gpt) and 55% (qwen) of repeats, with mean |Δ| 0.79 and
+  1.62 points (weighted by pairs). The Screener (99–100%) and the Ranker (gpt 100%, qwen 91%) are more stable. The run-to-run noise of one score is
   about as large as the identity gaps. Read the gaps as averages over many pairs.
 
 ## Looks wrong, or could not run
@@ -76,8 +80,8 @@ means a Holm-adjusted p < 0.05 within its family.
   redactions (`proxy_leaks`), so the crew cannot see who PT M is. PT M's blinded versions happened to score lower.
   The 7 gaps share that one reference, so they move together. This explains the C1 survivors above. A
   reference-free contrast (each identity against the mean of all) would remove it. It is not computed.
-- **As run (sensitivity, `tables/sensitivity_as_run/`):** with the failed answer kept as a score of 0, every C2 gap
-  is about 0.55 points larger, and C2 is not shown equivalent (largest |90% CI| bound 3.07). C0 and C1 do not change.
+- **As run (sensitivity, `tables/sensitivity_as_run/`):** with the failed answer kept as a score of 0, the C2 gaps
+  are 0.51–0.92 points larger, and C2 is not shown equivalent (largest |90% CI| bound 3.07). C0 and C1 do not change.
 - In the same qwen C2 cell, AO F scored 100 on a weak CV where the others got 55–62. It is a real answer with
   quotes, so it stays.
 - The Screener's logistic model could not run (separation). The logistic model for top 3 runs, but its result is
@@ -87,3 +91,5 @@ means a Holm-adjusted p < 0.05 within its family.
   95%). Universities and languages survive in nearly all CVs. Redaction removed what the Blinder left
   (PT-PT about 22–24 tokens per CV).
 - The Ranker shows a strong position effect (primacy) in every condition.
+- The audit export renders the CVs from `data/corpus/v1` and does not check them against the run. The corpus is
+  frozen by tag `corpus-v1` and must not change.

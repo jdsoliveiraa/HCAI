@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import socket
 import sys
 from collections.abc import Iterator
@@ -79,6 +80,9 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
     """Run every step on the frozen run in `run_dir`; return the headline numbers (also `headline.json`)."""
     run = Path(run_dir)
     target = Path(out) if out is not None else run / "analysis"
+    for stale in ("tables", "figures", "audit"):  # outputs of an earlier run that this one may no longer write
+        if (target / stale).is_dir():
+            shutil.rmtree(target / stale)
     with no_network():
         results = load_results(run / "results.csv")
         a = analyse(results, reference=reference, n_boot=n_boot, n_model_boot=n_model_boot, n_perm=n_perm, seed=seed)

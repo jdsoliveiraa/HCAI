@@ -55,21 +55,28 @@ def test_the_master_command_reproduces_everything_offline_from_a_frozen_run(froz
     (cwd / ".env").write_text("OPENCODE_API_KEY=must-not-be-read\n")
     monkeypatch.chdir(cwd)
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    attempts: list[object] = []
-    real_connect = socket.socket.connect
+    # Proof that the guard is on while the analysis runs: a connection tried from inside it is refused.
+    import hcai.reproduce as reproduce_module
 
-    def spy(self, address):  # counts any connection the guard lets through
-        attempts.append(address)
-        return real_connect(self, address)
+    refused: list[bool] = []
+    real_analyse = reproduce_module.analyse
 
-    monkeypatch.setattr(socket.socket, "connect", spy)
+    def analyse_trying_the_network(*args, **kwargs):
+        try:
+            socket.create_connection(("openrouter.ai", 443), timeout=1)
+            refused.append(False)
+        except NetworkBlocked:
+            refused.append(True)
+        return real_analyse(*args, **kwargs)
+
+    monkeypatch.setattr(reproduce_module, "analyse", analyse_trying_the_network)
     before = {p: p.read_bytes() for p in frozen_run.iterdir()}
 
     code = main(["reproduce", str(frozen_run), "--labels", str(tmp_path / "no-labels"), "--config-base", str(tmp_path),
                  "--n-boot", "50", "--n-model-boot", "0", "--n-perm", "99"])
 
     assert code == 0
-    assert attempts == []
+    assert refused and all(refused)
     assert "OPENCODE_API_KEY" not in os.environ
     assert {p: p.read_bytes() for p in frozen_run.iterdir() if p.is_file()} == before  # inputs untouched
     out = frozen_run / "analysis"
@@ -155,3 +162,42 @@ def test_a_per_quote_sheet_with_an_unlabelled_or_unknown_criterion_is_refused(tm
     message = str(e.value)
     assert "J001: criteria 2 unlabelled; criteria 3 unknown" in message
     assert "'maybe'" in message and "item J002 is missing" in message
+
+
+def test_the_audit_is_exported_and_kappa_computed_once_two_sheets_are_in(frozen_run, tmp_path):
+    # The fake judge flags nothing, so mark one of the two C2 justifications flagged, as a judge would.
+    import csv
+
+    path = frozen_run / "results.csv"
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fields, rows = reader.fieldnames, list(reader)
+    c2 = [r for r in rows if r["agent"] == "evaluator" and r["condition"] == "C2"]
+    assert len(c2) == 2
+    c2[0]["judge_flag"], c2[1]["judge_flag"] = "True", "False"
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(fields or []))
+        writer.writeheader()
+        writer.writerows(rows)
+    labels = tmp_path / "labels"
+    labels.mkdir()
+    out = tmp_path / "out"
+    args = ["reproduce", str(frozen_run), "--out", str(out), "--labels", str(labels), "--config-base", str(tmp_path),
+            "--n-boot", "20", "--n-model-boot", "0", "--n-perm", "19", "--audit-n", "2"]
+
+    assert main(args) == 0
+    exported = json.loads((out / "audit" / "audit_items.json").read_text())
+    assert [i["item_id"] for i in exported["items"]] == ["J001", "J002"]
+    assert "judge" not in json.dumps(exported)
+    assert json.loads((out / "headline.json").read_text())["rq4_oversight"]["audit"]["status"].startswith("pending: 0")
+
+    key = read_key(out / "audit" / "audit_key.csv")
+    for rater in ("ana", "rui"):  # sheets as audit.js writes them: BOM, CRLF, one row per item x criterion
+        rows = {(i, c): "faithful" for i, n in zip(key["item_id"], key["n_criteria"]) for c in range(1, int(n) + 1)}
+        write_quote_sheet(labels / f"labels_{rater}.csv", rows)
+    assert main(args) == 0
+    agreement = pd.read_csv(out / "audit" / "agreement.csv")
+    assert set(zip(agreement["a"], agreement["b"])) == {("judge", "labels_ana"), ("judge", "labels_rui"),
+                                                        ("labels_ana", "labels_rui")}
+    assert (out / "audit" / "agreement_criteria.csv").exists()
+    assert json.loads((out / "headline.json").read_text())["rq4_oversight"]["audit"]["status"] == "computed"
