@@ -26,7 +26,7 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 | Logistic models | logistic counterpart for screening and top 3 | top 3 only; Screener reported by gaps, pass counts, impact ratios | Screener passed 99.7%: no finite SEs | `model_notes.csv` |
 | Failed answer | missing data recorded, not dropped | 1 rubric answer ("No CV content was provided", all 0) counted as missing; as-run results reported beside | model failure (the CV was in the request); it moved every C2 gap | ADR 0012, `exclusions.csv`, `sensitivity_as_run/` |
 | Ranker quality | pairwise accuracy on mixed pools | 1.00 in every condition (ceiling), so Spearman of Evaluator scores carries the quality cost | mixed pools were too easy | `ranking_quality.csv` |
-| Human audit | 50 justifications, 2 raters, κ | 50 items (25 flagged of the 27 valid answers the judge flagged; the failed answer is not drawn), rated per quote on the site's audit page; κ per item (pre-registered) and per quote | per-quote labels make κ on the judge's per-criterion verdicts possible | ADR 0012, `docs/audit/labels/` |
+| Human audit | 50 justifications, 2 raters, κ | 1 rater (judge–human κ only, no rater–rater κ; the rater accepted a score the full CV supports, a looser rule than the judge's); 50 items (25 flagged of the 27 valid answers the judge flagged; the failed answer is not drawn), rated per quote on the site's audit page; κ per item (pre-registered) and per quote | per-quote labels make κ on the judge's per-criterion verdicts possible | ADR 0012, `docs/audit/labels/` |
 
 ## Numbers to cite
 
@@ -39,7 +39,8 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 - Go caps measured during the run: monthly about $54, weekly about $28 (50%), 5 h about $11 (20%).
 - Name check: lowest cell, female Brazilian, mean p(origin) 0.648; all others ≥ 0.68.
 
+- Human audit (1 rater, 50 items): judge–human κ 0.08 per item (95% CI −0.07 to 0.24), 0.33 per quote (−0.00 to 0.61).
+
 ## Fill in later
 
-- #13: κ of the human audit, once both label sheets are in `docs/audit/labels/` (rerun `hcai reproduce`).
 - Headline analysis numbers: `data/runs/core-v1/analysis/FINDINGS.md`.

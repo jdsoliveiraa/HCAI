@@ -64,8 +64,15 @@ means a Holm-adjusted p < 0.05 within its family.
 - Most of the cost of oversight comes from the near-cutoff rule, not the judge. C2 scores cluster (many 75s and
   100s), so many sit within 5 points of the median.
 - Human audit: 50 items are exported (25 of the 27 flagged valid answers, 25 unflagged; the failed answer is not
-  drawn) and are on the site's audit page. **κ is pending** until both label sheets are in `docs/audit/labels/`.
+  drawn) and are on the site's audit page. One rater (`labels_joao_oliveira`), so there is no rater-to-rater κ (a limitation).
   The key and `results.csv` are in the repository, so the raters must not open them.
+- Judge vs. the human rater, per item: κ 0.08 (95% CI −0.07 to 0.24), agreement 54% (27 of 50). Of the 25 items the
+  judge flagged, the rater found 3 unfaithful; of the 25 it did not flag, 1. The judge flags far more than the rater.
+- Per quote (400): κ 0.33 (95% CI −0.00 to 0.61), agreement 92%. The judge marked 40 quotes unfaithful, the rater 10;
+  9 of the rater's 10 are among the judge's 40. The judge catches what the rater sees, with many false alarms.
+- Rule caveat: the rater labelled a quote faithful when the full CV supports its score, even when the quote itself
+  does not (comment on J042). The judge and the protocol need the quote itself to support the score. Part of the low
+  κ comes from this looser rule, so the κ values are a lower bound on agreement under one shared rule.
 
 ## Stability (5% repeat sample)
 

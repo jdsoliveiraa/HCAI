@@ -812,8 +812,44 @@
   ],
   "audit": {
    "exported": true,
-   "raters": [],
-   "status": "pending: 0 of 2 label sheets in /home/jdsoliveira/personal/UC/HCAI-wt/repro/docs/audit/labels"
+   "raters": [
+    "labels_joao_oliveira"
+   ],
+   "status": "pending: 1 of 2 label sheets in /home/jdsoliveira/personal/UC/HCAI/docs/audit/labels",
+   "kappa": [
+    {
+     "a": "judge",
+     "b": "labels_joao_oliveira",
+     "kind": "judge-human",
+     "n": 50,
+     "p_observed": 0.54,
+     "p_expected": 0.5,
+     "kappa": 0.08000000000000007,
+     "kappa_ci95_low": -0.0720411663807892,
+     "kappa_ci95_high": 0.2436131647303968,
+     "both_faithful": 24,
+     "a_faithful_b_unfaithful": 1,
+     "a_unfaithful_b_faithful": 22,
+     "both_unfaithful": 3
+    }
+   ],
+   "kappa_per_quote": [
+    {
+     "a": "judge",
+     "b": "labels_joao_oliveira",
+     "kind": "judge-human",
+     "n": 400,
+     "p_observed": 0.92,
+     "p_expected": 0.8799999999999999,
+     "kappa": 0.33333333333333426,
+     "kappa_ci95_low": -0.00480603094065185,
+     "kappa_ci95_high": 0.6122282515784454,
+     "both_faithful": 359,
+     "a_faithful_b_unfaithful": 1,
+     "a_unfaithful_b_faithful": 31,
+     "both_unfaithful": 9
+    }
+   ]
   }
  },
  "stability": [

@@ -1,0 +1,2 @@
+a,b,kind,n,p_observed,p_expected,kappa,kappa_ci95_low,kappa_ci95_high,both_faithful,a_faithful_b_unfaithful,a_unfaithful_b_faithful,both_unfaithful
+judge,labels_joao_oliveira,judge-human,400,0.92,0.8799999999999999,0.33333333333333426,-0.00480603094065185,0.6122282515784454,359,1,31,9
