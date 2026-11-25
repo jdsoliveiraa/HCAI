@@ -276,14 +276,17 @@ def pilot_design(design: Design) -> Design:
     return replace(pilot, pilot_of=design)
 
 
-def load_design(path: str | Path) -> Design:
-    """Load a design from TOML. `corpus_dir` and `name_bank` are resolved relative to the config file.
+def load_design(path: str | Path, base: str | Path | None = None) -> Design:
+    """Load a design from TOML. `corpus_dir` and `name_bank` are resolved relative to the config file,
+    or to `base` when given (a copy of a config kept elsewhere, e.g. the frozen `data/runs/<run>/core.toml`,
+    resolved as if it were in `configs/`).
 
     With `name_bank` set, the identities are every gender x origin of the bank; otherwise they come
     from the `[[identities]]` tables (setting both is an error).
     """
     path = Path(path)
     raw = tomllib.loads(path.read_text())
+    root = Path(base) if base is not None else path.parent
     d = raw["design"]
     if "name_bank" in d and "identities" in raw:
         raise ValueError(f"{path}: set either [design] name_bank or [[identities]], not both")
@@ -292,13 +295,13 @@ def load_design(path: str | Path) -> Design:
         quality_levels=list(d["quality_levels"]),
         base_cvs_per_role=int(d["base_cvs_per_role"]),
         identities=(
-            identities_from_name_bank(load_name_bank(path.parent / d["name_bank"]))
+            identities_from_name_bank(load_name_bank(root / d["name_bank"]))
             if "name_bank" in d else [Identity(**i) for i in raw.get("identities", [])]
         ),
         languages=list(d["languages"]),
         conditions=list(d["conditions"]),
         models=list(d["models"]),
-        corpus_dir=(path.parent / d["corpus_dir"]).resolve(),
+        corpus_dir=(root / d["corpus_dir"]).resolve(),
         temperature=float(d.get("temperature", 0.0)),
         seed=d.get("seed", 42),
         pools=Pools(**raw.get("pools", {})),

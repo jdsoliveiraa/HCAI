@@ -22,6 +22,11 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 | Judge / escalation | judge in C2/C3; escalate flagged or near-cutoff | judge in C2; escalation = judge flag or score within 5 points of the median cutoff | — | ADR 0004, `[oversight]` |
 | C3 (both) | stretch | not run (`conditions = C0, C1, C2`) | budget | `configs/core.toml` |
 | Schedule | pilot 15 Nov, final 27 Nov | pilot done 23 Nov | name check and corpus fixes took longer | #11 |
+| Score model | mixed model with `(1\|CV) + (1\|name)` | same fixed effects, primary adds `(1\|CV:lang:cond:model)`; the literal model is a robustness check | the literal model's identity CIs were about ±4 points as run, ±1.5 without the failed answer (pairing model about ±0.7) | ADR 0012, `model_terms.csv` (`spec`) |
+| Logistic models | logistic counterpart for screening and top 3 | top 3 only; Screener reported by gaps, pass counts, impact ratios | Screener passed 99.7%: no finite SEs | `model_notes.csv` |
+| Failed answer | missing data recorded, not dropped | 1 rubric answer ("No CV content was provided", all 0) counted as missing; as-run results reported beside | model failure (the CV was in the request); it moved every C2 gap | ADR 0012, `exclusions.csv`, `sensitivity_as_run/` |
+| Ranker quality | pairwise accuracy on mixed pools | 1.00 in every condition (ceiling), so Spearman of Evaluator scores carries the quality cost | mixed pools were too easy | `ranking_quality.csv` |
+| Human audit | 50 justifications, 2 raters, κ | 50 items (25 flagged of the 27 valid answers the judge flagged; the failed answer is not drawn), rated per quote on the site's audit page; κ per item (pre-registered) and per quote | per-quote labels make κ on the judge's per-criterion verdicts possible | ADR 0012, `docs/audit/labels/` |
 
 ## Numbers to cite
 
@@ -36,5 +41,5 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 
 ## Fill in later
 
-- #13: the analysis actually used (proposal: mixed-effects model with the formula in §Evaluation; the validation
-  report notes it cannot answer RQ3 as written), the human audit (proposal: 50 justifications, two raters, κ).
+- #13: κ of the human audit, once both label sheets are in `docs/audit/labels/` (rerun `hcai reproduce`).
+- Headline analysis numbers: `data/runs/core-v1/analysis/FINDINGS.md`.

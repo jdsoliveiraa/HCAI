@@ -1,0 +1,38 @@
+agent,condition,model,status,rows
+blinder,C1,gpt-5.6-luna,ok,432
+blinder,C1,qwen3.8-flash,ok,432
+evaluator,C0,gpt-5.6-luna,ok,431
+evaluator,C0,gpt-5.6-luna,rejected,1
+evaluator,C0,qwen3.8-flash,ok,429
+evaluator,C0,qwen3.8-flash,rejected,3
+evaluator,C1,gpt-5.6-luna,ok,431
+evaluator,C1,gpt-5.6-luna,rejected,1
+evaluator,C1,qwen3.8-flash,ok,431
+evaluator,C1,qwen3.8-flash,rejected,1
+evaluator,C2,gpt-5.6-luna,ok,431
+evaluator,C2,gpt-5.6-luna,rejected,1
+evaluator,C2,qwen3.8-flash,ok,429
+evaluator,C2,qwen3.8-flash,rejected,3
+judge,C2,gpt-5.6-luna,ok,431
+judge,C2,qwen3.8-flash,ok,429
+ranker,C0,gpt-5.6-luna,ok,527
+ranker,C0,gpt-5.6-luna,rejected,1
+ranker,C0,qwen3.8-flash,ok,525
+ranker,C0,qwen3.8-flash,rejected,3
+ranker,C1,gpt-5.6-luna,ok,527
+ranker,C1,gpt-5.6-luna,rejected,1
+ranker,C1,qwen3.8-flash,ok,527
+ranker,C1,qwen3.8-flash,rejected,1
+ranker,C2,gpt-5.6-luna,ok,527
+ranker,C2,gpt-5.6-luna,rejected,1
+ranker,C2,qwen3.8-flash,ok,525
+ranker,C2,qwen3.8-flash,rejected,3
+screener,C0,gpt-5.6-luna,ok,432
+screener,C0,qwen3.8-flash,ok,432
+screener,C1,gpt-5.6-luna,ok,432
+screener,C1,qwen3.8-flash,ok,432
+screener,C2,gpt-5.6-luna,ok,432
+screener,C2,qwen3.8-flash,ok,432
+ranker,C0,all,"equal-quality pools, complete (used) / all",104 / 108
+ranker,C1,all,"equal-quality pools, complete (used) / all",106 / 108
+ranker,C2,all,"equal-quality pools, complete (used) / all",104 / 108

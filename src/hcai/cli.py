@@ -352,8 +352,14 @@ def main(argv: list[str] | None = None) -> int:
     site = sub.add_parser("site", help="write the static project site (realism review + project hub); no API calls")
     site.add_argument("config", type=Path)
     site.add_argument("--out", type=Path, default=Path("site"), help="output directory (default: site)")
+    from hcai.reproduce import add_arguments as reproduce_arguments
+
+    reproduce = sub.add_parser("reproduce", help="every table, figure and the audit export from a frozen run "
+                                                 "(e.g. data/runs/core-v1); offline: no key, no network")
+    reproduce_arguments(reproduce)
     args = parser.parse_args(argv)
-    load_dotenv(".env")  # keys from a gitignored .env in the working directory; the environment wins
+    if args.command != "reproduce":  # reproduce needs no key, so it does not read .env
+        load_dotenv(".env")  # keys from a gitignored .env in the working directory; the environment wins
 
     with configure(_log_file(args), level=getattr(args, "log_level", "INFO"), quiet=getattr(args, "quiet", False)):
         return _main(args)
@@ -386,6 +392,11 @@ def _main(args: argparse.Namespace) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "reproduce":
+        from hcai.reproduce import run_command as reproduce_command
+
+        return reproduce_command(args)
+
     if args.command == "site":
         from hcai.site import build_site  # the markdown dependency is only needed here
 
