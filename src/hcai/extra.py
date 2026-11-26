@@ -26,9 +26,14 @@ it does not change the pre-registered tables.
 4. `repeat_noise` and `noise_vs_gap`: the run-to-run SD of one Evaluator score, σ, pooled over the repeat
    sample (within-item variance of the original and its repeats), with a bootstrap CI over items. A paired gap
    of one pair has noise SD σ√2 (against the reference) or σ√((k−1)/k) (against the mean of k). Per gap:
-   the gap in units of that noise SD, the noise-only SE of the mean gap, the share of the pair-to-pair variance
-   that noise explains, and `inside_noise`: the gap's 90% CI lies within ± the lower 95% bound of the noise SD
-   of one paired comparison (a bias smaller than what one repeat of the same call can change).
+   the gap in units of that noise SD (descriptive: how much one repeat of a call moves one paired comparison),
+   the noise-only SE of the mean gap (noise SD / √n_pairs), and `inside_noise`: |gap| < 1.96 × that SE, i.e. the
+   mean gap is no larger than measurement noise alone could make it over the same number of pairs. This
+   ignores the CV-to-CV and name spread, so it is the most lenient test of a gap: False means more than
+   measurement noise (a bias, or other systematic variation such as name effects), not by itself a bias.
+   `noise_to_observed_var` is the noise variance of one paired comparison over the observed variance of the
+   pair-level gaps: near 1, the pair-to-pair spread is what noise alone gives; above 1, σ is uncertain (about
+   ±30% on 40–60 repeats) or the noise of the variants is not independent, and it is not a share.
 """
 
 from __future__ import annotations
@@ -154,8 +159,10 @@ def subset_equivalence(table: pd.DataFrame, margin: float = EQUIVALENCE_MARGIN) 
         return pd.DataFrame()
     parts = [_equivalence(g, margin).assign(subset=str(s), contrast=str(c)) for (s, c), g in table.groupby(["subset", "contrast"])]
     out = pd.concat(parts, ignore_index=True)
-    n = table.groupby(["subset", "contrast", "condition"], observed=True)["n_pairs"].agg(["min", "max"])
-    out = out.join(n.rename(columns={"min": "n_pairs_min", "max": "n_pairs_max"}), on=["subset", "contrast", "condition"])
+    ev = table[table["agent"] == "evaluator"]
+    n = ev.groupby(["subset", "contrast", "condition"], observed=True).agg(
+        n_pairs_min=("n_pairs", "min"), n_pairs_max=("n_pairs", "max"), n_cvs=("n_cvs", "max"))
+    out = out.join(n, on=["subset", "contrast", "condition"])
     first = ["subset", "contrast"]
     return out[first + [c for c in out.columns if c not in first]]
 
@@ -297,11 +304,9 @@ def noise_vs_gap(gaps: pd.DataFrame, free: pd.DataFrame, noise: pd.DataFrame, df
     table["noise_se_mean"] = table["noise_sd_pair"] / np.sqrt(table["n_pairs"])
     sd = _pair_sd(df, reference).assign(condition=lambda x: x["condition"].astype(str))
     table = table.merge(sd, on=["contrast", "condition", "identity"], how="left")
-    table["noise_share_var"] = (table["noise_sd_pair"] / table["observed_sd_pair"]) ** 2
-    table["noise_share_ci95_low"] = (table["noise_sd_pair_ci95_low"] / table["observed_sd_pair"]) ** 2
-    table["noise_share_ci95_high"] = (table["noise_sd_pair_ci95_high"] / table["observed_sd_pair"]) ** 2
-    bound = np.maximum(table["ci90_low"].abs(), table["ci90_high"].abs())
-    table["inside_noise"] = bound < table["noise_sd_pair_ci95_low"]
+    table["noise_to_observed_var"] = (table["noise_sd_pair"] / table["observed_sd_pair"]) ** 2
+    table["z_noise"] = table["estimate"] / table["noise_se_mean"]
+    table["inside_noise"] = table["z_noise"].abs() < float(stats.norm.ppf(1 - ALPHA / 2))
     first = ["contrast", "condition", "identity"]
     return table[first + [c for c in table.columns if c not in first]]
 
@@ -372,7 +377,8 @@ def extra_headline(t: dict[str, pd.DataFrame]) -> dict[str, Any]:
             .agg(max_abs_gap=("abs_gap", "max"), noise_sd_pair=("noise_sd_pair", "first"),
                  max_gap_over_noise_sd=("gap_over_noise_sd", lambda s: float(s.abs().max())),
                  inside_noise=("inside_noise", "sum"), n=("inside_noise", "size"),
-                 noise_share_min=("noise_share_var", "min"), noise_share_max=("noise_share_var", "max"))
+                 noise_to_observed_var_min=("noise_to_observed_var", "min"),
+                 noise_to_observed_var_max=("noise_to_observed_var", "max"))
             .reset_index().to_dict("records"))
     return out
 

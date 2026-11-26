@@ -815,7 +815,7 @@
    "raters": [
     "labels_joao_oliveira"
    ],
-   "status": "pending: 1 of 2 label sheets in /home/jdsoliveira/personal/UC/HCAI-wt/extra/docs/audit/labels",
+   "status": "pending: 1 of 2 label sheets in docs/audit/labels",
    "kappa": [
     {
      "a": "judge",
@@ -1407,7 +1407,8 @@
      "max_abs_ci90": 2.3645833333333335,
      "equivalent": false,
      "n_pairs_min": 23,
-     "n_pairs_max": 24
+     "n_pairs_max": 23,
+     "n_cvs": 6
     },
     {
      "subset": "borderline",
@@ -1419,7 +1420,8 @@
      "max_abs_ci90": 3.15625,
      "equivalent": false,
      "n_pairs_min": 23,
-     "n_pairs_max": 24
+     "n_pairs_max": 23,
+     "n_cvs": 6
     },
     {
      "subset": "borderline",
@@ -1431,7 +1433,8 @@
      "max_abs_ci90": 1.2004166666666667,
      "equivalent": true,
      "n_pairs_min": 22,
-     "n_pairs_max": 24
+     "n_pairs_max": 22,
+     "n_cvs": 6
     },
     {
      "subset": "borderline",
@@ -1443,7 +1446,8 @@
      "max_abs_ci90": 2.5833333333333335,
      "equivalent": false,
      "n_pairs_min": 23,
-     "n_pairs_max": 24
+     "n_pairs_max": 24,
+     "n_cvs": 6
     },
     {
      "subset": "borderline",
@@ -1455,7 +1459,8 @@
      "max_abs_ci90": 5.0,
      "equivalent": false,
      "n_pairs_min": 23,
-     "n_pairs_max": 24
+     "n_pairs_max": 24,
+     "n_cvs": 6
     },
     {
      "subset": "borderline",
@@ -1467,7 +1472,8 @@
      "max_abs_ci90": 1.8571428571428572,
      "equivalent": true,
      "n_pairs_min": 22,
-     "n_pairs_max": 24
+     "n_pairs_max": 23,
+     "n_cvs": 6
     },
     {
      "subset": "near_cutoff",
@@ -1479,7 +1485,8 @@
      "max_abs_ci90": 1.4085365853658536,
      "equivalent": true,
      "n_pairs_min": 40,
-     "n_pairs_max": 40
+     "n_pairs_max": 40,
+     "n_cvs": 12
     },
     {
      "subset": "near_cutoff",
@@ -1491,7 +1498,8 @@
      "max_abs_ci90": 1.7310550935550937,
      "equivalent": true,
      "n_pairs_min": 42,
-     "n_pairs_max": 42
+     "n_pairs_max": 42,
+     "n_cvs": 14
     },
     {
      "subset": "near_cutoff",
@@ -1503,7 +1511,8 @@
      "max_abs_ci90": 0.4962176916221034,
      "equivalent": true,
      "n_pairs_min": 34,
-     "n_pairs_max": 34
+     "n_pairs_max": 34,
+     "n_cvs": 9
     },
     {
      "subset": "near_cutoff",
@@ -1515,7 +1524,8 @@
      "max_abs_ci90": 1.8446135265700483,
      "equivalent": true,
      "n_pairs_min": 43,
-     "n_pairs_max": 44
+     "n_pairs_max": 44,
+     "n_cvs": 12
     },
     {
      "subset": "near_cutoff",
@@ -1527,7 +1537,8 @@
      "max_abs_ci90": 2.4742424242424237,
      "equivalent": false,
      "n_pairs_min": 42,
-     "n_pairs_max": 44
+     "n_pairs_max": 44,
+     "n_cvs": 14
     },
     {
      "subset": "near_cutoff",
@@ -1539,7 +1550,8 @@
      "max_abs_ci90": 0.4722222222222222,
      "equivalent": true,
      "n_pairs_min": 35,
-     "n_pairs_max": 36
+     "n_pairs_max": 36,
+     "n_cvs": 9
     }
    ]
   },
@@ -1729,8 +1741,8 @@
      "max_gap_over_noise_sd": 0.16488334885777775,
      "inside_noise": 8,
      "n": 8,
-     "noise_share_min": 0.5347260230237352,
-     "noise_share_max": 1.3193123543123542
+     "noise_to_observed_var_min": 0.5347260230237352,
+     "noise_to_observed_var_max": 1.3193123543123542
     },
     {
      "contrast": "vs_mean",
@@ -1738,10 +1750,10 @@
      "max_abs_gap": 0.8066037735849056,
      "noise_sd_pair": 1.701587290019397,
      "max_gap_over_noise_sd": 0.47403020598238654,
-     "inside_noise": 7,
+     "inside_noise": 6,
      "n": 8,
-     "noise_share_min": 0.4029193808614365,
-     "noise_share_max": 0.869152762700398
+     "noise_to_observed_var_min": 0.4029193808614365,
+     "noise_to_observed_var_max": 0.869152762700398
     },
     {
      "contrast": "vs_mean",
@@ -1749,10 +1761,10 @@
      "max_abs_gap": 0.14199029126213591,
      "noise_sd_pair": 0.7268295880053316,
      "max_gap_over_noise_sd": 0.19535568392558939,
-     "inside_noise": 8,
+     "inside_noise": 7,
      "n": 8,
-     "noise_share_min": 0.47118044538301135,
-     "noise_share_max": 1.3310644532713787
+     "noise_to_observed_var_min": 0.47118044538301135,
+     "noise_to_observed_var_max": 1.3310644532713787
     },
     {
      "contrast": "vs_reference",
@@ -1762,8 +1774,8 @@
      "max_gap_over_noise_sd": 0.1739407359888223,
      "inside_noise": 7,
      "n": 7,
-     "noise_share_min": 0.6006839612118753,
-     "noise_share_max": 1.0878521159521695
+     "noise_to_observed_var_min": 0.6006839612118753,
+     "noise_to_observed_var_max": 1.0878521159521695
     },
     {
      "contrast": "vs_reference",
@@ -1771,10 +1783,10 @@
      "max_abs_gap": 1.2037037037037037,
      "noise_sd_pair": 2.5725581734055223,
      "max_gap_over_noise_sd": 0.46790145161625435,
-     "inside_noise": 6,
+     "inside_noise": 0,
      "n": 7,
-     "noise_share_min": 0.4283919809101299,
-     "noise_share_max": 0.6468802326670648
+     "noise_to_observed_var_min": 0.4283919809101299,
+     "noise_to_observed_var_max": 0.6468802326670648
     },
     {
      "contrast": "vs_reference",
@@ -1782,10 +1794,10 @@
      "max_abs_gap": 0.2169811320754717,
      "noise_sd_pair": 1.0988630487917956,
      "max_gap_over_noise_sd": 0.19745966734803153,
-     "inside_noise": 7,
+     "inside_noise": 3,
      "n": 7,
-     "noise_share_min": 0.3298363518134964,
-     "noise_share_max": 1.1843034014804372
+     "noise_to_observed_var_min": 0.3298363518134964,
+     "noise_to_observed_var_max": 1.1843034014804372
     }
    ]
   }

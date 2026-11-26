@@ -136,8 +136,10 @@ def test_a_position_effect_alone_gives_no_identity_effect(tmp_path):
 # --- 4. noise against the gaps -------------------------------------------------------------------
 
 
-def test_the_repeat_noise_is_recovered_and_a_planted_gap_larger_than_it_is_not_inside_noise(tmp_path):
-    rows = synthetic_results(gaps={("br_f", "C0"): -6.0, ("br_f", "C1"): -6.0})
+def test_the_repeat_noise_is_recovered_and_a_planted_gap_smaller_than_one_pair_noise_is_not_inside_noise(tmp_path):
+    # -3 points is below the noise SD of one paired comparison (2·√2 = 2.8): one decision cannot show it, but the
+    # mean over 80 pairs must.
+    rows = synthetic_results(gaps={("br_f", "C0"): -3.0, ("br_f", "C1"): -3.0})
     results = frame(tmp_path, rows)
     repeats = frame(tmp_path, repeats_of(rows, sigma=2.0), "repeats.csv")
     noise = repeat_noise(results, repeats, 500, np.random.default_rng(0))
@@ -149,17 +151,16 @@ def test_the_repeat_noise_is_recovered_and_a_planted_gap_larger_than_it_is_not_i
     table = t["extra_noise_vs_gap"]
     hit = one(table, contrast="vs_reference", condition="C0", identity="br_f")
     assert not hit["inside_noise"]
-    assert hit["gap_over_noise_sd"] == pytest.approx(-6.0 / (2.0 * np.sqrt(2)), abs=0.6)
+    assert hit["gap_over_noise_sd"] == pytest.approx(-3.0 / (2.0 * np.sqrt(2)), abs=0.4)
     assert hit["noise_se_mean"] == pytest.approx(hit["noise_sd_pair"] / np.sqrt(hit["n_pairs"]))
-    others = table[(table["identity"] != "br_f") & (table["contrast"] == "vs_reference")]
-    assert others["inside_noise"].all()
 
 
-def test_without_a_planted_effect_every_gap_is_inside_noise(tmp_path):
+def test_without_a_planted_effect_the_gaps_are_inside_noise(tmp_path):
     rows = synthetic_results(base_per_cell=20)
     results = frame(tmp_path, rows)
     repeats = frame(tmp_path, repeats_of(rows, sigma=3.0), "repeats.csv")
     a = analyse(results, "pt_m", n_boot=500, n_model_boot=0, n_perm=99)
     t = extra_tables(results, repeats, a.gaps, "pt_m", [], n_boot=500)
-    assert t["extra_noise_vs_gap"]["inside_noise"].all()
+    # a 5% test per gap: allow the odd chance exception
+    assert t["extra_noise_vs_gap"]["inside_noise"].mean() >= 0.9
     assert set(t["extra_noise_vs_gap"]["contrast"]) == {"vs_reference", "vs_mean"}

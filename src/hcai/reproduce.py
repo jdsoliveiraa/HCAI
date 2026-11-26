@@ -175,6 +175,14 @@ def _corpus_facts(run: Path, config_base: Path) -> tuple[list[str], float]:
     return borderline_cvs(design.corpus_dir / "manifest.json"), float(design.oversight.margin)
 
 
+def _shown(path: Path) -> str:
+    """`path` relative to the project root when inside it, so headline.json does not depend on the checkout."""
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _json_table(path: Path) -> pd.DataFrame:
     return pd.DataFrame(json.loads(path.read_text())) if path.exists() else pd.DataFrame()
 
@@ -202,7 +210,7 @@ def _audit(results: pd.DataFrame, run: Path, out: Path, labels: Path, config_bas
     for stale in ("agreement.csv", "agreement_criteria.csv"):
         (out / stale).unlink(missing_ok=True)
     if len(sheets) < 2:
-        info["status"] = f"pending: {len(sheets)} of 2 label sheets in {labels}"
+        info["status"] = f"pending: {len(sheets)} of 2 label sheets in {_shown(labels)}"
         if not sheets:
             return info
     try:
