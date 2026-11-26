@@ -19,7 +19,11 @@ It writes to `<run>/analysis/` (or `--out`):
   for the site's audit page, `audit_key.csv`, `INSTRUCTIONS.md`), and once label sheets exist
   (`docs/audit/labels/labels_*.csv`), `agreement.csv` (κ per justification) and `agreement_criteria.csv`
   (κ per quote).
-- `headline.json`: the numbers FINDINGS.md cites, per research question.
+- `tables/extra_*.csv`: the post-hoc analyses of `hcai.extra` (not pre-registered): gaps against the mean of the
+  identities, gaps in the borderline and near-cutoff subsets, the position-adjusted Ranker, and the gaps against
+  the run-to-run noise of the repeat sample (`repeats.csv`). They use their own seeded generators, so the
+  pre-registered tables do not change.
+- `headline.json`: the numbers FINDINGS.md cites, per research question (`extra_not_preregistered` for the above).
 - `MANIFEST.txt`: the sha256 of every file written, so a rerun can be compared byte for byte.
 
 FINDINGS.md in the same folder is written by hand and is never touched by the command.
@@ -44,6 +48,7 @@ import pandas as pd
 from hcai.analysis import ALPHA, Analysis, analyse, load_results
 from hcai.audit import AUDIT_SIZE, AuditLabelError, export_audit, rater_agreement, read_key
 from hcai.config import load_design
+from hcai.extra import NEAR_MARGIN, borderline_cvs, extra_headline, extra_tables
 from hcai.figures import write_figures
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +108,14 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
             path = sensitivity / f"{name}.csv"
             getattr(as_run, name).to_csv(path, index=False)
             written.append(path)
+        repeats = load_results(run / "repeats.csv") if (run / "repeats.csv").exists() else None
+        borderline, near_margin = _corpus_facts(run, Path(config_base))
+        post_hoc = extra_tables(results, repeats, a.gaps, reference, borderline, n_boot=n_boot, seed=seed,
+                                near_margin=near_margin)
+        for name, table in post_hoc.items():
+            path = tables / f"{name}.csv"
+            table.to_csv(path, index=False)
+            written.append(path)
         written += write_figures(a, target / "figures")
         audit = _audit(results, run, target / "audit", Path(labels), Path(config_base), audit_n, seed)
         written += audit.pop("paths")
@@ -113,6 +126,8 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
             "gaps_surviving_holm": as_run.gaps.loc[as_run.gaps["p_holm"] < ALPHA,
                                                    ["agent", "condition", "identity", "estimate", "p_holm"]].to_dict("records"),
         }
+        headline["extra_not_preregistered"] = {"borderline_cvs": borderline, "near_margin": near_margin,
+                                               **extra_headline(post_hoc)}
         path = target / "headline.json"
         path.write_text(json.dumps(headline, indent=1, default=_jsonable) + "\n")
         written.append(path)
@@ -146,6 +161,18 @@ def screener_pass(results: pd.DataFrame) -> pd.DataFrame:
     table["passed"] = table["passed"].astype(int)
     table["rejected"] = table["n"] - table["passed"]
     return table
+
+
+def _corpus_facts(run: Path, config_base: Path) -> tuple[list[str], float]:
+    """The corpus's borderline base CVs and the escalation margin of the run's config (empty, default if absent)."""
+    config = run / "core.toml"
+    if not config.exists():
+        return [], NEAR_MARGIN
+    try:
+        design = load_design(config, base=config_base)
+    except (OSError, ValueError, KeyError):
+        return [], NEAR_MARGIN
+    return borderline_cvs(design.corpus_dir / "manifest.json"), float(design.oversight.margin)
 
 
 def _json_table(path: Path) -> pd.DataFrame:

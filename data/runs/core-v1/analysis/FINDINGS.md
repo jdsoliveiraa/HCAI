@@ -85,8 +85,8 @@ means a Holm-adjusted p < 0.05 within its family.
 - **C1 gaps are a reference effect, not a pattern.** In C1 every identity, PT F included, scores 0.8–1.2 above
   PT M. Each variant is blinded in its own call, and the blinded texts of PT M are no different in length or
   redactions (`proxy_leaks`), so the crew cannot see who PT M is. PT M's blinded versions happened to score lower.
-  The 7 gaps share that one reference, so they move together. This explains the C1 survivors above. A
-  reference-free contrast (each identity against the mean of all) would remove it. It is not computed.
+  The 7 gaps share that one reference, so they move together. This explains the C1 survivors above. The
+  reference-free contrast (post hoc, see *Extra analyses*) confirms it: PT M is the only C1 outlier.
 - **As run (sensitivity, `tables/sensitivity_as_run/`):** with the failed answer kept as a score of 0, the C2 gaps
   are 0.51–0.92 points larger, and C2 is not shown equivalent (largest |90% CI| bound 3.07). C0 and C1 do not change.
 - In the same qwen C2 cell, AO F scored 100 on a weak CV where the others got 55–62. It is a real answer with
@@ -100,3 +100,47 @@ means a Holm-adjusted p < 0.05 within its family.
 - The Ranker shows a strong position effect (primacy) in every condition.
 - The audit export renders the CVs from `data/corpus/v1` and does not check them against the run. The corpus is
   frozen by tag `corpus-v1` and must not change.
+
+## Extra analyses (not pre-registered)
+
+Post hoc: added after the results above were known, not in the proposal (`hcai.extra`, `tables/extra_*.csv`,
+`headline.json` → `extra_not_preregistered`). Same exclusion rule (ADR 0012), seed 0, 2,000 bootstrap
+resamples over base CVs, Holm within each family. Read them as checks of the null result, not as new tests.
+
+1. **Each identity against the mean of all 8** (`extra_gaps_reference_free`, complete pairing units only:
+   103–106 per condition). Evaluator deviations: C0 −0.31 to +0.30, C1 −0.81 to +0.38, C2 −0.14 to +0.09 points.
+   0 of 72 survive Holm (all agents). The lowest is C1 PT M −0.81 [−1.31, −0.36] (Holm p 0.085); no other C1
+   identity is beyond ±0.39. Every condition passes the ±2 equivalence check (largest |90% CI| 0.71, 1.23, 0.30).
+   **Verdict:** the C1 "gaps" are PT M scoring a little low, not 7 identities scoring high. No identity differs
+   from the average.
+2. **Subsets** (`extra_gaps_subsets`, `extra_equivalence_subsets`). Borderline base CVs (the corpus label,
+   6 CVs: 1 average + 1 weak per role): 22–24 pairs per identity and condition, all three agents. Near the cutoff
+   (Evaluator pairing units whose mean score is within 5 points of their role × language × model × condition
+   median, the escalation rule): 40, 42 and 34 complete units (C0, C1, C2; 14 base CVs), 35–44 pairs against PT M.
+   0 of 180 gaps survive Holm. The largest borderline gaps are in C1 against PT M (+1.4 to +3.5 points, lowest
+   Holm p 0.14), the same PT M effect as above. Equivalence: near the cutoff it passes in every cell except C1
+   against PT M (bound 2.47); on borderline CVs it passes in C2 only (C0 2.36–2.58, C1 3.16–5.00), because 6 CVs
+   give wide CIs. **Verdict:** no bias where a small one would matter most, but the borderline subset is too small
+   to show equivalence in C0 and C1 (6 clusters: absence of evidence, not evidence of absence).
+3. **Ranker after input position** (`extra_rank_adjusted`, `_joint`; OLS of rank and top 3 on position +
+   identity, SEs clustered by pool, 104–106 pools). Adjusted identity effects on rank: −0.32 to +0.27 places
+   (unadjusted −0.45 to +0.48); on top 3: −5.3 to +4.5 pp (unadjusted −10.6 to +13.5). 0 of 48 survive Holm
+   (lowest 0.62). Joint test of all identity terms per condition: p 0.40–0.75. Position is far stronger
+   (Wald χ² 147 in C1, over 41,000 in C0 and C2). **Verdict:** once position is taken out, the Ranker's identity
+   differences shrink by half or more and none is real. The −15 to +13 pp top-3 spread in RQ1 is position noise.
+4. **Gaps against run-to-run noise** (`extra_repeat_noise`, `extra_noise_vs_gap`). The repeat SD of one Evaluator
+   score (the two models weighted equally): C0 1.99 [1.43, 2.56], C1 1.82 [1.22, 2.31], C2 0.78 [0.47, 1.06]
+   points (qwen 2.4–2.6 in C0/C1, gpt 0.9–1.1). The noise SD of one paired difference against PT M is 2.82, 2.57,
+   1.10. The largest gap is 0.17, 0.47 and 0.20 of that noise SD (C0, C1, C2). 40 of 42 gaps are inside noise
+   (their 90% CI lies within the lower 95% bound of the one-pair noise SD). The 2 exceptions are both C1:
+   EE F +1.20 against PT M (CI to 1.76, bound 1.72) and PT M −0.81 against the mean (bound 1.14), the PT M
+   effect again. Noise explains 33–133% of the pair-to-pair variance of the gaps (C1 against PT M: 43–65%).
+   Caveat: the repeats re-run the Evaluator only, not the C1 Blinder, so C1's noise is underestimated; the
+   Blinder's own variation is the likely rest of C1's pair-level variance. **Verdict:** every gap is far smaller
+   than the change one repeat of the same call makes. A single decision cannot show these gaps; only averages
+   over about 100 pairs resolve them, and they are still under the 2-point margin.
+
+**Assessment for the main question (is there demographic bias?).** All four checks agree with the
+pre-registered result: no demographic bias of practical size in any agent or condition. The one recurring
+signal, C1 PT M, is a reference artefact of the blinded texts (under 1 point, not surviving Holm against
+the mean). The limits are power on the borderline CVs (6) and the post-hoc status of these analyses.

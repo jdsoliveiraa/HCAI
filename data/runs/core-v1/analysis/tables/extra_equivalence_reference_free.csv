@@ -1,0 +1,4 @@
+agent,condition,margin,n_identities,max_abs_ci90,equivalent
+evaluator,C0,2.0,8,0.7057838335729691,True
+evaluator,C1,2.0,8,1.2335422282120394,True
+evaluator,C2,2.0,8,0.3034625303398058,True

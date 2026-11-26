@@ -83,13 +83,17 @@ def test_the_master_command_reproduces_everything_offline_from_a_frozen_run(froz
     tables = {p.stem for p in (out / "tables").glob("*.csv")}
     assert {"gaps", "gaps_by", "equivalence", "impact_ratios", "model_notes", "rank_identity", "rank_position",
             "ranking_quality", "oversight", "data_accounting", "screener_pass", "stability", "proxy_leaks"} <= tables
+    # the post-hoc analyses (hcai.extra), under their own names
+    assert {"extra_gaps_reference_free", "extra_gaps_subsets", "extra_rank_adjusted", "extra_repeat_noise",
+            "extra_noise_vs_gap"} <= tables
     accounting = pd.read_csv(out / "tables" / "data_accounting.csv")
     assert set(accounting["condition"]) == {"C0", "C1", "C2"}
     figures = {p.name for p in (out / "figures").iterdir()}
     assert {"forest_models.pdf", "forest_models.png", "impact_heatmap.pdf", "impact_heatmap.png"} <= figures
     headline = json.loads((out / "headline.json").read_text())
     assert headline["data"]["rows"] == len(pd.read_csv(frozen_run / "results.csv"))
-    assert {"rq1_fairness", "rq2_per_agent", "rq3_mitigation", "rq4_oversight"} <= set(headline)
+    assert {"rq1_fairness", "rq2_per_agent", "rq3_mitigation", "rq4_oversight", "extra_not_preregistered"} <= set(headline)
+    assert headline["extra_not_preregistered"]["label"] == "post hoc, not pre-registered"
     assert headline["rq4_oversight"]["audit"]["status"]  # exported, or why not (too few flagged in a tiny run)
     manifest = (out / "MANIFEST.txt").read_text().splitlines()
     assert any(line.endswith("tables/gaps.csv") for line in manifest)
