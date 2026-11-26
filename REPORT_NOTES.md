@@ -27,6 +27,7 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 | Failed answer | missing data recorded, not dropped | 1 rubric answer ("No CV content was provided", all 0) counted as missing; as-run results reported beside | model failure (the CV was in the request); it moved every C2 gap | ADR 0012, `exclusions.csv`, `sensitivity_as_run/` |
 | Ranker quality | pairwise accuracy on mixed pools | 1.00 in every condition (ceiling), so Spearman of Evaluator scores carries the quality cost | mixed pools were too easy | `ranking_quality.csv` |
 | Human audit | 50 justifications, 2 raters, κ | 1 rater (judge–human κ only, no rater–rater κ; the rater accepted a score the full CV supports, a looser rule than the judge's); 50 items (25 flagged of the 27 valid answers the judge flagged; the failed answer is not drawn), rated per quote on the site's audit page; κ per item (pre-registered) and per quote | per-quote labels make κ on the judge's per-criterion verdicts possible | ADR 0012, `docs/audit/labels/` |
+| Extra analyses | not in the proposal | 4 post-hoc analyses (not pre-registered): gaps against the mean of the 8 identities; gaps on the borderline CVs and on near-cutoff pairing units; Ranker identity effects after input position; gaps against the run-to-run noise of the repeat sample | the C1 gaps share one reference (PT M); small subsets, the position effect and the score noise could hide or fake a gap | `hcai.extra`, `tables/extra_*.csv`, FINDINGS "Extra analyses" |
 
 ## Numbers to cite
 

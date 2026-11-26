@@ -85,8 +85,9 @@ means a Holm-adjusted p < 0.05 within its family.
 - **C1 gaps are a reference effect, not a pattern.** In C1 every identity, PT F included, scores 0.8–1.2 above
   PT M. Each variant is blinded in its own call, and the blinded texts of PT M are no different in length or
   redactions (`proxy_leaks`), so the crew cannot see who PT M is. PT M's blinded versions happened to score lower.
-  The 7 gaps share that one reference, so they move together. This explains the C1 survivors above. A
-  reference-free contrast (each identity against the mean of all) would remove it. It is not computed.
+  The 7 gaps share that one reference, so they move together. This explains the C1 survivors above. In the
+  reference-free contrast (post hoc, see *Extra analyses*) PT M is the only C1 identity away from the mean
+  (−0.81, not surviving Holm); the others are within ±0.39.
 - **As run (sensitivity, `tables/sensitivity_as_run/`):** with the failed answer kept as a score of 0, the C2 gaps
   are 0.51–0.92 points larger, and C2 is not shown equivalent (largest |90% CI| bound 3.07). C0 and C1 do not change.
 - In the same qwen C2 cell, AO F scored 100 on a weak CV where the others got 55–62. It is a real answer with
@@ -100,3 +101,57 @@ means a Holm-adjusted p < 0.05 within its family.
 - The Ranker shows a strong position effect (primacy) in every condition.
 - The audit export renders the CVs from `data/corpus/v1` and does not check them against the run. The corpus is
   frozen by tag `corpus-v1` and must not change.
+
+## Extra analyses (not pre-registered)
+
+Post hoc: added after the results above were known, not in the proposal (`hcai.extra`, `tables/extra_*.csv`,
+`headline.json` → `extra_not_preregistered`). Same exclusion rule (ADR 0012), seed 0, 2,000 bootstrap
+resamples over base CVs, Holm within each family. Read them as checks of the null result, not as new tests.
+CIs below are not Holm-adjusted.
+
+1. **Each identity against the mean of all 8** (`extra_gaps_reference_free`, complete pairing units only:
+   103–106 per condition). Evaluator deviations: C0 −0.31 to +0.30, C1 −0.81 to +0.38, C2 −0.14 to +0.09 points.
+   0 of 72 survive Holm (all agents). The lowest is C1 PT M −0.81 (95% CI −1.31 to −0.36, Holm p 0.085); no
+   other C1 identity is beyond ±0.39. The 90% CIs of all deviations lie within ±2 (largest bound 0.71, 1.23,
+   0.30). This check is looser than the pre-registered one: a deviation of ±2 allows a gap of up to 4 between
+   two identities, and a deviation has less noise than a paired gap. **Verdict:** the C1 "gaps" come from PT M
+   scoring a little lower, not from 7 identities scoring higher. No identity differs from the average after Holm.
+2. **Subsets** (`extra_gaps_subsets`, `extra_equivalence_subsets`). Borderline base CVs (the corpus label,
+   6 CVs: 1 average + 1 weak per role): 22–24 Evaluator pairs per identity and condition, all three agents.
+   Near the cutoff (Evaluator pairing units whose mean score is within 5 points of their role × language ×
+   model × condition median, the escalation rule's cutoff): 40, 42 and 34 complete units from 12, 14 and 9 base
+   CVs (C0, C1, C2), 35–44 pairs against PT M. 0 of 180 gaps survive Holm. The largest borderline gaps are in
+   C1 against PT M (+1.4 to +3.5 points, lowest Holm p 0.14), the same PT M pattern as above. Equivalence near
+   the cutoff passes in every cell except C1 against PT M (bound 2.47). On the borderline CVs the bounds are
+   1.2–5.0. With only 6 clusters, a percentile bootstrap gives CIs that are too narrow, so the borderline
+   equivalence result is uninformative in every condition, including C2's pass (1.86). **Verdict:** no gap
+   survives where a small bias would matter most. The borderline subset is too small to show equivalence
+   (absence of evidence, not evidence of absence).
+3. **Ranker after input position** (`extra_rank_adjusted`, `_joint`; OLS of rank and top 3 on position +
+   identity, SEs clustered by pool, t and F tests with pools − 1 df, 104–106 pools). Identity effects against
+   the identity mean, on rank: −0.32 to +0.27 places after position (−0.45 to +0.48 before); on top 3: −5.3 to
+   +4.5 pp (−10.6 to +13.5 before). They shrink by half or more in C0 and C2, and by 17–44% in C1, where the
+   position effect is weaker. 0 of 48 survive Holm (lowest 0.62). Joint test of all identity terms per
+   condition: p 0.40–0.75. Position is far stronger (Wald χ² 147 in C1, over 41,000 in C0 and C2). **Verdict:**
+   after position, no identity effect on the Ranker. Most of its raw identity spread comes from the input order.
+4. **Gaps against run-to-run noise** (`extra_repeat_noise`, `extra_noise_vs_gap`). The repeat SD of one Evaluator
+   score (the two models weighted equally): C0 1.99 (95% CI 1.43–2.56), C1 1.82 (1.22–2.31), C2 0.78
+   (0.47–1.06) points (qwen 2.4–2.6 in C0/C1, gpt 0.9–1.1). One paired comparison against PT M has a noise SD of
+   2.82, 2.57 and 1.10: each gap is at most 0.17, 0.47 and 0.20 of it, so no single decision can show a gap.
+   Over about 100 pairs, noise alone gives the mean gap an SE of 0.27, 0.25 and 0.11. Against that SE, 31 of 45
+   gaps are inside noise (|z| < 1.96). Outside: all 7 C1 gaps against PT M (z 3.2–4.9) and C1 PT M and EE F
+   against the mean (z −4.9, +2.3); in C2, 4 gaps against PT M (+0.21 to +0.22, z 2.02–2.03) and PT M against
+   the mean (z −1.98). This test leaves out the CV-to-CV spread, so it is the most lenient one. "Outside"
+   means more than Evaluator call noise, not bias. In C1, the repeats do not re-run the Blinder, but each
+   identity's text is blinded in its own call. A systematic C1 difference beyond call noise is consistent with
+   PT M's blinded texts scoring lower, and the noise variance of one comparison is only 43–65% of the observed
+   pair-level variance there (C0 60–109%, C2 33–118%; above 100% means σ is uncertain, not a share).
+   **Verdict:** apart from C1, the gaps are of the size measurement noise gives. The C1 PT M difference is real
+   for this run's blinded texts. It is under 1 point, does not survive Holm with the CV spread, and is not tied
+   to gender or origin, because PT M is the only identity it touches.
+
+**Assessment for the main question (is there demographic bias?).** All four checks agree with the
+pre-registered result: no demographic bias of practical size in any agent or condition. The one recurring
+signal is C1 PT M, under 1 point. It does not survive Holm against the mean, and no other Portuguese or male
+identity shows it. The limits are power on the borderline CVs (6), the lenient noise test, and the post-hoc
+status of these analyses.
