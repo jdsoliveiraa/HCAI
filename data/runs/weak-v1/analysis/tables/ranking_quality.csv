@@ -1,0 +1,9 @@
+metric,agent,condition,model,estimate,ci95_low,ci95_high,n,n_clusters,reference,delta,delta_ci95_low,delta_ci95_high,within_tolerance,n_boot
+spearman,evaluator,C0,all,0.9109618796364931,0.8770301663496244,0.937275139476249,1265,27,C0,0.0,0.0,0.0,,2000
+spearman,evaluator,C0,beam-free,0.9344361434432374,0.9055285838909545,0.9584980188893335,424,27,C0,0.0,0.0,0.0,,2000
+spearman,evaluator,C0,hy4-flash-free,0.9371544077609338,0.9069978290713415,0.9594885621166707,432,27,C0,0.0,0.0,0.0,,2000
+spearman,evaluator,C0,mimo-v2.6-flash,0.9252923052899982,0.8821631245604902,0.9524674010783252,409,27,C0,0.0,0.0,0.0,,2000
+pairwise_accuracy,ranker,C0,all,0.9930167597765364,0.9844192634560907,1.0,716,12,C0,0.0,0.0,0.0,True,2000
+pairwise_accuracy,ranker,C0,beam-free,0.987603305785124,0.9676113360323887,1.0,242,12,C0,0.0,0.0,0.0,True,2000
+pairwise_accuracy,ranker,C0,hy4-flash-free,1.0,1.0,1.0,252,12,C0,0.0,0.0,0.0,True,2000
+pairwise_accuracy,ranker,C0,mimo-v2.6-flash,0.990990990990991,0.9702970297029703,1.0,222,12,C0,0.0,0.0,0.0,True,2000

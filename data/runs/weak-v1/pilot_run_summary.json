@@ -1,0 +1,185 @@
+{
+  "rows": 72,
+  "status": {
+    "ok": 72
+  },
+  "attempts": 55,
+  "prompt_tokens": 96035,
+  "completion_tokens": 14660,
+  "cost_total": 0.004735,
+  "unpriced_attempts": 0,
+  "allowance_total": 0.004735,
+  "not_go_attempts": 0,
+  "calls": 55,
+  "cache_hits": 0,
+  "cost_spent": 0.004735,
+  "unpriced_calls": 0,
+  "allowance_spent": 0.004735,
+  "balance_spent": 0.0,
+  "billing_sources": {
+    "go": 55
+  },
+  "not_go_calls": 0,
+  "not_allowed_billing_calls": 0,
+  "missing_session_errors": 0,
+  "failed_calls": 0,
+  "timed_out_calls": 0,
+  "by_model": {
+    "mimo-v2.6-flash": {
+      "attempts": 19,
+      "prompt_tokens": 32534,
+      "completion_tokens": 2274,
+      "cost_total": 0.004735,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.004735,
+      "not_go_attempts": 0,
+      "calls": 19,
+      "cache_hits": 0,
+      "cost_spent": 0.004735,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.004735,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 19
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "beam-free": {
+      "attempts": 19,
+      "prompt_tokens": 34209,
+      "completion_tokens": 5450,
+      "cost_total": 0.0,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.0,
+      "not_go_attempts": 0,
+      "calls": 19,
+      "cache_hits": 0,
+      "cost_spent": 0.0,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.0,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 19
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "hy4-flash-free": {
+      "attempts": 17,
+      "prompt_tokens": 29292,
+      "completion_tokens": 6936,
+      "cost_total": 0.0,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.0,
+      "not_go_attempts": 0,
+      "calls": 17,
+      "cache_hits": 0,
+      "cost_spent": 0.0,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.0,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 17
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    }
+  },
+  "by_agent": {
+    "screener": {
+      "attempts": 26,
+      "prompt_tokens": 35883,
+      "completion_tokens": 5955,
+      "cost_total": 0.001705,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.001705,
+      "not_go_attempts": 0
+    },
+    "evaluator": {
+      "attempts": 26,
+      "prompt_tokens": 36099,
+      "completion_tokens": 7083,
+      "cost_total": 0.001847,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.001847,
+      "not_go_attempts": 0
+    },
+    "ranker": {
+      "attempts": 3,
+      "prompt_tokens": 24053,
+      "completion_tokens": 1622,
+      "cost_total": 0.001183,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.001183,
+      "not_go_attempts": 0
+    }
+  },
+  "repeat_sample": {
+    "attempts": 4,
+    "prompt_tokens": 5610,
+    "completion_tokens": 831,
+    "cost_total": 8.2e-05,
+    "unpriced_attempts": 0,
+    "allowance_total": 8.2e-05,
+    "not_go_attempts": 0
+  },
+  "allowed_billing": [
+    "go"
+  ],
+  "missing": {
+    "rows": 72,
+    "missing": 0,
+    "share": 0.0,
+    "target": 0.02,
+    "above_target": false,
+    "by_cell": {
+      "mimo-v2.6-flash/C0/en": {
+        "rows": 24,
+        "missing": 0,
+        "share": 0.0
+      },
+      "beam-free/C0/en": {
+        "rows": 24,
+        "missing": 0,
+        "share": 0.0
+      },
+      "hy4-flash-free/C0/en": {
+        "rows": 24,
+        "missing": 0,
+        "share": 0.0
+      }
+    }
+  },
+  "pilot": {
+    "cv_scale": 54.0,
+    "ranker_scale": 66.0,
+    "estimated_full_cost": 0.2787,
+    "estimated_full_allowance": 0.2787,
+    "by_agent": {
+      "screener": 0.0901,
+      "evaluator": 0.0972,
+      "ranker": 0.0781
+    },
+    "estimated_full_tokens": {
+      "prompt": 5430165,
+      "completion": 804542
+    },
+    "unestimated": []
+  }
+}

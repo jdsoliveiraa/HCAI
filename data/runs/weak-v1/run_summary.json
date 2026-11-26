@@ -1,0 +1,185 @@
+{
+  "rows": 4176,
+  "status": {
+    "ok": 4106,
+    "rejected": 70
+  },
+  "attempts": 2891,
+  "prompt_tokens": 4467414,
+  "completion_tokens": 1612748,
+  "cost_total": 0.189609,
+  "unpriced_attempts": 0,
+  "allowance_total": 0.189609,
+  "not_go_attempts": 0,
+  "calls": 2836,
+  "cache_hits": 55,
+  "cost_spent": 0.184874,
+  "unpriced_calls": 0,
+  "allowance_spent": 0.184874,
+  "balance_spent": 0.0,
+  "billing_sources": {
+    "go": 2836
+  },
+  "not_go_calls": 0,
+  "not_allowed_billing_calls": 0,
+  "missing_session_errors": 0,
+  "failed_calls": 1,
+  "timed_out_calls": 0,
+  "by_model": {
+    "mimo-v2.6-flash": {
+      "attempts": 974,
+      "prompt_tokens": 1468775,
+      "completion_tokens": 110615,
+      "cost_total": 0.189609,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.189609,
+      "not_go_attempts": 0,
+      "calls": 955,
+      "cache_hits": 19,
+      "cost_spent": 0.184874,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.184874,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 955
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "beam-free": {
+      "attempts": 964,
+      "prompt_tokens": 1542622,
+      "completion_tokens": 723869,
+      "cost_total": 0.0,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.0,
+      "not_go_attempts": 0,
+      "calls": 945,
+      "cache_hits": 19,
+      "cost_spent": 0.0,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.0,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 945
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 1,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    },
+    "hy4-flash-free": {
+      "attempts": 953,
+      "prompt_tokens": 1456017,
+      "completion_tokens": 778264,
+      "cost_total": 0.0,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.0,
+      "not_go_attempts": 0,
+      "calls": 936,
+      "cache_hits": 17,
+      "cost_spent": 0.0,
+      "unpriced_calls": 0,
+      "allowance_spent": 0.0,
+      "balance_spent": 0.0,
+      "billing_sources": {
+        "go": 936
+      },
+      "not_go_calls": 0,
+      "not_allowed_billing_calls": 0,
+      "missing_session_errors": 0,
+      "failed_calls": 0,
+      "timed_out_calls": 0,
+      "provider": "opencode-go",
+      "billing": "subscription"
+    }
+  },
+  "by_agent": {
+    "screener": {
+      "attempts": 1358,
+      "prompt_tokens": 1599335,
+      "completion_tokens": 481824,
+      "cost_total": 0.062532,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.062532,
+      "not_go_attempts": 0
+    },
+    "evaluator": {
+      "attempts": 1326,
+      "prompt_tokens": 1572982,
+      "completion_tokens": 813199,
+      "cost_total": 0.066821,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.066821,
+      "not_go_attempts": 0
+    },
+    "ranker": {
+      "attempts": 207,
+      "prompt_tokens": 1295097,
+      "completion_tokens": 317725,
+      "cost_total": 0.060257,
+      "unpriced_attempts": 0,
+      "allowance_total": 0.060257,
+      "not_go_attempts": 0
+    }
+  },
+  "repeat_sample": {
+    "attempts": 132,
+    "prompt_tokens": 213904,
+    "completion_tokens": 58118,
+    "cost_total": 0.003837,
+    "unpriced_attempts": 0,
+    "allowance_total": 0.003837,
+    "not_go_attempts": 0
+  },
+  "allowed_billing": [
+    "go"
+  ],
+  "missing": {
+    "rows": 4106,
+    "missing": 0,
+    "share": 0.0,
+    "target": 0.02,
+    "above_target": false,
+    "by_cell": {
+      "mimo-v2.6-flash/C0/en": {
+        "rows": 670,
+        "missing": 0,
+        "share": 0.0
+      },
+      "beam-free/C0/en": {
+        "rows": 696,
+        "missing": 0,
+        "share": 0.0
+      },
+      "hy4-flash-free/C0/en": {
+        "rows": 696,
+        "missing": 0,
+        "share": 0.0
+      },
+      "mimo-v2.6-flash/C0/pt": {
+        "rows": 670,
+        "missing": 0,
+        "share": 0.0
+      },
+      "beam-free/C0/pt": {
+        "rows": 678,
+        "missing": 0,
+        "share": 0.0
+      },
+      "hy4-flash-free/C0/pt": {
+        "rows": 696,
+        "missing": 0,
+        "share": 0.0
+      }
+    }
+  }
+}

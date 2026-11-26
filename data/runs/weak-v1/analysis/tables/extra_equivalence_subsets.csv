@@ -1,0 +1,5 @@
+subset,contrast,agent,condition,margin,n_identities,max_abs_ci90,equivalent,n_pairs_min,n_pairs_max,n_cvs
+borderline,vs_mean,evaluator,C0,2.0,8,1.2604166666666667,True,30,30,6
+borderline,vs_reference,evaluator,C0,2.0,7,1.8709677419354838,True,30,30,6
+near_cutoff,vs_mean,evaluator,C0,2.0,8,0.6838753106876554,True,63,63,15
+near_cutoff,vs_reference,evaluator,C0,2.0,7,1.1021111893033073,True,63,63,15

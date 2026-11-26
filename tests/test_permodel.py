@@ -131,3 +131,26 @@ def test_compare_without_per_model_is_refused(tmp_path, capsys):
     (tmp_path / "results.csv").write_text("")
     assert main([str(tmp_path), "--compare", str(tmp_path)]) == 1
     assert "--compare needs --per-model" in capsys.readouterr().err
+
+
+def test_a_ranker_that_keeps_the_input_order_gets_no_identity_test_after_position(tmp_path):
+    rows = two_models()
+    rows = [replace(r, rank=r.input_position, top3=r.input_position <= 3)
+            if r.agent == "ranker" and r.model == "model-a" and r.status == "ok" and r.input_position is not None else r
+            for r in rows]
+    t = per_model_tables(frame(tmp_path, rows), None, "pt_m", [], n_boot=200, n_perm=100)
+    adj = t["rank_adjusted"]
+    a, b = adj[adj["model"] == "model-a"], adj[adj["model"] == "model-b"]
+    assert a["input_order_only"].all() and a["p_holm"].isna().all()
+    assert not b["input_order_only"].any() and b["p_holm"].notna().all()
+    joint = t["rank_adjusted_joint"]
+    assert joint.loc[joint["model"] == "model-a", "p"].isna().all()
+    assert one(t["summary"], model="model-a")["ranker_input_order_share"] == 1.0
+    assert one(t["summary"], model="model-b")["ranker_input_order_share"] < 1.0
+
+
+def test_repeat_noise_has_one_row_per_model(tmp_path):
+    rows = two_models()
+    reps = frame(tmp_path, repeats_of(rows, 2.0), "repeats.csv")
+    t = per_model_tables(frame(tmp_path, rows), reps, "pt_m", [], n_boot=200, n_perm=100)
+    assert sorted(t["repeat_noise"]["model"]) == sorted(MODELS)

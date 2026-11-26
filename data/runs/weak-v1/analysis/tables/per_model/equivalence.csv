@@ -1,0 +1,4 @@
+model,agent,condition,margin,n_identities,max_abs_ci90,equivalent
+beam-free,evaluator,C0,2.0,7,1.2644049346879536,True
+hy4-flash-free,evaluator,C0,2.0,7,0.6851851851851852,True
+mimo-v2.6-flash,evaluator,C0,2.0,7,2.180183673469388,False

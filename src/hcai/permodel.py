@@ -12,6 +12,8 @@ Tables (in `tables/per_model/`, one row set per model, a `model` column first):
 - `gaps_reference_free`, `gaps_subsets`, `rank_adjusted`, `rank_adjusted_joint`, `repeat_noise`,
   `noise_vs_gap`: `hcai.extra` on the model's rows (and its repeats).
 - `screener_pass`: pass rate per identity.
+- `rank_adjusted`, `rank_adjusted_joint` add `input_order_only`: a model that returns every equal-quality pool in
+  its input order leaves the position regression no residual, so its tests are blanked (NaN), not reported.
 - `outputs`: per model × agent, the rows by status, rows that needed more than one attempt, failed rubric
   answers, and from the run's `calls.jsonl.gz` (when present) the distinct requests that got a malformed answer
   (`parse_error`) or failed (any other outcome but `ok`; rate-limit waits are not attempts).
@@ -89,6 +91,8 @@ def per_model_tables(results: pd.DataFrame, repeats: pd.DataFrame | None, refere
     parts: dict[str, list[pd.DataFrame]] = {}
 
     def add(name: str, model: str, table: pd.DataFrame) -> None:
+        if "model" in table.columns:  # e.g. repeat_noise: per model and "all", the same rows for one model
+            table = table[table["model"] == model]
         if not table.empty:
             parts.setdefault(name, []).append(table.assign(model=model)[["model", *table.columns.drop("model", errors="ignore")]])
 
@@ -103,6 +107,8 @@ def per_model_tables(results: pd.DataFrame, repeats: pd.DataFrame | None, refere
         for name, table in extra.items():
             if name.startswith("extra_equivalence"):
                 continue  # the CIs are in the gap tables; the summary gives the equivalence bounds
+            if name.startswith("extra_rank_adjusted"):
+                table = _flag_input_order(table, input_order_share(rows))
             add(name.removeprefix("extra_"), model, table)
         s = rows[(rows["agent"] == "screener") & (rows["status"] == "ok")]
         add("screener_pass", model, s.groupby(["condition", "identity"])["screen_pass"]
@@ -112,6 +118,30 @@ def per_model_tables(results: pd.DataFrame, repeats: pd.DataFrame | None, refere
     tables["outputs"] = output_validity(results, calls)
     tables["summary"] = summary(results, tables)
     return tables
+
+
+def input_order_share(results: pd.DataFrame) -> float:
+    """The share of equal-quality Ranker pools (per pool × language × condition × model) ranked in input order."""
+    rk = results[(results["agent"] == "ranker") & (results["pool_kind"] == "equal") & (results["status"] == "ok")]
+    if rk.empty:
+        return float("nan")
+    same = (rk["rank"] == rk["input_position"]).groupby(
+        [rk["pool"], rk["language"], rk["condition"], rk["model"]], observed=True).all()
+    return float(same.mean())
+
+
+def _flag_input_order(table: pd.DataFrame, share: float) -> pd.DataFrame:
+    """A Ranker that returns every pool in input order leaves the position regression no residual: its identity
+    estimates are 0 with SEs of about 1e-15, so the t and F tests are numerical noise. Blank them and say why."""
+    if table.empty:
+        return table
+    degenerate = share == 1.0
+    table = table.assign(input_order_only=degenerate)
+    if degenerate:
+        for column in ("se", "ci95_low", "ci95_high", "p", "p_holm", "f", "position_wald_chi2"):
+            if column in table.columns:
+                table[column] = np.nan
+    return table
 
 
 def compare_run(run: str | Path, conditions: set[str], reference: str, borderline: list[str], *,
@@ -161,7 +191,6 @@ def summary(results: pd.DataFrame, t: dict[str, pd.DataFrame]) -> pd.DataFrame:
         adj = _get(t.get("rank_adjusted"), model)
         adj_rank = adj[adj["outcome"] == "rank"] if not adj.empty and "outcome" in adj else adj
         noise = _get(t.get("repeat_noise"), model)
-        noise = noise[noise["model"] == model] if not noise.empty else noise
         nvg = _get(t.get("noise_vs_gap"), model, contrast="vs_reference")
         out = _get(t.get("outputs"), model)
         records.append({
@@ -184,6 +213,7 @@ def summary(results: pd.DataFrame, t: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "rank_first_position": _level(pos, 1), "rank_last_position": _level(pos, pos["level"].astype(int).max())
             if not pos.empty else np.nan,
             "rank_position_surviving_holm": int((pos["p_holm"] < ALPHA).sum()) if not pos.empty else 0,
+            "ranker_input_order_share": input_order_share(rows),
             "rank_identity_after_position_range": None if adj_rank.empty
             else f"{adj_rank['estimate'].min():+.2f} to {adj_rank['estimate'].max():+.2f}",
             "rank_identity_joint_p": None if joint.empty else float(joint["p"].iloc[0]),
