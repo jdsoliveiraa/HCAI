@@ -1,7 +1,7 @@
 """The master command (#13): every table, figure and the human-audit export from one frozen run, offline.
 
 `hcai reproduce data/runs/core-v1` reads only the frozen run folder (results.csv, stability.json,
-proxy_leaks.json, run_summary.json, core.toml), the frozen corpus and name bank the config names (resolved
+proxy_leaks.json, run_summary.json, core.toml or the run's only *.toml), the frozen corpus and name bank the config names (resolved
 from `configs/`, where the config was used), and the raters' label sheets. It never reads `results/` or the
 LLM cache, and it makes no network call: a guard refuses every socket connection and name lookup while it
 runs, so a step that tried to reach a provider would fail, not spend.
@@ -23,7 +23,11 @@ It writes to `<run>/analysis/` (or `--out`):
   identities, gaps in the borderline and near-cutoff subsets, the position-adjusted Ranker, and the gaps against
   the run-to-run noise of the repeat sample (`repeats.csv`). They use their own seeded generators, so the
   pre-registered tables do not change.
-- `headline.json`: the numbers FINDINGS.md cites, per research question (`extra_not_preregistered` for the above).
+- `tables/per_model/` (with `--per-model`, post hoc): the gaps, equivalence check, Ranker and extra tables within each
+  pipeline model, the validity of its outputs (`outputs`) and a summary row per model (`hcai.permodel`); with
+  `--compare <run>`, `compare.csv` adds the same summary of another frozen run on this run's conditions.
+- `headline.json`: the numbers FINDINGS.md cites, per research question (`extra_not_preregistered` for the above;
+  `per_model_not_preregistered` with `--per-model`).
 - `MANIFEST.txt`: the sha256 of every file written, so a rerun can be compared byte for byte.
 
 FINDINGS.md in the same folder is written by hand and is never touched by the command.
@@ -50,6 +54,7 @@ from hcai.audit import AUDIT_SIZE, AuditLabelError, export_audit, rater_agreemen
 from hcai.config import load_design
 from hcai.extra import NEAR_MARGIN, borderline_cvs, extra_headline, extra_tables
 from hcai.figures import write_figures
+from hcai.permodel import call_outcomes, compare_run, per_model_tables
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LABELS = ROOT / "docs" / "audit" / "labels"
@@ -81,7 +86,7 @@ def no_network() -> Iterator[None]:
 def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str | Path = DEFAULT_LABELS,
               config_base: str | Path = DEFAULT_CONFIG_BASE, reference: str = "pt_m", n_boot: int = 2000,
               n_model_boot: int = 200, n_perm: int = 5000, seed: int = 0,
-              audit_n: int = AUDIT_SIZE) -> dict[str, Any]:
+              audit_n: int = AUDIT_SIZE, per_model: bool = False, compare: str | Path | None = None) -> dict[str, Any]:
     """Run every step on the frozen run in `run_dir`; return the headline numbers (also `headline.json`)."""
     run = Path(run_dir)
     target = Path(out) if out is not None else run / "analysis"
@@ -116,6 +121,23 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
             path = tables / f"{name}.csv"
             table.to_csv(path, index=False)
             written.append(path)
+        by_model: dict[str, pd.DataFrame] = {}
+        if per_model:  # post hoc (weak-model run): every table again within each model
+            calls = call_outcomes(run / "calls.jsonl.gz") if (run / "calls.jsonl.gz").exists() else None
+            by_model = per_model_tables(results, repeats, reference, borderline, calls=calls, n_boot=n_boot,
+                                        n_perm=n_perm, seed=seed, near_margin=near_margin)
+            (tables / "per_model").mkdir(parents=True, exist_ok=True)
+            if compare is not None:  # the same summary on another frozen run, same conditions (e.g. core-v1 C0)
+                conditions = set(results["condition"].dropna().astype(str))
+                other = compare_run(compare, conditions, reference, borderline, n_boot=n_boot, n_perm=n_perm,
+                                    seed=seed, near_margin=near_margin)
+                by_model["compare"] = pd.concat([by_model["summary"].assign(run=run.name),
+                                                 other.assign(run=Path(compare).name)], ignore_index=True)
+                by_model["compare"] = by_model["compare"][["run", *by_model["summary"].columns]]
+            for name, table in by_model.items():
+                path = tables / "per_model" / f"{name}.csv"
+                table.to_csv(path, index=False)
+                written.append(path)
         written += write_figures(a, target / "figures")
         audit = _audit(results, run, target / "audit", Path(labels), Path(config_base), audit_n, seed)
         written += audit.pop("paths")
@@ -128,6 +150,8 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
         }
         headline["extra_not_preregistered"] = {"borderline_cvs": borderline, "near_margin": near_margin,
                                                **extra_headline(post_hoc)}
+        if per_model:
+            headline["per_model_not_preregistered"] = by_model["summary"].to_dict("records")
         path = target / "headline.json"
         path.write_text(json.dumps(headline, indent=1, default=_jsonable) + "\n")
         written.append(path)
@@ -165,14 +189,22 @@ def screener_pass(results: pd.DataFrame) -> pd.DataFrame:
 
 def _corpus_facts(run: Path, config_base: Path) -> tuple[list[str], float]:
     """The corpus's borderline base CVs and the escalation margin of the run's config (empty, default if absent)."""
-    config = run / "core.toml"
-    if not config.exists():
+    config = run_config(run)
+    if config is None:
         return [], NEAR_MARGIN
     try:
         design = load_design(config, base=config_base)
     except (OSError, ValueError, KeyError):
         return [], NEAR_MARGIN
     return borderline_cvs(design.corpus_dir / "manifest.json"), float(design.oversight.margin)
+
+
+def run_config(run: Path) -> Path | None:
+    """The config a frozen run was made with: `core.toml`, else the run folder's only `*.toml` (e.g. weak.toml)."""
+    if (run / "core.toml").exists():
+        return run / "core.toml"
+    found = sorted(run.glob("*.toml"))
+    return found[0] if len(found) == 1 else None
 
 
 def _shown(path: Path) -> str:
@@ -194,9 +226,9 @@ def _audit(results: pd.DataFrame, run: Path, out: Path, labels: Path, config_bas
            seed: int) -> dict[str, Any]:
     """Export the audit sample and, when label sheets exist, compute κ. Never fails the whole command."""
     info: dict[str, Any] = {"paths": [], "exported": False, "raters": [], "status": ""}
-    config = run / "core.toml"
-    if not config.exists():
-        info["status"] = f"not exported: {config} is missing"
+    config = run_config(run)
+    if config is None:
+        info["status"] = f"not exported: no config (core.toml, or a single *.toml) in {_shown(run)}"
         return info
     try:
         paths = export_audit(results, load_design(config, base=config_base), out, n=n, seed=seed)
@@ -321,15 +353,23 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--n-perm", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--audit-n", type=int, default=AUDIT_SIZE)
+    parser.add_argument("--per-model", action="store_true",
+                        help="also analyse each pipeline model alone (tables/per_model/; post hoc, not pre-registered)")
+    parser.add_argument("--compare", type=Path, default=None,
+                        help="with --per-model: the same per-model summary of another frozen run, on its rows of this "
+                             "run's conditions (tables/per_model/compare.csv), e.g. data/runs/core-v1")
 
 
 def run_command(args: argparse.Namespace) -> int:
     if not (args.run / "results.csv").exists():
         print(f"reproduce: {args.run / 'results.csv'} not found (give a frozen run folder)", file=sys.stderr)
         return 1
+    if args.compare is not None and not args.per_model:
+        print("reproduce: --compare needs --per-model", file=sys.stderr)
+        return 1
     h = reproduce(args.run, args.out, labels=args.labels, config_base=args.config_base, reference=args.reference,
                   n_boot=args.n_boot, n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed,
-                  audit_n=args.audit_n)
+                  audit_n=args.audit_n, per_model=args.per_model, compare=args.compare)
     out = args.out or args.run / "analysis"
     print(f"{h['data']['rows']} rows; {len(h['rq1_fairness']['gaps_surviving_holm'])} of "
           f"{h['rq1_fairness']['n_gap_tests']} paired gaps survive Holm")
