@@ -1,0 +1,7 @@
+model,agent,condition,outcome,test,f,df1,df2,p,position_wald_chi2,n_pools,p_holm,input_order_only
+beam-free,ranker,C0,rank,all identity terms = 0,,7,52,,,53,,True
+beam-free,ranker,C0,top3_pp,all identity terms = 0,,7,52,,,53,,True
+hy4-flash-free,ranker,C0,rank,all identity terms = 0,,7,53,,,54,,True
+hy4-flash-free,ranker,C0,top3_pp,all identity terms = 0,,7,53,,,54,,True
+mimo-v2.6-flash,ranker,C0,rank,all identity terms = 0,42.898787284522164,7,48,1.5635779911048003e-18,586.3929659725505,49,1.5635779911048003e-18,False
+mimo-v2.6-flash,ranker,C0,top3_pp,all identity terms = 0,67.55477007481721,7,48,1.1284220361431932e-22,314.4930888290512,49,1.1284220361431932e-22,False

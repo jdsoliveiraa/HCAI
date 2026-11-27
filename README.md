@@ -99,6 +99,8 @@ It reads only the frozen run folder, the frozen corpus (`data/corpus/v1`) and na
 | `headline.json` | the numbers FINDINGS.md cites |
 | `MANIFEST.txt` | sha256 of every output; a rerun writes the same bytes |
 
+**Weak-model run (post hoc).** `data/runs/weak-v1/` holds a C0-only run of 3 more OpenCode Go models (low-cost 2026 tiers, not shown to be weaker; Go offers no older or small model) (`configs/weak.toml`; USD 0.19). `uv run hcai reproduce data/runs/weak-v1 --per-model --post-hoc --compare data/runs/core-v1` (about 8 min) adds `tables/per_model/` (each model alone, `hcai.permodel`) and `compare.csv` (the same summary of core-v1's C0 rows); `--post-hoc` marks `headline.json` (`run_status`). A run folder's config is `core.toml`, or else its only `*.toml`. See `data/runs/weak-v1/analysis/FINDINGS.md`.
+
 **Run order (with credits).** Each step is cached per request, so a rerun of a finished step costs nothing.
 
 1. `uv run hcai check configs/core.toml`: probe the models (JSON schema, temperature, seed).

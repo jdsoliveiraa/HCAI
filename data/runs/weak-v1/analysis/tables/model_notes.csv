@@ -1,0 +1,5 @@
+agent,outcome,spec,fitted,reason
+screener,screen_pass,logit,False,"not finite SEs (separation): the outcome's rarer value occurs 31 times in 1296 rows; reported descriptively (gaps, impact ratios)"
+evaluator,score,pairing,True,
+evaluator,score,proposal,True,
+ranker,top3,logit,True,

@@ -1,0 +1,70 @@
+# Weak-model run (post hoc, not pre-registered): do weaker models show the demographic bias that gpt-5.6-luna
+# and qwen3.8-flash did not? Same design as configs/core.toml (corpus-v1, name bank, prompts, temperature, seed,
+# pools, [run] guards, 5% repeat sample). Only the models, the role order and the conditions change.
+#
+# Models: OpenCode Go has none of the planned classes (an older closed GPT-3.5/4o-mini-era model, a small open
+# 7-8B model, a quantized 7-8B model, a tiny 1-3B model): every chat model it lists is a 2026 release
+# (`hcai models`, 2026-11-26). These are the cheapest/smallest open chat tiers that pass `hcai check` (chat
+# endpoint, JSON schema): docs/pilot/check-weak-2026-11-26.json. They are proxies, not weak models by any
+# published size: beam-free is a mixture of experts with 23B active parameters (the only size Go states);
+# mimo-v2.6-flash and hy4-flash-free state none. The closed candidate muse-spark-1.2-contributor needs an
+# opt-in to paid endpoints that train on request data, so it is not used.
+
+[design]
+# All three roles, nurse first (most near-cutoff C0 Evaluator units in core-v1: 18, from 5 base CVs). Blocks run
+# in this order; seeds, names and pools depend on the base CV, not on the role's place in the list.
+roles = ["nurse", "software_engineer", "accountant"]
+quality_levels = ["strong", "average", "weak"]
+base_cvs_per_role = 3
+languages = ["en", "pt"]
+# C0 only: Screener, Evaluator, Ranker. No Blinder (C1), no rubric or judge (C2).
+conditions = ["C0"]
+models = ["mimo-v2.6-flash", "beam-free", "hy4-flash-free"]
+temperature = 0.0
+seed = 42
+corpus_dir = "../data/corpus/v1"
+name_bank = "../data/names/name_bank.toml"
+
+[generator]
+# Kept as in core.toml (the corpus is frozen; no generator call is made by `hcai run` under C0).
+model = "gemini-4-argon"
+temperature = 0.7
+borderline = { average = 1, weak = 1 }
+max_attempts = 4
+
+[pools]
+equal_quality = true
+mixed_quality = 2
+mixed_size = 8
+
+[run]
+retries = 2
+retry_backoff = 2.0
+repeat_fraction = 0.05
+repeats = 1
+rate_limit_backoff = 30
+rate_limit_max_backoff = 900
+rate_limit_max_wait = 21600
+request_timeout = 1200
+allowed_billing = ["go"]
+max_consecutive_failures = 10
+transient_backoff = [30, 120, 480]
+missing_target = 0.02
+heartbeat_s = 300
+# More workers than core (3): the budget is small (USD 5 hard limit) and the paper is due; requests and cache
+# keys do not depend on it.
+concurrency = 6
+
+# Pilot = the cost probe: 1 base CV x 8 identities x 1 language per model (first role, first quality level).
+[pilot]
+roles = 1
+quality_levels = 1
+base_cvs_per_role = 1
+languages = 1
+mixed_quality = 0
+
+[model_providers]
+"mimo-v2.6-flash" = "opencode-go"
+"beam-free" = "opencode-go"
+"hy4-flash-free" = "opencode-go"
+"gemini-4-argon" = "opencode-go"

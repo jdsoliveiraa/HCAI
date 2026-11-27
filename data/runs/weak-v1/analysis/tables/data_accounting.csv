@@ -1,0 +1,15 @@
+agent,condition,model,status,rows
+evaluator,C0,beam-free,ok,424
+evaluator,C0,beam-free,rejected,8
+evaluator,C0,hy4-flash-free,ok,432
+evaluator,C0,mimo-v2.6-flash,ok,409
+evaluator,C0,mimo-v2.6-flash,rejected,23
+ranker,C0,beam-free,ok,518
+ranker,C0,beam-free,rejected,10
+ranker,C0,hy4-flash-free,ok,528
+ranker,C0,mimo-v2.6-flash,ok,499
+ranker,C0,mimo-v2.6-flash,rejected,29
+screener,C0,beam-free,ok,432
+screener,C0,hy4-flash-free,ok,432
+screener,C0,mimo-v2.6-flash,ok,432
+ranker,C0,all,"equal-quality pools, complete (used) / all",156 / 162

@@ -28,6 +28,7 @@ with a pointer to the record. Add to it when a ticket changes something the repo
 | Ranker quality | pairwise accuracy on mixed pools | 1.00 in every condition (ceiling), so Spearman of Evaluator scores carries the quality cost | mixed pools were too easy | `ranking_quality.csv` |
 | Human audit | 50 justifications, 2 raters, κ | 1 rater (judge–human κ only, no rater–rater κ; the rater accepted a score the full CV supports, a looser rule than the judge's); 50 items (25 flagged of the 27 valid answers the judge flagged; the failed answer is not drawn), rated per quote on the site's audit page; κ per item (pre-registered) and per quote | per-quote labels make κ on the judge's per-criterion verdicts possible | ADR 0012, `docs/audit/labels/` |
 | Extra analyses | not in the proposal | 4 post-hoc analyses (not pre-registered): gaps against the mean of the 8 identities; gaps on the borderline CVs and on near-cutoff pairing units; Ranker identity effects after input position; gaps against the run-to-run noise of the repeat sample | the C1 gaps share one reference (PT M); small subsets, the position effect and the score noise could hide or fake a gap | `hcai.extra`, `tables/extra_*.csv`, FINDINGS "Extra analyses" |
+| Extra models ("weak-model" run) | not in the proposal | post hoc (not pre-registered): C0 only, 3 roles × 9 base CVs × 8 identities × EN/PT-PT, same corpus, prompts, seeds and 5% repeat sample, on 3 more Go models (`mimo-v2.6-flash`, `beam-free`, `hy4-flash-free`); `mimo-v2.6-flash`'s Ranker puts Portuguese identities first on ties (top 3: PT 94–98%, others 10–31%; 44 of 54 rationales name nationality); the other two show no bias in Screener and Evaluator, and their Rankers copy the input order, so they cannot be tested | test whether weaker models show the bias the core models did not; Go offers no older, 7-8B, quantized or 1-3B model, so the three are low-cost 2026 proxies, not weak models | `configs/weak.toml`, `data/runs/weak-v1/`, its `analysis/FINDINGS.md`, `docs/pilot/check-weak-2026-11-26.json` |
 
 ## Numbers to cite
 
@@ -37,6 +38,9 @@ with a pointer to the record. Add to it when a ticket changes something the repo
   (`data/runs/core-v1/README.md`).
 - Full run (#12, 23 Nov): 10,076 rows, 0 missing (target under 2%); 0 failed calls, 0 timeouts, 0 rate-limit
   waits; about 19.5 h, the last 7 h with 3 calls in flight (`[run] concurrency`, same requests and cache keys).
+- Weak-model run (post hoc, 26 Nov): 4,176 rows, 0 missing; 2,890 fresh calls in 52 min (`concurrency = 6`); USD 0.19 of
+  Go allowance (pilot estimate USD 0.28 against a USD 5 budget checked by hand; no code enforces a dollar cap), USD 0 balance; two of the three models are free on Go
+  (`data/runs/weak-v1/README.md`).
 - Go caps measured during the run: monthly about $54, weekly about $28 (50%), 5 h about $11 (20%).
 - Name check: lowest cell, female Brazilian, mean p(origin) 0.648; all others ≥ 0.68.
 

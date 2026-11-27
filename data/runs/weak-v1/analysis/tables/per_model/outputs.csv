@@ -1,0 +1,10 @@
+model,agent,rows,ok,missing,rejected,decisions,retried,failed_answers,requests_ok,requests_parse_error,requests_failed,repeat_requests_ok,repeat_requests_parse_error,repeat_requests_failed
+beam-free,evaluator,432,424,0,8,432,0,0,424,0,0,20,0,0
+beam-free,ranker,528,518,0,10,65,1,0,65,0,1,2,0,0
+beam-free,screener,432,432,0,0,432,0,0,432,0,0,20,0,0
+hy4-flash-free,evaluator,432,432,0,0,432,0,0,432,0,0,10,0,0
+hy4-flash-free,ranker,528,528,0,0,66,0,0,66,0,0,3,0,0
+hy4-flash-free,screener,432,432,0,0,432,0,0,432,0,0,10,0,0
+mimo-v2.6-flash,evaluator,432,409,0,23,432,0,0,409,0,0,31,0,0
+mimo-v2.6-flash,ranker,528,499,0,29,66,0,0,66,0,0,4,0,0
+mimo-v2.6-flash,screener,432,432,0,0,432,0,0,432,0,0,32,0,0

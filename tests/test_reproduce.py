@@ -18,7 +18,7 @@ import pytest
 
 from hcai.audit import read_criterion_labels, read_key, read_labels, rater_agreement
 from hcai.cli import main
-from hcai.reproduce import NetworkBlocked, no_network
+from hcai.reproduce import NetworkBlocked, no_network, reproduce
 
 SKELETON = Path(__file__).resolve().parent.parent / "configs" / "skeleton.toml"
 CORPUS = SKELETON.parent.parent / "data" / "corpus"
@@ -205,3 +205,18 @@ def test_the_audit_is_exported_and_kappa_computed_once_two_sheets_are_in(frozen_
                                                         ("labels_ana", "labels_rui")}
     assert (out / "audit" / "agreement_criteria.csv").exists()
     assert json.loads((out / "headline.json").read_text())["rq4_oversight"]["audit"]["status"] == "computed"
+
+
+def test_per_model_and_post_hoc_add_outputs_but_leave_every_pooled_output_unchanged(frozen_run, tmp_path):
+    plain, extended = tmp_path / "plain", tmp_path / "extended"
+    reproduce(frozen_run, plain, labels=tmp_path / "none", n_boot=50, n_model_boot=0, n_perm=50)
+    h = reproduce(frozen_run, extended, labels=tmp_path / "none", n_boot=50, n_model_boot=0, n_perm=50,
+                  per_model=True, mark_post_hoc=True)
+    assert "post hoc" in h["run_status"] and "per_model_not_preregistered" in h
+    for path in plain.rglob("*"):
+        if path.is_file() and path.name not in ("headline.json", "MANIFEST.txt"):
+            assert path.read_bytes() == (extended / path.relative_to(plain)).read_bytes(), path
+    assert (extended / "tables" / "per_model" / "summary.csv").exists()
+    old = json.loads((plain / "headline.json").read_text())
+    new = json.loads((extended / "headline.json").read_text())
+    assert {k: v for k, v in new.items() if k not in ("run_status", "per_model_not_preregistered")} == old

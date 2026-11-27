@@ -1,0 +1,7 @@
+model,condition,pool_kind,rationales,nationality,tie_break
+beam-free,C0,equal,53,1,30
+beam-free,C0,mixed,12,0,0
+hy4-flash-free,C0,equal,54,4,54
+hy4-flash-free,C0,mixed,12,1,0
+mimo-v2.6-flash,C0,equal,54,44,44
+mimo-v2.6-flash,C0,mixed,12,1,0
