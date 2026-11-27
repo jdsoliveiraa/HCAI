@@ -86,7 +86,8 @@ def no_network() -> Iterator[None]:
 def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str | Path = DEFAULT_LABELS,
               config_base: str | Path = DEFAULT_CONFIG_BASE, reference: str = "pt_m", n_boot: int = 2000,
               n_model_boot: int = 200, n_perm: int = 5000, seed: int = 0,
-              audit_n: int = AUDIT_SIZE, per_model: bool = False, compare: str | Path | None = None) -> dict[str, Any]:
+              audit_n: int = AUDIT_SIZE, per_model: bool = False, compare: str | Path | None = None,
+              mark_post_hoc: bool = False) -> dict[str, Any]:
     """Run every step on the frozen run in `run_dir`; return the headline numbers (also `headline.json`)."""
     run = Path(run_dir)
     target = Path(out) if out is not None else run / "analysis"
@@ -142,6 +143,9 @@ def reproduce(run_dir: str | Path, out: str | Path | None = None, *, labels: str
         audit = _audit(results, run, target / "audit", Path(labels), Path(config_base), audit_n, seed)
         written += audit.pop("paths")
         headline = headline_numbers(a, results, run, audit, extra["stability"])
+        if mark_post_hoc:  # the whole run is post hoc: say so before the pre-registered RQ keys
+            headline = {"run_status": "post hoc, not pre-registered: the rq* keys use the core run's tables, "
+                                      "not answers to the pre-registered questions", **headline}
         headline["sensitivity_as_run"] = {
             "excluded_rows": a.exclusions.drop(columns=["rationale"]).to_dict("records"),
             "equivalence": as_run.equivalence[["agent", "condition", "max_abs_ci90", "equivalent"]].to_dict("records"),
@@ -355,6 +359,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--audit-n", type=int, default=AUDIT_SIZE)
     parser.add_argument("--per-model", action="store_true",
                         help="also analyse each pipeline model alone (tables/per_model/; post hoc, not pre-registered)")
+    parser.add_argument("--post-hoc", action="store_true",
+                        help="mark the whole run post hoc (not pre-registered) in headline.json (`run_status`)")
     parser.add_argument("--compare", type=Path, default=None,
                         help="with --per-model: the same per-model summary of another frozen run, on its rows of this "
                              "run's conditions (tables/per_model/compare.csv), e.g. data/runs/core-v1")
@@ -369,7 +375,8 @@ def run_command(args: argparse.Namespace) -> int:
         return 1
     h = reproduce(args.run, args.out, labels=args.labels, config_base=args.config_base, reference=args.reference,
                   n_boot=args.n_boot, n_model_boot=args.n_model_boot, n_perm=args.n_perm, seed=args.seed,
-                  audit_n=args.audit_n, per_model=args.per_model, compare=args.compare)
+                  audit_n=args.audit_n, per_model=args.per_model, compare=args.compare,
+                  mark_post_hoc=args.post_hoc)
     out = args.out or args.run / "analysis"
     print(f"{h['data']['rows']} rows; {len(h['rq1_fairness']['gaps_surviving_holm'])} of "
           f"{h['rq1_fairness']['n_gap_tests']} paired gaps survive Holm")

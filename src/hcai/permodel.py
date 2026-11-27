@@ -2,8 +2,9 @@
 
 Post hoc, added for the weak-model run (`data/runs/weak-v1`), not pre-registered. The pooled tables of
 `hcai.analysis` mix the models; here every model's rows are analysed alone, with the same functions, the same
-exclusion rule (ADR 0012), the same reference and the same seeded generators as the pooled run. Holm adjusts
-within each model's family (one model = one family), as the pooled analysis adjusts within its own.
+exclusion rule (ADR 0012), the same reference and the same seeded generators as the pooled run. Holm adjusts within
+the same families as the pooled analysis (e.g. the 7 gaps of one agent), now within one model; nothing corrects
+across the models, so a result that survives in one of k models has a k-fold larger chance of a false positive.
 
 Tables (in `tables/per_model/`, one row set per model, a `model` column first):
 
@@ -12,11 +13,16 @@ Tables (in `tables/per_model/`, one row set per model, a `model` column first):
 - `gaps_reference_free`, `gaps_subsets`, `rank_adjusted`, `rank_adjusted_joint`, `repeat_noise`,
   `noise_vs_gap`: `hcai.extra` on the model's rows (and its repeats).
 - `screener_pass`: pass rate per identity.
-- `rank_adjusted`, `rank_adjusted_joint` add `input_order_only`: a model that returns every equal-quality pool in
-  its input order leaves the position regression no residual, so its tests are blanked (NaN), not reported.
+- `rank_adjusted`, `rank_adjusted_joint` add `input_order_only`: a model that returns every complete equal-quality
+  pool (the pools these tests use) in its input order leaves the position regression no residual, so its
+  estimates and tests are blanked (NaN), not reported.
+- `ranker_top3`: the top-3 rate per identity on the complete equal-quality pools, per language and for both.
+- `ranker_rationales`: per model, how many equal-quality Ranker rationales (one per pool) match the patterns
+  `NATIONALITY_PATTERN` and `TIE_BREAK_PATTERN` (case-insensitive regular expressions).
 - `outputs`: per model × agent, the rows by status, rows that needed more than one attempt, failed rubric
   answers, and from the run's `calls.jsonl.gz` (when present) the distinct requests that got a malformed answer
-  (`parse_error`) or failed (any other outcome but `ok`; rate-limit waits are not attempts).
+  (`parse_error`) or failed (any other outcome but `ok`; rate-limit waits are not attempts), main run and
+  stability repeats apart (a repeat is the identical request, so it shares the cache key).
 - `summary`: one row per model with the numbers FINDINGS.md cites.
 """
 
@@ -34,18 +40,21 @@ from hcai.analysis import ALPHA, analyse, failed_answers
 from hcai.extra import extra_tables
 
 AGENTS = ("screener", "evaluator", "ranker")
+NATIONALITY_PATTERN = r"\bnationalit|\bnationals?\b|\bnacional|\bnaturalidade"  # not "international"
+TIE_BREAK_PATTERN = r"tie-break|tiebreak|desempate"
 
 
 def call_outcomes(calls: str | Path, conditions: set[str] | None = None) -> pd.DataFrame:
     """Distinct requests (cache keys) per model × agent × outcome in a `calls.jsonl[.gz]` log.
 
     A request replayed from the cache or logged by two runs counts once per outcome, so a pilot that a later run
-    replays is not counted twice. Rate-limit waits are not attempts and are left out. With `conditions`, only the
-    calls of those conditions count.
+    replays is not counted twice. A stability repeat sends the identical request (same key), so `repeat` keeps it
+    apart from the main run. Rate-limit waits are not attempts and are left out. With `conditions`, only the calls
+    of those conditions count.
     """
     path = Path(calls)
     opener = gzip.open if path.suffix == ".gz" else open
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, bool, str, str]] = set()
     with opener(path, "rt") as f:
         for line in f:
             if not line.strip():
@@ -53,9 +62,10 @@ def call_outcomes(calls: str | Path, conditions: set[str] | None = None) -> pd.D
             r = json.loads(line)
             if r.get("outcome") == "rate_limited" or (conditions is not None and r.get("condition") not in conditions):
                 continue
-            seen.add((str(r.get("model")), str(r.get("agent")), str(r.get("outcome")), str(r.get("key"))))
-    table = pd.DataFrame(sorted(seen), columns=["model", "agent", "outcome", "key"])
-    return table.groupby(["model", "agent", "outcome"]).size().rename("requests").reset_index()
+            seen.add((str(r.get("model")), str(r.get("agent")), bool(r.get("repeat")), str(r.get("outcome")),
+                      str(r.get("key"))))
+    table = pd.DataFrame(sorted(seen), columns=["model", "agent", "repeat", "outcome", "key"])
+    return table.groupby(["model", "agent", "repeat", "outcome"]).size().rename("requests").reset_index()
 
 
 def output_validity(results: pd.DataFrame, calls: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -77,9 +87,10 @@ def output_validity(results: pd.DataFrame, calls: pd.DataFrame | None = None) ->
         }
         if calls is not None:
             c = calls[(calls["model"] == model) & (calls["agent"] == agent)]
-            rec["requests_ok"] = int(c.loc[c["outcome"] == "ok", "requests"].sum())
-            rec["requests_parse_error"] = int(c.loc[c["outcome"] == "parse_error", "requests"].sum())
-            rec["requests_failed"] = int(c.loc[~c["outcome"].isin(["ok", "parse_error"]), "requests"].sum())
+            for prefix, part in (("requests", c[~c["repeat"]]), ("repeat_requests", c[c["repeat"]])):
+                rec[f"{prefix}_ok"] = int(part.loc[part["outcome"] == "ok", "requests"].sum())
+                rec[f"{prefix}_parse_error"] = int(part.loc[part["outcome"] == "parse_error", "requests"].sum())
+                rec[f"{prefix}_failed"] = int(part.loc[~part["outcome"].isin(["ok", "parse_error"]), "requests"].sum())
         records.append(rec)
     return pd.DataFrame(records)
 
@@ -110,6 +121,8 @@ def per_model_tables(results: pd.DataFrame, repeats: pd.DataFrame | None, refere
             if name.startswith("extra_rank_adjusted"):
                 table = _flag_input_order(table, input_order_share(rows))
             add(name.removeprefix("extra_"), model, table)
+        add("ranker_top3", model, ranker_top3(rows))
+        add("ranker_rationales", model, ranker_rationales(rows))
         s = rows[(rows["agent"] == "screener") & (rows["status"] == "ok")]
         add("screener_pass", model, s.groupby(["condition", "identity"])["screen_pass"]
             .agg(n="size", passed=lambda x: int(x.astype(bool).sum())).reset_index()
@@ -120,14 +133,52 @@ def per_model_tables(results: pd.DataFrame, repeats: pd.DataFrame | None, refere
     return tables
 
 
+_POOL = ["pool", "language", "condition", "model"]
+
+
+def complete_equal_pools(results: pd.DataFrame) -> pd.DataFrame:
+    """Ranker rows of the equal-quality pools in which every identity of the run was ranked (as the Ranker tests use)."""
+    rk = results[(results["agent"] == "ranker") & (results["pool_kind"] == "equal") & (results["status"] == "ok")
+                 & results["rank"].notna()]
+    n = results["identity"].nunique()
+    return rk[rk.groupby(_POOL, observed=True)["identity"].transform("nunique") == n]
+
+
 def input_order_share(results: pd.DataFrame) -> float:
-    """The share of equal-quality Ranker pools (per pool × language × condition × model) ranked in input order."""
-    rk = results[(results["agent"] == "ranker") & (results["pool_kind"] == "equal") & (results["status"] == "ok")]
+    """The share of complete equal-quality Ranker pools (per pool × language × condition × model) ranked in input
+    order: the pool set of the position-adjusted tests."""
+    rk = complete_equal_pools(results)
     if rk.empty:
         return float("nan")
-    same = (rk["rank"] == rk["input_position"]).groupby(
-        [rk["pool"], rk["language"], rk["condition"], rk["model"]], observed=True).all()
+    same = (rk["rank"] == rk["input_position"]).groupby([rk[c] for c in _POOL], observed=True).all()
     return float(same.mean())
+
+
+def ranker_top3(results: pd.DataFrame) -> pd.DataFrame:
+    """Top-3 rate per condition × identity on the complete equal-quality pools, per language and for "all"."""
+    rk = complete_equal_pools(results)
+    if rk.empty:
+        return pd.DataFrame()
+    rk = rk.assign(top3=rk["top3"].astype(float))
+    both = rk.groupby(["condition", "identity"], observed=True)["top3"].agg(pools="size", top3_rate="mean").reset_index()
+    by_language = (rk.groupby(["condition", "language", "identity"], observed=True)["top3"]
+                   .agg(pools="size", top3_rate="mean").reset_index())
+    return pd.concat([both.assign(language="all"), by_language], ignore_index=True)[
+        ["condition", "language", "identity", "pools", "top3_rate"]]
+
+
+def ranker_rationales(results: pd.DataFrame) -> pd.DataFrame:
+    """Per condition × pool kind: the Ranker rationales (one per pool) that match the nationality and tie-break
+    patterns (case-insensitive)."""
+    rk = results[(results["agent"] == "ranker") & (results["input_position"] == 1) & (results["status"] == "ok")]
+    if rk.empty:
+        return pd.DataFrame()
+    text = rk["rationale"].fillna("").str.lower()
+    rk = rk.assign(nationality=text.str.contains(NATIONALITY_PATTERN, regex=True),
+                   tie_break=text.str.contains(TIE_BREAK_PATTERN, regex=True))
+    return (rk.groupby(["condition", "pool_kind"], observed=True)
+            .agg(rationales=("rationale", "size"), nationality=("nationality", "sum"), tie_break=("tie_break", "sum"))
+            .reset_index())
 
 
 def _flag_input_order(table: pd.DataFrame, share: float) -> pd.DataFrame:
@@ -138,7 +189,7 @@ def _flag_input_order(table: pd.DataFrame, share: float) -> pd.DataFrame:
     degenerate = share == 1.0
     table = table.assign(input_order_only=degenerate)
     if degenerate:
-        for column in ("se", "ci95_low", "ci95_high", "p", "p_holm", "f", "position_wald_chi2"):
+        for column in ("estimate", "se", "ci95_low", "ci95_high", "p", "p_holm", "f", "position_wald_chi2"):
             if column in table.columns:
                 table[column] = np.nan
     return table
@@ -174,7 +225,8 @@ def _get(table: pd.DataFrame | None, model: str, **match: Any) -> pd.DataFrame:
 def summary(results: pd.DataFrame, t: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """One row per model: the headline numbers of its tables."""
     records = []
-    for model in sorted(results["model"].dropna().unique()):
+    models = sorted(results["model"].dropna().unique())
+    for model in models:
         rows = results[results["model"] == model]
         ev = rows[(rows["agent"] == "evaluator") & (rows["status"] == "ok")]["score"].astype(float)
         gaps = _get(t.get("gaps"), model)
@@ -204,6 +256,10 @@ def summary(results: pd.DataFrame, t: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "equivalence_max_abs_ci90": None if eq.empty else float(eq["max_abs_ci90"].iloc[0]),
             "equivalent": None if eq.empty else bool(eq["equivalent"].iloc[0]),
             "gap_tests": len(gaps), "gaps_surviving_holm": int((gaps["p_holm"] < ALPHA).sum()) if not gaps.empty else 0,
+            # also Bonferroni over the models of the run: a post-hoc search over k models
+            "gaps_surviving_holm_x_models": int((gaps["p_holm"] * len(models) < ALPHA).sum()) if not gaps.empty else 0,
+            "evaluator_gaps_surviving_holm_x_models": int((ev_gaps["p_holm"] * len(models) < ALPHA).sum())
+            if not ev_gaps.empty else 0,
             "vs_mean_evaluator_range": None if free_ev.empty
             else f"{free_ev['estimate'].min():+.2f} to {free_ev['estimate'].max():+.2f}",
             "vs_mean_surviving_holm": int((free["p_holm"] < ALPHA).sum()) if not free.empty else 0,
@@ -215,6 +271,7 @@ def summary(results: pd.DataFrame, t: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "rank_position_surviving_holm": int((pos["p_holm"] < ALPHA).sum()) if not pos.empty else 0,
             "ranker_input_order_share": input_order_share(rows),
             "rank_identity_after_position_range": None if adj_rank.empty
+            else "not testable (input order)" if adj_rank["input_order_only"].all()
             else f"{adj_rank['estimate'].min():+.2f} to {adj_rank['estimate'].max():+.2f}",
             "rank_identity_joint_p": None if joint.empty else float(joint["p"].iloc[0]),
             "repeat_sigma_score": None if noise.empty else float(noise["sigma_score"].iloc[0]),

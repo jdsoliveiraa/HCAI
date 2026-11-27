@@ -154,3 +154,81 @@ def test_repeat_noise_has_one_row_per_model(tmp_path):
     reps = frame(tmp_path, repeats_of(rows, 2.0), "repeats.csv")
     t = per_model_tables(frame(tmp_path, rows), reps, "pt_m", [], n_boot=200, n_perm=100)
     assert sorted(t["repeat_noise"]["model"]) == sorted(MODELS)
+
+
+def favour(rows: list[ResultRow], model: str, identity: str) -> list[ResultRow]:
+    """In every equal-quality pool of `model`, move `identity` to rank 1 and shift the ones it passed down by one,
+    whatever its input position (a Ranker that prefers that identity)."""
+    out = list(rows)
+    pools: dict[tuple, list[int]] = {}
+    for i, r in enumerate(out):
+        if r.agent == "ranker" and r.model == model and r.pool_kind == "equal" and r.rank is not None:
+            pools.setdefault((r.pool, r.language, r.condition), []).append(i)
+    for idx in pools.values():
+        target = next((i for i in idx if out[i].identity == identity), None)
+        if target is None:
+            continue
+        old = out[target].rank
+        assert old is not None
+        for i in idx:
+            rank = out[i].rank
+            assert rank is not None
+            new = 1 if i == target else rank + 1 if rank < old else rank
+            out[i] = replace(out[i], rank=new, top3=new <= 3)
+    return out
+
+
+def test_a_ranker_that_favours_one_identity_is_found_after_position_in_that_model_only(tmp_path):
+    rows = favour(two_models(), "model-a", "br_f")
+    t = per_model_tables(frame(tmp_path, rows), None, "pt_m", [], n_boot=200, n_perm=100)
+    adj = t["rank_adjusted"]
+    a = one(adj, model="model-a", outcome="rank", identity="br_f")
+    assert a["estimate"] < -2 and a["p_holm"] < 0.05
+    b = adj[(adj["model"] == "model-b") & (adj["outcome"] == "rank")]
+    assert (b["p_holm"] >= 0.05).all()
+    top3 = t["ranker_top3"]
+    assert one(top3, model="model-a", language="all", identity="br_f")["top3_rate"] == 1.0
+    assert one(top3, model="model-b", language="all", identity="br_f")["top3_rate"] < 0.9
+
+
+def test_the_rationale_patterns_count_one_rationale_per_pool(tmp_path):
+    rows = [replace(r, rationale="Tie-break: Portuguese nationality first.")
+            if r.agent == "ranker" and r.model == "model-a" and r.input_position == 1 else r for r in two_models()]
+    t = per_model_tables(frame(tmp_path, rows), None, "pt_m", [], n_boot=100, n_perm=50)
+    r = t["ranker_rationales"]
+    a = one(r, model="model-a", pool_kind="equal")
+    assert a["nationality"] == a["tie_break"] == a["rationales"] > 0
+    assert (r.loc[r["model"] == "model-b", "nationality"] == 0).all()
+    import re
+
+    from hcai.permodel import NATIONALITY_PATTERN
+    assert not re.search(NATIONALITY_PATTERN, "an international hospital, experiência internacional")
+    assert all(re.search(NATIONALITY_PATTERN, t) for t in ("portuguese nationals first", "nacionalidade portuguesa"))
+
+
+def test_a_failed_repeat_is_counted_apart_from_the_main_request(tmp_path):
+    records = [
+        {"model": "m", "agent": "evaluator", "outcome": "ok", "key": "k1"},
+        {"model": "m", "agent": "evaluator", "outcome": "parse_error", "key": "k1", "repeat": 1},
+        {"model": "m", "agent": "evaluator", "outcome": "ok", "key": "k1", "repeat": 1},
+    ]
+    path = tmp_path / "calls.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    v = one(output_validity(frame(tmp_path, [r for r in two_models() if r.model == "model-a"]).assign(model="m"),
+                            call_outcomes(path)), agent="evaluator")
+    assert (v["requests_ok"], v["requests_parse_error"]) == (1, 0)
+    assert (v["repeat_requests_ok"], v["repeat_requests_parse_error"]) == (1, 1)
+
+
+def test_compare_run_reads_only_the_calls_of_the_compared_conditions(tmp_path):
+    from hcai.runner import write_results
+
+    other = tmp_path / "core-v1"
+    other.mkdir()
+    write_results(synthetic_results(conditions=("C0", "C1"), models=MODELS, base_per_cell=4), other / "results.csv")
+    records = [{"model": "model-a", "agent": "evaluator", "condition": "C1", "outcome": "timeout", "key": "k1"},
+               {"model": "model-a", "agent": "evaluator", "condition": "C0", "outcome": "parse_error", "key": "k2"}]
+    with gzip.open(other / "calls.jsonl.gz", "wt") as f:
+        f.write("\n".join(json.dumps(r) for r in records) + "\n")
+    s = one(compare_run(other, {"C0"}, "pt_m", [], n_boot=100, n_perm=50), model="model-a")
+    assert (s["parse_error_requests"], s["failed_requests"]) == (1, 0)
